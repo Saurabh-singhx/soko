@@ -1,0 +1,40 @@
+name: soko_mobile
+description: "Soko Mobile Companion - Glassmorphic Controller & Hotspot Handoff"
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # UI & Glassmorphism
+  cupertino_icons: ^1.0.6
+  google_fonts: ^6.2.1
+  flutter_animate: ^4.5.0
+
+  # Bluetooth Low Energy
+  flutter_blue_plus: ^1.32.9
+
+  # Cryptography & Security
+  cryptography: ^2.7.1
+  crypto: ^3.0.3
+
+  # Network & Embedded Server for Hotspot Sharing
+  shelf: ^1.4.1
+  shelf_router: ^1.1.4
+  network_info_plus: ^5.0.1
+  file_picker: ^8.0.3
+
+  # Local Biometrics
+  local_auth: ^2.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true

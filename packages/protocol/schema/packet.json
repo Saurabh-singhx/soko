@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SokoPacketEnvelope",
+  "description": "Standardized application-layer encrypted packet envelope exchanged between Mobile and Desktop over Bluetooth or WebSocket",
+  "type": "object",
+  "required": [
+    "magic",
+    "version",
+    "packet_id",
+    "timestamp",
+    "packet_type",
+    "payload"
+  ],
+  "properties": {
+    "magic": {
+      "type": "string",
+      "const": "SK",
+      "description": "Protocol magic identifier (Always 'SK' for Soko)"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Protocol version counter"
+    },
+    "packet_id": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonically increasing sequence number for replay attack prevention"
+    },
+    "timestamp": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "UTC Unix epoch milliseconds when the packet was created"
+    },
+    "packet_type": {
+      "type": "string",
+      "enum": [
+        "HEARTBEAT_PING",
+        "HEARTBEAT_PONG",
+        "PAIR_REQUEST",
+        "PAIR_CONFIRM",
+        "NOTIFICATION_POST",
+        "NOTIFICATION_DISMISS",
+        "CLI_EXECUTE",
+        "CLI_OUTPUT_STREAM",
+        "CLI_TERMINATED",
+        "FILE_OFFER",
+        "FILE_PROGRESS",
+        "FILE_COMPLETED"
+      ],
+      "description": "Explicit message category identifier"
+    },
+    "payload": {
+      "type": "object",
+      "description": "Type-specific decrypted message body"
+    }
+  }
+}

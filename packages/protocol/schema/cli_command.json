@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SokoCliCommandPayload",
+  "description": "Schema for remote command execution triggers and output streaming",
+  "type": "object",
+  "required": [
+    "command_id",
+    "request_id"
+  ],
+  "properties": {
+    "command_id": {
+      "type": "string",
+      "description": "Pre-configured whitelist alias (e.g. 'agy-status', 'agy-run', 'git-pull')"
+    },
+    "request_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique UUID tracking this specific invocation lifecycle"
+    },
+    "custom_args": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Optional whitelisted argument list (if enabled in settings)"
+    },
+    "biometric_token": {
+      "type": "string",
+      "description": "Cryptographic signature verifying biometric unlock on mobile"
+    }
+  }
+}

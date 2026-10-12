@@ -1,0 +1,25 @@
+{
+  "name": "soko-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cross-platform desktop dynamic island & mobile companion with high-speed hotspot transfer and CLI control",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:desktop": "npm --prefix apps/desktop run dev",
+    "build:desktop": "npm --prefix apps/desktop run build",
+    "preview:desktop": "npm --prefix apps/desktop run preview"
+  },
+  "keywords": [
+    "dynamic-island",
+    "bluetooth",
+    "tauri",
+    "flutter",
+    "antigravity-cli",
+    "glassmorphism"
+  ],
+  "author": "Soko Project",
+  "license": "MIT"
+}

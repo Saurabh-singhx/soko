@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SokoNotificationPayload",
+  "description": "Schema for Android/iOS notification mirrored to the desktop Dynamic Island",
+  "type": "object",
+  "required": [
+    "id",
+    "package_name",
+    "app_name",
+    "title",
+    "body",
+    "timestamp"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique OS notification identifier (e.g., com.whatsapp:1024)"
+    },
+    "package_name": {
+      "type": "string",
+      "description": "Android package name or iOS bundle ID"
+    },
+    "app_name": {
+      "type": "string",
+      "description": "Human-readable application display name"
+    },
+    "title": {
+      "type": "string",
+      "description": "Notification header or sender name"
+    },
+    "body": {
+      "type": "string",
+      "description": "Notification content body"
+    },
+    "timestamp": {
+      "type": "integer",
+      "description": "Unix timestamp in milliseconds"
+    },
+    "has_reply_action": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether inline quick reply is supported"
+    },
+    "icon_base64": {
+      "type": "string",
+      "description": "Optional Base64-encoded PNG thumbnail of the application icon"
+    }
+  }
+}

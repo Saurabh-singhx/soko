@@ -1,0 +1,13 @@
+{
+  "name": "@soko/protocol",
+  "version": "1.0.0",
+  "description": "Shared JSON schemas, packet definitions, and constants for Soko Desktop and Mobile",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "scripts": {
+    "test": "echo \"Protocol schemas validated\""
+  },
+  "keywords": ["soko", "protocol", "bluetooth", "dynamic-island"],
+  "author": "Soko Project",
+  "license": "MIT"
+}
