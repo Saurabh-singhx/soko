@@ -519,8 +519,11 @@ mkdir -p "${OUTPUT_DIR}"
 # Build Soko Desktop (Dynamic Island HUD for Android)
 build_apk "desktop" "com.soko.desktop" "Soko HUD" "soko-desktop.apk" "${PROJECT_ROOT}/apps/desktop/dist"
 
-# Build Soko Mobile (Mobile Companion Controller)
+# Build Soko Mobile (Mobile Companion Controller with native notification listener)
 build_apk "mobile" "com.soko.mobile" "Soko Mobile" "soko-mobile.apk" "${PROJECT_ROOT}/apps/mobile/companion"
+
+# Build Soko Mobile Lite (Clean companion without BIND_NOTIFICATION_LISTENER_SERVICE - 0 Play Protect warnings)
+build_apk "companion" "com.soko.companion" "Soko Companion Lite" "soko-mobile-lite.apk" "${PROJECT_ROOT}/apps/mobile/companion"
 
 # Also create release & debug alias copies in the apks directory and copy to project root
 cd "${OUTPUT_DIR}"
@@ -528,6 +531,7 @@ cp soko-desktop.apk soko-release.apk
 cp soko-mobile.apk soko-debug.apk
 cp soko-desktop.apk "${PROJECT_ROOT}/soko-desktop.apk"
 cp soko-mobile.apk "${PROJECT_ROOT}/soko-mobile.apk"
+cp soko-mobile-lite.apk "${PROJECT_ROOT}/soko-mobile-lite.apk"
 
 echo "----------------------------------------------------"
 echo "ALL APKS SUCCESSFULLY GENERATED IN apks/ AND ROOT:"
