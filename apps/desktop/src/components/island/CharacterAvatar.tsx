@@ -7,349 +7,374 @@ interface CharacterAvatarProps {
   size?: number;
 }
 
+type GazeDirection = 'center' | 'left' | 'right' | 'up-left' | 'inquisitive';
+
 /**
- * "Nova Grok-Bot" - Fluid, Jelly-Physics Cyber Mascot.
+ * "Grok-Bot" - High-Contrast Monochrome (Black & White) Kinetic Avatar.
  *
- * Grokbot-Inspired Animation Highlights:
- * 1. Squash & Stretch Jelly Physics: Smooth organic mass deformation on bob & bounce.
- * 2. Asymmetric Quirky Head Tilt: Playful angle cocking (like a curious cyber-pet).
- * 3. Secondary Ear-Fin Kinematics: Independent spring dampening with playful ear twitches.
- * 4. Micro-Saccade Gaze: Eyes subtly scan their surroundings during idle.
- * 5. Interactive Spring Reaction: Squishes playfully on hover and tap.
+ * Features based on Grok Bot AI kinematics:
+ * 1. Pure OLED Black & Stark White Aesthetic: Minimalist, clean, distraction-free.
+ * 2. Morphing Geometric Eye Capsules: Dynamic capsules morphing between tall pills, wide orbs, horizontal bars, and arcs.
+ * 3. Organic Gaze Saccades: Eyes glide smoothly across the visor to observe surroundings.
+ * 4. Asymmetric Inquisitive Cocking: Classic Grok expression with one eye tilted and raised.
+ * 5. Elastic Razor Blink: Fast snap collapse to a razor slit with spring overshoot.
+ * 6. Aerodynamic Ear-Fins: Monochrome antennae with secondary spring lag and autonomous twitches.
  */
 export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
   mood,
   size = 32,
 }) => {
   const [isBlinking, setIsBlinking] = useState(false);
-  const [earTwitch, setEarTwitch] = useState(false);
+  const [gaze, setGaze] = useState<GazeDirection>('center');
+  const [leftEarTwitch, setLeftEarTwitch] = useState(false);
+  const [rightEarTwitch, setRightEarTwitch] = useState(false);
 
-  // Autonomous elastic blinking loop
+  // 1. Natural Blink Loop with Rapid Snap & Elastic Overshoot
   useEffect(() => {
     if (mood !== 'idle') return;
 
     const blinkInterval = setInterval(() => {
       setIsBlinking(true);
-      setTimeout(() => setIsBlinking(false), 160);
-    }, 3400);
+      setTimeout(() => setIsBlinking(false), 140);
+    }, 3800);
 
-    // Occasional quirky ear twitch
-    const twitchInterval = setInterval(() => {
-      setEarTwitch(true);
-      setTimeout(() => setEarTwitch(false), 450);
-    }, 5800);
-
-    return () => {
-      clearInterval(blinkInterval);
-      clearInterval(twitchInterval);
-    };
+    return () => clearInterval(blinkInterval);
   }, [mood]);
 
-  // Colorways matching system state
-  const getThemePalette = () => {
-    switch (mood) {
-      case 'alert':
-        return {
-          coreGlow: '#FF3366',
-          gradientStart: '#FF3366',
-          gradientEnd: '#FF9900',
-          eyeColor: '#FFF176',
-          finColor: '#FF3366',
-          blush: 'rgba(255, 51, 102, 0.5)',
-        };
-      case 'working':
-        return {
-          coreGlow: '#00F0FF',
-          gradientStart: '#8B5CF6',
-          gradientEnd: '#00F0FF',
-          eyeColor: '#00F0FF',
-          finColor: '#A855F7',
-          blush: 'rgba(0, 240, 255, 0.4)',
-        };
-      case 'happy':
-        return {
-          coreGlow: '#10B981',
-          gradientStart: '#10B981',
-          gradientEnd: '#06B6D4',
-          eyeColor: '#FFFFFF',
-          finColor: '#10B981',
-          blush: 'rgba(16, 185, 129, 0.45)',
-        };
-      case 'error':
-        return {
-          coreGlow: '#EF4444',
-          gradientStart: '#EF4444',
-          gradientEnd: '#991B1B',
-          eyeColor: '#FFA4A4',
-          finColor: '#EF4444',
-          blush: 'rgba(239, 68, 68, 0.45)',
-        };
-      case 'searching':
-        return {
-          coreGlow: '#6366F1',
-          gradientStart: '#6366F1',
-          gradientEnd: '#3B82F6',
-          eyeColor: '#93C5FD',
-          finColor: '#6366F1',
-          blush: 'rgba(99, 102, 241, 0.35)',
-        };
-      case 'idle':
+  // 2. Micro-Saccade Gaze Routine
+  useEffect(() => {
+    if (mood !== 'idle') return;
+
+    const directions: GazeDirection[] = ['center', 'left', 'inquisitive', 'center', 'right', 'up-left'];
+    let step = 0;
+
+    const gazeInterval = setInterval(() => {
+      step = (step + 1) % directions.length;
+      setGaze(directions[step]);
+    }, 2900);
+
+    return () => clearInterval(gazeInterval);
+  }, [mood]);
+
+  // 3. Autonomous Ear-Fin Twitch Routine
+  useEffect(() => {
+    if (mood !== 'idle') return;
+
+    const twitchInterval = setInterval(() => {
+      const which = Math.random() > 0.5 ? 'left' : 'right';
+      if (which === 'left') {
+        setLeftEarTwitch(true);
+        setTimeout(() => setLeftEarTwitch(false), 360);
+      } else {
+        setRightEarTwitch(true);
+        setTimeout(() => setRightEarTwitch(false), 360);
+      }
+    }, 5200);
+
+    return () => clearInterval(twitchInterval);
+  }, [mood]);
+
+  // Compute Gaze Translation Offsets
+  const getGazeOffset = () => {
+    switch (gaze) {
+      case 'left':
+        return { x: -3.5, y: 0 };
+      case 'right':
+        return { x: 3.5, y: 0 };
+      case 'up-left':
+        return { x: -2.5, y: -2 };
+      case 'inquisitive':
+        return { x: 1.5, y: -1 };
+      case 'center':
       default:
-        return {
-          coreGlow: '#00F0FF',
-          gradientStart: '#A855F7',
-          gradientEnd: '#00F0FF',
-          eyeColor: '#FFFFFF',
-          finColor: '#00F0FF',
-          blush: 'rgba(168, 85, 247, 0.4)',
-        };
+        return { x: 0, y: 0 };
     }
   };
 
-  const palette = getThemePalette();
+  const gazeOffset = getGazeOffset();
+
+  // Grok Spring Physics Configuration
+  const springTransition = {
+    type: 'spring',
+    stiffness: 480,
+    damping: 30,
+    mass: 0.8,
+  };
 
   return (
     <motion.div
       className="relative flex items-center justify-center select-none cursor-pointer"
       style={{ width: size, height: size }}
-      whileHover={{ scale: 1.12, rotate: -3 }}
-      whileTap={{ scale: 0.9, rotate: 4 }}
-      // Grok-style fluid squash & stretch + curious head tilt
+      whileHover={{ scale: 1.12, rotate: -2 }}
+      whileTap={{ scale: 0.9, rotate: 3 }}
+      // Ambient Organic Idle Bob & Asymmetric Tilt
       animate={
         mood === 'alert'
           ? {
-              y: [0, -6, 0, -2, 0],
-              scaleX: [1, 0.92, 1.08, 0.98, 1],
-              scaleY: [1, 1.14, 0.94, 1.04, 1],
-              rotate: [0, -5, 6, -2, 0],
+              y: [0, -5, 0, -2, 0],
+              scaleX: [1, 0.94, 1.06, 0.98, 1],
+              scaleY: [1, 1.12, 0.95, 1.03, 1],
+              rotate: [0, -4, 4, 0],
             }
           : mood === 'working'
           ? {
-              y: [0, -1.5, 0],
-              rotate: [-3, 3, -3],
-              scaleX: [1, 1.03, 1],
-              scaleY: [1, 0.97, 1],
+              y: [0, -1.2, 0],
+              rotate: [-2, 2, -2],
+              scaleX: [1, 1.02, 1],
+              scaleY: [1, 0.98, 1],
             }
           : mood === 'searching'
           ? {
-              x: [-4, 4, -4],
-              rotate: [-6, 6, -6],
+              x: [-3, 3, -3],
+              rotate: [-5, 5, -5],
             }
           : {
-              // Idle Organic Breathing with Asymmetric Grok Tilt
-              y: [0, -2.5, 0, -0.8, 0],
-              rotate: [0, 3.5, 0, -2.5, 0],
-              scaleX: [1, 1.04, 0.98, 1.02, 1],
-              scaleY: [1, 0.96, 1.03, 0.98, 1],
+              // Idle Organic Grok Bobs
+              y: [0, -2, 0, -0.6, 0],
+              rotate: gaze === 'inquisitive' ? [0, 4, 3] : [0, 2.5, 0, -2, 0],
+              scaleX: [1, 1.03, 0.98, 1.02, 1],
+              scaleY: [1, 0.97, 1.02, 0.98, 1],
             }
       }
       transition={{
         repeat: Infinity,
-        duration: mood === 'alert' ? 0.7 : mood === 'working' ? 1.0 : 3.6,
+        duration: mood === 'alert' ? 0.65 : mood === 'working' ? 0.95 : 3.8,
         ease: 'easeInOut',
       }}
     >
-      {/* Ambient Breathing Aura Glow */}
+      {/* Subtle Monochrome Ambient Halo */}
       <motion.div
-        className="absolute inset-0 rounded-full blur-md opacity-45 pointer-events-none"
-        style={{ background: palette.coreGlow }}
-        animate={{ scale: [1, 1.15, 1], opacity: [0.35, 0.55, 0.35] }}
-        transition={{ repeat: Infinity, duration: 2.8, ease: 'easeInOut' }}
+        className="absolute inset-0 rounded-full blur-md bg-white/20 pointer-events-none"
+        animate={{
+          scale: mood === 'alert' ? [1, 1.25, 1] : [1, 1.12, 1],
+          opacity: mood === 'alert' ? [0.35, 0.65, 0.35] : [0.18, 0.32, 0.18],
+        }}
+        transition={{ repeat: Infinity, duration: 2.6, ease: 'easeInOut' }}
       />
 
       <svg
         viewBox="0 0 44 44"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
-        className="w-full h-full relative z-10 drop-shadow-xl"
+        className="w-full h-full relative z-10 drop-shadow-2xl"
       >
         <defs>
-          <linearGradient id="grok-face-grad" x1="6" y1="6" x2="38" y2="38" gradientUnits="userSpaceOnUse">
-            <stop stopColor="#211A36" />
-            <stop offset="0.6" stopColor="#12121D" />
-            <stop offset="1" stopColor="#08080C" />
+          {/* Pure OLED Black Visor Gradient */}
+          <radialGradient id="grok-visor-black" cx="35%" cy="30%" r="70%">
+            <stop offset="0%" stopColor="#121216" />
+            <stop offset="70%" stopColor="#050507" />
+            <stop offset="100%" stopColor="#000000" />
+          </radialGradient>
+
+          {/* Crisp Monochrome Rim Stroke */}
+          <linearGradient id="grok-rim-mono" x1="4" y1="4" x2="40" y2="40" gradientUnits="userSpaceOnUse">
+            <stop stopColor="#FFFFFF" stopOpacity="0.45" />
+            <stop offset="50%" stopColor="#888892" stopOpacity="0.25" />
+            <stop offset="100%" stopColor="#FFFFFF" stopOpacity="0.35" />
           </linearGradient>
 
-          <linearGradient id="grok-rim-grad" x1="4" y1="8" x2="40" y2="36" gradientUnits="userSpaceOnUse">
-            <stop stopColor={palette.gradientStart} />
-            <stop offset="1" stopColor={palette.gradientEnd} />
+          {/* Matte Graphite Ear-Fin Fill */}
+          <linearGradient id="grok-fin-mono" x1="0" y1="0" x2="1" y2="1">
+            <stop stopColor="#22222A" />
+            <stop offset="100%" stopColor="#0A0A0E" />
           </linearGradient>
 
-          <linearGradient id="grok-fin-grad" x1="0" y1="0" x2="1" y2="1">
-            <stop stopColor={palette.finColor} />
-            <stop offset="1" stopColor="#0A0F1D" />
-          </linearGradient>
-
-          <linearGradient id="grok-sheen" x1="12" y1="10" x2="30" y2="24" gradientUnits="userSpaceOnUse">
-            <stop stopColor="#FFFFFF" stopOpacity="0.32" />
-            <stop offset="1" stopColor="#FFFFFF" stopOpacity="0" />
-          </linearGradient>
+          {/* Eye Bloom Glow Filter */}
+          <filter id="eye-bloom" x="-30%" y="-30%" width="160%" height="160%">
+            <feGaussianBlur stdDeviation="0.8" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
         </defs>
 
-        {/* 1. Left Kinetic Ear-Fin (with twitch & lag) */}
+        {/* 1. Left Monochrome Ear-Fin (Antenna with Spring Twitch) */}
         <motion.path
           d="M7 17C4 13 4 8 8 10C9 13 8 18 7 17Z"
-          fill="url(#grok-fin-grad)"
-          stroke={palette.finColor}
-          strokeWidth="1.3"
+          fill="url(#grok-fin-mono)"
+          stroke="#FFFFFF"
+          strokeOpacity={mood === 'alert' ? 0.9 : 0.45}
+          strokeWidth="1.2"
           animate={
-            earTwitch
-              ? { rotate: [-20, 15, -10, 0] }
+            leftEarTwitch
+              ? { rotate: [-18, 14, -8, 0] }
               : mood === 'alert'
-              ? { rotate: [-15, -30, -15], scale: [1, 1.2, 1] }
+              ? { rotate: [-18, -32, -18], scale: [1, 1.15, 1] }
               : mood === 'working'
-              ? { rotate: [-8, 8, -8] }
-              : { rotate: [-2, 4, -2] }
+              ? { rotate: [-6, 6, -6] }
+              : { rotate: [-2, 3, -2] }
           }
           style={{ originX: '8px', originY: '17px' }}
           transition={{
-            repeat: earTwitch ? 0 : Infinity,
-            duration: earTwitch ? 0.35 : 2.2,
+            repeat: leftEarTwitch ? 0 : Infinity,
+            duration: leftEarTwitch ? 0.32 : 2.4,
             ease: 'easeInOut',
           }}
         />
 
-        {/* 2. Right Kinetic Ear-Fin (asymmetric secondary delay) */}
+        {/* 2. Right Monochrome Ear-Fin (Antenna with Secondary Lag) */}
         <motion.path
           d="M37 17C40 13 40 8 36 10C35 13 36 18 37 17Z"
-          fill="url(#grok-fin-grad)"
-          stroke={palette.finColor}
-          strokeWidth="1.3"
+          fill="url(#grok-fin-mono)"
+          stroke="#FFFFFF"
+          strokeOpacity={mood === 'alert' ? 0.9 : 0.45}
+          strokeWidth="1.2"
           animate={
-            earTwitch
-              ? { rotate: [10, -20, 12, 0] }
+            rightEarTwitch
+              ? { rotate: [18, -14, 8, 0] }
               : mood === 'alert'
-              ? { rotate: [15, 30, 15], scale: [1, 1.2, 1] }
+              ? { rotate: [18, 32, 18], scale: [1, 1.15, 1] }
               : mood === 'working'
-              ? { rotate: [8, -8, 8] }
-              : { rotate: [3, -3, 3] }
+              ? { rotate: [6, -6, 6] }
+              : { rotate: [2, -3, 2] }
           }
           style={{ originX: '36px', originY: '17px' }}
           transition={{
-            repeat: earTwitch ? 0 : Infinity,
-            duration: earTwitch ? 0.35 : 2.4,
+            repeat: rightEarTwitch ? 0 : Infinity,
+            duration: rightEarTwitch ? 0.32 : 2.6,
             ease: 'easeInOut',
           }}
         />
 
-        {/* 3. Obsidian Visor Dome */}
+        {/* 3. Pure Black Visor Dome */}
         <circle
           cx="22"
           cy="22"
           r="16.5"
-          fill="url(#grok-face-grad)"
-          stroke="url(#grok-rim-grad)"
-          strokeWidth="1.8"
+          fill="url(#grok-visor-black)"
+          stroke="url(#grok-rim-mono)"
+          strokeWidth="1.6"
         />
 
-        {/* 4. Visor Light Sheen */}
+        {/* 4. Minimalist Curved Specular Light Rim (Subtle Glass Arc) */}
         <path
-          d="M12 14C15 9.5 28 9.5 32 14C27 12 17 12 12 14Z"
-          fill="url(#grok-sheen)"
+          d="M13 13C17 9.5 27 9.5 31 13"
+          stroke="#FFFFFF"
+          strokeOpacity="0.22"
+          strokeWidth="1.4"
+          strokeLinecap="round"
         />
 
-        {/* 5. Glowing Chromatic Blush */}
-        <circle cx="12" cy="25" r="2.8" fill={palette.blush} />
-        <circle cx="32" cy="25" r="2.8" fill={palette.blush} />
+        {/* 5. Grok Bot Dynamic Eye Geometry */}
+        <motion.g
+          filter="url(#eye-bloom)"
+          animate={{
+            x: mood === 'searching' ? [-3, 3, -3] : gazeOffset.x,
+            y: gazeOffset.y,
+          }}
+          transition={springTransition}
+        >
+          {mood === 'happy' ? (
+            // Joyful Upward Crescent Arcs (^^)
+            <>
+              <path
+                d="M13.5 21C13.5 17.5 17 16.5 19 19.5"
+                stroke="#FFFFFF"
+                strokeWidth="2.6"
+                strokeLinecap="round"
+              />
+              <path
+                d="M25 19.5C27 16.5 30.5 17.5 30.5 21"
+                stroke="#FFFFFF"
+                strokeWidth="2.6"
+                strokeLinecap="round"
+              />
+            </>
+          ) : mood === 'working' ? (
+            // Terminal Focus: Horizontal Scanning Bars with Pulse
+            <>
+              <motion.rect
+                x="11"
+                y="19"
+                width="8.5"
+                height="5"
+                rx="2.5"
+                fill="#FFFFFF"
+                animate={{ width: [8.5, 9.5, 8.5], opacity: [0.9, 1, 0.9] }}
+                transition={{ repeat: Infinity, duration: 0.8 }}
+              />
+              <motion.rect
+                x="24.5"
+                y="19"
+                width="8.5"
+                height="5"
+                rx="2.5"
+                fill="#FFFFFF"
+                animate={{ width: [8.5, 9.5, 8.5], opacity: [0.9, 1, 0.9] }}
+                transition={{ repeat: Infinity, duration: 0.8, delay: 0.2 }}
+              />
+            </>
+          ) : mood === 'alert' ? (
+            // Alert: Wide Giant Spherical Orbs
+            <>
+              <motion.circle
+                cx="16"
+                cy="21.5"
+                r="4.8"
+                fill="#FFFFFF"
+                animate={{ scale: [1, 1.15, 1] }}
+                transition={{ repeat: Infinity, duration: 0.5 }}
+              />
+              <motion.circle
+                cx="28"
+                cy="21.5"
+                r="4.8"
+                fill="#FFFFFF"
+                animate={{ scale: [1, 1.15, 1] }}
+                transition={{ repeat: Infinity, duration: 0.5 }}
+              />
+            </>
+          ) : mood === 'error' ? (
+            // Error / Confusion: Narrow Slanted Slits
+            <>
+              <line x1="12" y1="20" x2="19" y2="23" stroke="#FFFFFF" strokeWidth="2.4" strokeLinecap="round" />
+              <line x1="25" y1="23" x2="32" y2="20" stroke="#FFFFFF" strokeWidth="2.4" strokeLinecap="round" />
+            </>
+          ) : isBlinking ? (
+            // Elastic Razor Blink (Rapid Horizontal Slit)
+            <>
+              <line x1="12.5" y1="21.5" x2="19" y2="21.5" stroke="#FFFFFF" strokeWidth="2" strokeLinecap="round" />
+              <line x1="25" y1="21.5" x2="31.5" y2="21.5" stroke="#FFFFFF" strokeWidth="2" strokeLinecap="round" />
+            </>
+          ) : (
+            // Natural Grok Bot Eye Capsules with Asymmetric Inquisitive Cocking
+            <>
+              {/* Left Eye Capsule */}
+              <motion.rect
+                x="12.5"
+                y="14"
+                width="7"
+                height="15"
+                rx="3.5"
+                fill="#FFFFFF"
+                animate={
+                  gaze === 'inquisitive'
+                    ? { y: 13, height: 16.5, scaleY: 1.1 }
+                    : { y: 14, height: 15, scaleY: 1.0 }
+                }
+                transition={springTransition}
+              />
 
-        {/* 6. Dynamic Morphing Eyes */}
-        {mood === 'happy' ? (
-          // Playful Joyful Arcs
-          <>
-            <path
-              d="M14 19C14 16 17.5 15 19.5 18"
-              stroke={palette.eyeColor}
-              strokeWidth="2.4"
-              strokeLinecap="round"
-            />
-            <path
-              d="M24.5 18C26.5 15 30 16 30 19"
-              stroke={palette.eyeColor}
-              strokeWidth="2.4"
-              strokeLinecap="round"
-            />
-          </>
-        ) : mood === 'working' ? (
-          // Cyberpunk Focus Goggles with Active Scanning Crossbars
-          <>
-            <rect x="13" y="16" width="7" height="6.5" rx="2" fill="#00F0FF" fillOpacity="0.85" />
-            <rect x="24" y="16" width="7" height="6.5" rx="2" fill="#00F0FF" fillOpacity="0.85" />
-            <line x1="20" y1="19" x2="24" y2="19" stroke="#00F0FF" strokeWidth="1.5" />
-            <circle cx="16.5" cy="19" r="1.3" fill="#FFFFFF" />
-            <circle cx="27.5" cy="19" r="1.3" fill="#FFFFFF" />
-          </>
-        ) : mood === 'alert' ? (
-          // Wide Elastic Spring Rings
-          <>
-            <circle cx="16" cy="19" r="3.6" fill={palette.eyeColor} />
-            <circle cx="28" cy="19" r="3.6" fill={palette.eyeColor} />
-            <circle cx="16" cy="19" r="1.3" fill="#08080C" />
-            <circle cx="28" cy="19" r="1.3" fill="#08080C" />
-          </>
-        ) : mood === 'error' ? (
-          // Glitchy Red Crossed Eyes
-          <>
-            <path d="M14 17L18 21M18 17L14 21" stroke="#FF4D4D" strokeWidth="2.2" strokeLinecap="round" />
-            <path d="M26 17L30 21M30 17L26 21" stroke="#FF4D4D" strokeWidth="2.2" strokeLinecap="round" />
-          </>
-        ) : mood === 'searching' ? (
-          // Darting Sideways Radar Gaze
-          <>
-            <circle cx="18" cy="19" r="2.8" fill={palette.eyeColor} />
-            <circle cx="30" cy="19" r="2.8" fill={palette.eyeColor} />
-            <circle cx="19" cy="18.5" r="0.9" fill="#08080C" />
-            <circle cx="31" cy="18.5" r="0.9" fill="#08080C" />
-          </>
-        ) : isBlinking ? (
-          // Fluid Elastic Blink Slits
-          <>
-            <line x1="13.5" y1="20" x2="19.5" y2="20" stroke={palette.eyeColor} strokeWidth="2.2" strokeLinecap="round" />
-            <line x1="24.5" y1="20" x2="30.5" y2="20" stroke={palette.eyeColor} strokeWidth="2.2" strokeLinecap="round" />
-          </>
-        ) : (
-          // Grok-style Expressive Pupils with Curious Micro-Saccade Shift
-          <motion.g
-            animate={{
-              x: [0, 1.2, 0, -1, 0],
-              y: [0, -0.8, 0, 0.6, 0],
-            }}
-            transition={{ repeat: Infinity, duration: 4.2, ease: 'easeInOut' }}
-          >
-            {/* Left Eye */}
-            <circle cx="16.5" cy="19.5" r="2.9" fill={palette.eyeColor} />
-            <circle cx="17.6" cy="18.4" r="1.1" fill="#00F0FF" />
-            <circle cx="15.8" cy="20.2" r="0.6" fill="#FFFFFF" />
-
-            {/* Right Eye */}
-            <circle cx="27.5" cy="19.5" r="2.9" fill={palette.eyeColor} />
-            <circle cx="28.6" cy="18.4" r="1.1" fill="#00F0FF" />
-            <circle cx="26.8" cy="20.2" r="0.6" fill="#FFFFFF" />
-          </motion.g>
-        )}
-
-        {/* 7. Expressive Kinetic Mouth */}
-        {mood === 'happy' ? (
-          <path
-            d="M17 25C18.5 28.5 25.5 28.5 27 25"
-            stroke="#FFFFFF"
-            strokeWidth="2.2"
-            strokeLinecap="round"
-          />
-        ) : mood === 'alert' ? (
-          <ellipse cx="22" cy="26" rx="2.2" ry="2.8" fill={palette.eyeColor} />
-        ) : mood === 'working' ? (
-          <path d="M18 26H26" stroke="#00F0FF" strokeWidth="1.8" strokeLinecap="round" />
-        ) : mood === 'error' ? (
-          <path d="M17 27Q20 24.5 22 27T27 26" stroke="#FF4D4D" strokeWidth="1.8" strokeLinecap="round" />
-        ) : (
-          // Quirky Asymmetric Grok Half-Smile
-          <path
-            d="M18 25.5C19.5 27 24.5 27.5 26.5 25"
-            stroke="#FFFFFF"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-          />
-        )}
+              {/* Right Eye Capsule (Slightly squints/tilts during inquisitive gaze) */}
+              <motion.rect
+                x="24.5"
+                y="14"
+                width="7"
+                height="15"
+                rx="3.5"
+                fill="#FFFFFF"
+                animate={
+                  gaze === 'inquisitive'
+                    ? { y: 16.5, height: 11.5, rotate: -6, scaleY: 0.85 }
+                    : { y: 14, height: 15, rotate: 0, scaleY: 1.0 }
+                }
+                style={{ originX: '28px', originY: '21.5px' }}
+                transition={springTransition}
+              />
+            </>
+          )}
+        </motion.g>
       </svg>
     </motion.div>
   );
