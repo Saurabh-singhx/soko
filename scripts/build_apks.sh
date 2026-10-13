@@ -149,6 +149,8 @@ import android.webkit.WebViewClient;
 import android.view.Window;
 import android.view.WindowManager;
 import android.graphics.Color;
+import java.io.InputStream;
+import java.io.ByteArrayOutputStream;
 
 public class MainActivity extends Activity {
     private WebView webView;
@@ -172,9 +174,30 @@ public class MainActivity extends Activity {
         settings.setAllowUniversalAccessFromFileURLs(true);
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(true);
+        settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
 
-        webView.setWebViewClient(new WebViewClient());
-        webView.loadUrl("file:///android_asset/index.html");
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
+                android.util.Log.e("SokoApp", "Resource error on " + failingUrl + ": " + description);
+            }
+        });
+
+        try {
+            InputStream is = getAssets().open("index.html");
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            byte[] buf = new byte[4096];
+            int read;
+            while ((read = is.read(buf)) != -1) {
+                baos.write(buf, 0, read);
+            }
+            is.close();
+            String htmlContent = baos.toString("UTF-8");
+            webView.loadDataWithBaseURL("file:///android_asset/", htmlContent, "text/html", "UTF-8", null);
+        } catch (Exception e) {
+            webView.loadUrl("file:///android_asset/index.html");
+        }
+
         setContentView(webView);
     }
 
@@ -248,11 +271,17 @@ EOF
   fi
 
   # 4. Compile Resources with AAPT2
+  local AAPT_ASSETS=""
+  if [ -d "${WORK}/assets" ] && [ "$(ls -A "${WORK}/assets")" ]; then
+    AAPT_ASSETS="-A ${WORK}/assets"
+  fi
+
   "${AAPT2}" compile --dir "${WORK}/res" -o "${WORK}/res.zip"
   "${AAPT2}" link -I "${PLATFORM_JAR}" \
     --auto-add-overlay \
     -R "${WORK}/res.zip" \
     --manifest "${WORK}/AndroidManifest.xml" \
+    ${AAPT_ASSETS} \
     --java "${WORK}/gen" \
     -o "${WORK}/unaligned.apk"
 
@@ -268,14 +297,9 @@ EOF
     --output "${WORK}/dex" \
     $(find "${WORK}/obj" -name "*.class")
 
-  # 7. Add DEX and Assets to APK
+  # 7. Add DEX to APK
   cd "${WORK}/dex"
   zip -u "${WORK}/unaligned.apk" classes.dex
-  
-  if [ -d "${WORK}/assets" ] && [ "$(ls -A "${WORK}/assets")" ]; then
-    cd "${WORK}/assets"
-    zip -ur "${WORK}/unaligned.apk" .
-  fi
 
   # 8. Align APK with Zipalign
   cd "${WORK}"
