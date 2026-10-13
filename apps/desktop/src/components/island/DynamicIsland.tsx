@@ -58,8 +58,8 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
   // Dynamic avatar size: significantly increased when notification is visible & when clicked
   const getAvatarSize = () => {
     if (mode === 'notification') {
-      // 48px when notification is visible, 56px when clicked on bot!
-      return isBotClicked ? 56 : 48;
+      // 48px when notification is visible, 64px when clicked on bot!
+      return isBotClicked ? 64 : 48;
     }
     if (isBotClicked) {
       return 42;
@@ -75,7 +75,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
       case 'compact':
         return { width: isBotClicked ? 212 : 196, height: isBotClicked ? 46 : 42 };
       case 'notification':
-        return { width: isBotClicked ? 420 : 396, height: isBotClicked ? 90 : 84 };
+        return { width: isBotClicked ? 446 : 400, height: isBotClicked ? 98 : 86 };
       case 'cli':
         return { width: 428, height: 102 };
       case 'transfer':

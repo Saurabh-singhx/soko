@@ -1,91 +1,113 @@
 # Feature Research & Engineering: Grok Bot Monochrome Animation System
 
-> **Feature Goal**: Replicate the iconic, minimalist **Grok Bot** animation language in a pure **Black & White (Monochrome OLED)** design. This includes organic capsule eye morphing, realistic saccade gaze tracking, asymmetric inquisitive head/eye cocking, elastic razor blinks, and responsive robotic ear-fin kinematics.
+> **Feature Goal**: Replicate the iconic, minimalist **Grok Bot** animation language in a pure **Black & White (Monochrome OLED)** design. This includes organic capsule eye morphing, realistic saccade gaze tracking, asymmetric inquisitive head/eye cocking, elastic razor blinks, zero-overflow screen clipping, grounded non-bouncing hardware poise, and responsive robotic ear-fin kinematics.
 
 ---
 
 ## 1. Aesthetic Philosophy: Pure Monochrome (Black & White)
 
-Unlike traditional colorful or cartoonish avatars, the **Grok Bot** design language is rooted in high-contrast minimalism:
+Unlike traditional colorful or cartoonish avatars, the **Grok Bot** design language (pioneered by Benji Taylor and the SpaceXAI / xAI design team) is rooted in high-contrast minimalism:
 
-* **Pure OLED Deep Black (`#000000` / `#0A0A0C`)**: Provides an infinite contrast canvas without distracting visual noise.
-* **Stark Luminous White (`#FFFFFF`)**: The eyes are clean, geometric white capsules with a subtle ambient bloom (`drop-shadow: 0 0 8px rgba(255, 255, 255, 0.7)`).
+* **Pure OLED Deep Black (`#000000` / `#050507`)**: Provides an infinite contrast canvas without distracting visual noise.
+* **Stark Luminous White (`#FFFFFF`)**: The eyes are clean, geometric white capsules with a subtle ambient bloom (`filter: url(#eye-bloom)`).
 * **Zero Cartoon Clutter**: No colorful gradients, mouth outlines, or cartoon blush circles. Emotion is conveyed purely through **geometric eye morphology and spring physics**.
 * **Monochrome Metallic Ear-Fins**: Minimalist aerodynamic audio fins rendered in deep matte graphite with crisp white neon rim strokes.
+* **Grounded Hardware Poise (No Bouncing)**: A real robot or sleek AI device does not bounce up and down like a rubber bobblehead. The helmet and visor remain physically grounded, confident, and still. All dynamic intelligence originates from the **eyes themselves**.
 
 ---
 
-## 2. Grok Bot Eye Kinematics & Morphing Geometry
+## 2. Root Cause Analysis: Eye Overflow & Clipping Fix
+
+### A. The Incident (`p_screenshots/Screenshot From 2026-10-13 06-09-54.png`)
+In previous builds, when the bot looked upward or triggered inquisitive saccades, the white eye capsules visibly poked through the top rim of the circular black visor dome, spilling into the black Dynamic Island background.
+
+```
+       [EYES POKING OUT (BEFORE)]               [CONTAINED SCREEN CLIP (AFTER)]
+               ┌──┐ ┌──┐                                 ╭───────╮
+         ╭─────│  │─│  │─────╮                     ╭─────│       │─────╮
+        │      └──┘ └──┘      │                   │     ┌─┐     ┌─┐     │
+       │    (Visor Circle)     │                 │      │ │     │ │      │
+        │                     │                   │     └─┘     └─┘     │
+         ╰───────────────────╯                     ╰───────────────────╯
+          (No SVG ClipPath)                        (Hard SVG #grok-visor-screen Clip)
+```
+
+### B. Technical Causes
+1. **Absence of SVG `<clipPath>`**: The SVG elements were drawn in painter's order without a boundary mask. Any translation or scale that exceeded the circle was rendered in open space.
+2. **Transform Stacking**: Framer Motion treats `animate={{ y: ... }}` on SVG `<motion.rect>` as CSS `transform: translateY(...)`. When combined with the parent `<motion.g animate={{ y: ... }}>`, translations stacked, pushing coordinates past the visor's upper rim (`y = 5.5`).
+3. **Continuous Bobbing Loop**: The outer container looped through `y: [0, -1.8, 0, -0.6, 0]`, introducing unpredictable vertical oscillation.
+
+### C. The Solution: Hard Visor Screen Clipping & Geometric Recalibration
+1. **Hard Screen Mask**:
+   ```xml
+   <clipPath id="grok-visor-screen">
+     <circle cx="22" cy="22" r="14.5" />
+   </clipPath>
+   ```
+   All ocular elements are wrapped inside `<g clipPath="url(#grok-visor-screen)">`. It is geometrically impossible for any pixel to render outside the circular screen boundary.
+2. **Optical Centering**:
+   - Visor center: `cx = 22, cy = 22`.
+   - Eye baseline bottom: `BASE_BOTTOM = 27.5`.
+   - Neutral eye top: `y = 16.5`, height: `11.0`. Eye center = `22.0` (exact center).
+   - Distance to visor rim: `> 5.5px` of safety margin on all sides. Even during maximum saccades, eyes never touch the boundary.
+
+---
+
+## 3. Grok Bot Eye Kinematics & Morphing Geometry
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
 │                        GROK BOT EYE MORPH STATES                       │
 ├───────────────────┬───────────────────┬────────────────────────────────┤
-│ 1. NEUTRAL IDLE   │ 2. ASYMMETRIC     │ 3. THINKING / CLI RUNNING      │
+│ 1. NEUTRAL IDLE   │ 2. ASYMMETRIC     │ 3. ACTIVE SCAN SWEEP           │
 │                   │    INQUISITIVE    │                                │
-│    ┌─┐     ┌─┐    │    ┌─┐            │    ┌───────┐     ┌───────┐     │
-│    │ │     │ │    │    │ │     ┌─┐    │    └───────┘     └───────┘     │
-│    └─┘     └─┘    │    └─┘     └─┘    │   (Horizontal pulsing bars)    │
+│    ┌─┐     ┌─┐    │    ┌─┐            │   ───► ───►                    │
+│    │ │     │ │    │    │ │     ┌─┐    │    ┌─┐     ┌─┐                 │
+│    └─┘     └─┘    │    └─┘     └─┘    │    └─┘     └─┘                 │
+│  (Centered capsules)│ (Top-down drop)  │ (Smooth horizontal pan)        │
 ├───────────────────┼───────────────────┼────────────────────────────────┤
-│ 4. RAZOR BLINK    │ 5. HAPPY SMIRK    │ 6. ALERT / SURPRISED           │
+│ 4. RAZOR BLINK    │ 5. THINKING UP    │ 6. CLI SCANNING BARS           │
 │                   │                   │                                │
-│    ───     ───    │    ╭─╮     ╭─╮    │      ███            ███        │
-│  (Razor slit)     │   (Upward arcs)   │     (Wide orb dilation)        │
+│    ───     ───    │    ┌─┐     ┌─┐    │    ┌───────┐     ┌───────┐     │
+│   (Anchored at 27.5)│  │ │     │ │    │    └───────┘     └───────┘     │
+│                   │  (Wider aperture) │   (Laser terminal sweep)       │
 └───────────────────┴───────────────────┴────────────────────────────────┘
 ```
 
-### A. The Eye Capsule Geometry
-* Each eye is modeled as a dynamic rounded rectangle (`rx: 5px` to `rx: 12px` depending on dilation).
-* **Neutral Dimensions**: Width: 7.5px, Height: 15px.
-* **Aspect Ratio Variation**:
-  * Idle: `1 : 2.0` (tall rounded capsule)
-  * Thinking / Working: `3.5 : 1` (horizontal scanning bar)
-  * Alert: `1 : 1` (perfect luminous circle)
-  * Blink: `8 : 1` (razor-thin horizontal slit)
+### A. The 10-State Gaze Variety Library
+To eliminate repetitive or artificial movement, the bot features a rich library of authentic behavioral targets:
+1. **`forward_focus`**: Centered, calm, observant.
+2. **`glance_left`**: Fast saccade jump left (`x = -2.6`), 3D visor perspective compression on left eye (`scaleX: 0.90`).
+3. **`glance_right`**: Fast saccade jump right (`x = 2.6`), 3D compression on right eye (`scaleX: 0.90`).
+4. **`inquisitive_right`**: Signature Grok smirk. Right upper eyelid lowers from top (`topY: 21.2`, `height: 6.3`, `tilt: -5.5°`), thoughtful head cock (`2.4°`).
+5. **`inquisitive_left`**: Inverted curious smirk with left eyelid lowering.
+6. **`thinking_up`**: Cognitive search upward (`y = -1.5`), upper lids retract slightly (`height: 11.9`).
+7. **`scan_sweep`**: Active autonomous sweep across the screen from left to right across 1.6s.
+8. **`concentrated_squint`**: Both eyelids narrow from top (`height: 8.3`), deep focus.
+9. **`wide_perk`**: Momentary discovery widening (`height: 12.2`, `scaleX: 1.05`).
+10. **`relaxed_chill`**: Calm half-lidded rest state (`height: 9.0`).
 
-### B. Biological Ballistic Saccades vs. Linear Sliding
-Real biological and high-end animatronic eyes (Pixar, Vector, Grok Bot) do **not** slide slowly across the face like elevators:
-1. **Ballistic Saccades**: Gaze changes occur via instantaneous ballistic jumps (duration: **40–60ms** via high-stiffness spring `stiffness: 950, damping: 46`).
-2. **Organic Fixation Pauses**: After each jump, the gaze locks in place for a randomized duration (**1.4s to 3.8s**), observing its surroundings.
-3. **Probabilistic Focus Distribution**: Gaze targets follow a realistic focus hierarchy (45% straight center, 20% glance left, 15% glance right, 10% look up, 10% inquisitive cock).
-4. **Lid-Saccade Vertical Coupling (Listing's Eyelid Law)**:
-   * When gazing **upward** (`y = -2.4`), upper eyelids naturally retract higher (`y = 12.8, height = 16.2`), widening the ocular aperture.
-   * When gazing **downward**, upper eyelids droop downward over the pupil.
-5. **3D Visor Spherical Curvature**: As an eye approaches the lateral perimeter of the helmet, it compresses horizontally along the X-axis (`scaleX: 0.91`), simulating realistic 3D perspective distortion around a spherical glass dome.
+### B. True Top-Down Eyelid Kinematics (Listing's Eyelid Law)
+When an eye half-closes or blinks, the closure **must happen strictly from the top down**:
+* **Fixed Bottom Anchor**: Both eyes share `BASE_BOTTOM = 27.5px`.
+* **Top-Down Closure Math**:
+  $$\text{Top} = 16.5 + \Delta_{\text{drop}}$$
+  $$\text{Height} = 27.5 - \text{Top} = 11.0 - \Delta_{\text{drop}}$$
+  $$\text{Bottom} = \text{Top} + \text{Height} \equiv 27.5\text{px (constant)}$$
+* During an inquisitive squint, $\Delta_{\text{drop}} = 4.7\text{px}$. The top drops from 16.5 to 21.2. The bottom **never moves**.
+* During a blink, $\Delta_{\text{drop}} = 9.7\text{px}$. The top drops to 26.2 (razor slit of height 1.3px at the bottom baseline).
 
-### C. The Organic Eyelid Blink Engine
-Rather than symmetrical linear fades, real eyelids use fast ballistic descent and spring rebound:
-* **Descent Phase (50ms)**: Eyelids collapse downward to a razor slit at `y = 22.5`.
-* **Rebound Phase (120ms)**: Elastic rebound springs the eyelid back open to the current fixation height.
-* **Double-Blinks**: 12% probability of a rapid double-blink sequence (common when real creatures refocus).
-* **Saccadic Blink Suppression**: 18% probability of triggering a natural blink during a major gaze jump.
-
-### D. The Asymmetric "Quirky Cocked" Expression (Top-Down Lid Closing)
-Grok's signature witty personality comes from **asymmetry and realistic eyelid physics**:
-* **Grounded Baseline**: Both eyes share an identical bottom baseline anchor at `y + height = 29`.
-* **Top-Down Eyelid Closure**: When the right eye half-closes into an inquisitive squint, the bottom edge **never moves upward**. Instead, the top eyelid drops down from `y = 14` to `y = 20` (reducing height from `15` to `9`), with `originY: 29px` keeping the base locked in place.
-* **Curious Cock**: The left eye lifts slightly to `y = 13` (attentive and widened), while the right lid droops from above with a subtle `-4°` tilt.
-* The left ear-fin perks up 15° higher than the right, completing the quizzical cocked stance.
+### C. Organic Blinking & Ear-Fin Kinetics
+* **Ballistic Descent**: Upper eyelid snaps down in 45ms.
+* **Spring Reopen**: Snaps back open in 90ms via high-stiffness spring (`stiffness: 1200, damping: 48`).
+* **Double-Blinks**: 14% chance of an immediate second micro-blink.
+* **Autonomous Fin Twitches**: Ear-fins twitch independently (`rotate: [-16°, 12°, -6°, 0°]`) without shaking or wobbling the head.
 
 ---
 
-## 3. Ear-Fin Secondary Motion (Antennae Kinematics)
+## 4. Bot Size Scaling in Dynamic Island
 
-The aerodynamic audio ear-fins flanking the visor have their own independent spring physics:
-
-1. **Spring Lag**: When the head bobs down, the ear-fins lag behind by 80ms before rebounding.
-2. **Autonomous Micro-Twitches**: An independent periodic timer triggers a double-twitch on the left or right fin (`rotate: [-18°, +12°, -5°, 0°]`) simulating active acoustic sensing.
-3. **Alert Perk**: When an incoming notification arrives, both fins snap upward into a 30° perked stance with spring vibration.
-
----
-
-## 4. State Machine Transition Table
-
-| System Event | Bot State | Eye Shape | Gaze Direction | Ear-Fin Behavior |
-| :--- | :--- | :--- | :--- | :--- |
-| **Idle Standby** | `idle` | Tall rounded capsules | Micro-saccades (left/center/right) | Gentle breathing, random twitches |
-| **Incoming Notif** | `alert` | Wide luminous circles | Centered, slight forward expansion | Snaps up to +30° perked stance |
-| **CLI Running** | `working` | Horizontal scanning bars | Subtle oscillating pulse | Tilted back with focus stance |
-| **CLI Succeeded** | `happy` | Curved upward arcs `(^^)` | Lifted upward gaze | Joyful bounce oscillation |
-| **Error / Fault** | `error` | Narrowed squinted slits | Tilted asymmetric angles | Drooped downward (-15°) |
-| **BT Scanning** | `searching`| Narrowed capsules | Sweeping side-to-side radar | Alternating ear-fin tilt |
+The avatar dynamically adapts to user interactions and notifications:
+* **Compact Pill**: `32px` mascot avatar in a `196px × 42px` island.
+* **Notification Visible**: Enlarges to `48px` in a `400px × 86px` island.
+* **Notification Clicked (Enlarged Bot)**: Enlarges to **`64px`** in a `446px × 98px` island, offering a showcase view of the Grok Bot OLED face with full sub-pixel precision.
