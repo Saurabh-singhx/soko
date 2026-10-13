@@ -13,7 +13,8 @@
     "preview:desktop": "npm --prefix apps/desktop run preview",
     "build:apk": "bash scripts/build_apks.sh",
     "bridge": "node scripts/soko_bridge.js",
-    "start": "node scripts/soko_bridge.js"
+    "start": "node scripts/soko_bridge.js",
+    "test": "node scripts/test_integration.js"
   },
   "keywords": [
     "dynamic-island",
