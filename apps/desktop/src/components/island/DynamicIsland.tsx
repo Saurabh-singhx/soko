@@ -159,9 +159,9 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
   // Fluid spring physics transition config (calibrated for silky Apple-style motion)
   const springTransition = {
     type: 'spring',
-    stiffness: 280,
-    damping: 26,
-    mass: 0.8,
+    stiffness: 260,
+    damping: 25,
+    mass: 0.75,
   };
 
   // Dynamic avatar size: significantly increased when notification is visible & when clicked
@@ -358,7 +358,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         onClick={handlePillClick}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
-        className={`relative bg-[#08090A] border rounded-[26px] shadow-linear-island flex px-2.5 overflow-hidden backdrop-blur-3xl font-sans transition-all ${
+        className={`relative bg-[#08090A] border rounded-[26px] shadow-linear-island flex px-2.5 overflow-hidden backdrop-blur-3xl font-sans transition-colors duration-200 ${
           mode === 'compact'
             ? 'cursor-pointer border-white/10 hover:border-white/20 active:scale-[0.99] items-center'
             : mode === 'notification'
@@ -371,9 +371,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         <motion.div
           layout
           transition={springTransition}
-          className={`shrink-0 cursor-pointer pr-1.5 flex items-center justify-center ${
-            mode === 'notification' ? 'self-start mt-1' : 'self-center'
-          }`}
+          className="shrink-0 cursor-pointer pr-1.5 flex items-center justify-center self-start mt-1"
           onClick={(e) => {
             if (mode === 'compact') {
               // Click anywhere on pill or mascot triggers notification
@@ -421,7 +419,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                   opacity: 0,
                   scale: 0.94,
                   filter: 'blur(2px)',
-                  transition: { duration: 0.14, ease: 'easeOut' },
+                  transition: { duration: 0.12, ease: 'easeOut' },
                 }}
                 transition={{
                   duration: 0.22,

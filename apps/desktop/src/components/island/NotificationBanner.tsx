@@ -12,6 +12,7 @@ interface NotificationBannerProps {
 /**
  * Linear-styled Notification Card inside the Dynamic Island.
  * Features authentic app icons in their original brand colors.
+ * Choreographed entry with silky Apple-style spring and staggered reveals.
  * Clicking on the notification text copies message text to clipboard with instant feedback.
  * Action buttons retain only the dismiss action.
  */
@@ -36,22 +37,29 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: -6 }}
-      animate={{ opacity: 1, y: 0 }}
+      initial={{ opacity: 0, scale: 0.97, y: 4, filter: 'blur(4px)' }}
+      animate={{ opacity: 1, scale: 1, y: 0, filter: 'blur(0px)' }}
       exit={{
         opacity: 0,
         scale: 0.96,
         filter: 'blur(3px)',
         transition: { duration: 0.16, ease: [0.32, 0, 0.67, 0] },
       }}
-      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+      transition={{
+        duration: 0.28,
+        delay: 0.03,
+        ease: [0.16, 1, 0.3, 1],
+      }}
       className="flex items-start justify-between w-full gap-2 px-1 py-0.5 font-sans select-none"
     >
       {/* Brand Icon Badge + Details Block */}
       <div className="flex items-start gap-2.5 min-w-0 flex-1">
         {/* Authentic Brand Icon Container with Theme Integration */}
-        <div
-          className="shrink-0 w-7 h-7 rounded-[7px] flex items-center justify-center border shadow-sm relative overflow-hidden transition-all mt-0.5"
+        <motion.div
+          initial={{ scale: 0.84, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ duration: 0.24, delay: 0.05, ease: [0.16, 1, 0.3, 1] }}
+          className="shrink-0 w-7 h-7 rounded-[7px] flex items-center justify-center border shadow-sm relative overflow-hidden mt-0.5"
           style={{
             backgroundColor: brand.badgeBg,
             borderColor: 'rgba(255, 255, 255, 0.12)',
@@ -63,7 +71,7 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
             packageName={notification.packageName}
             size={16}
           />
-        </div>
+        </motion.div>
 
         {/* Interactive Text Block - Click to Copy */}
         <div
@@ -71,7 +79,12 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
           className="flex flex-col min-w-0 flex-1 cursor-pointer group/text"
           title="Click to copy message"
         >
-          <div className="flex items-center gap-1.5 min-w-0">
+          <motion.div
+            initial={{ opacity: 0, x: -3 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.24, delay: 0.07, ease: [0.16, 1, 0.3, 1] }}
+            className="flex items-center gap-1.5 min-w-0"
+          >
             <span
               className="text-[10px] font-semibold tracking-wider uppercase font-mono shrink-0"
               style={{ color: brand.color }}
@@ -100,12 +113,15 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
                 </motion.span>
               )}
             </AnimatePresence>
-          </div>
+          </motion.div>
 
           {/* Full Readable Body Text:
               Stretches vertically without scroll.
               Scroll activates ONLY if content reaches screen limit (min(65vh, 440px)). */}
-          <div
+          <motion.div
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.26, delay: 0.09, ease: [0.16, 1, 0.3, 1] }}
             className={`text-xs mt-1 tracking-normal leading-relaxed break-words whitespace-pre-wrap select-text max-h-[min(65vh,440px)] overflow-y-auto pr-1 transition-colors ${
               copied
                 ? 'text-linear-green/90'
@@ -113,12 +129,17 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
             }`}
           >
             {notification.body}
-          </div>
+          </motion.div>
         </div>
       </div>
 
       {/* Action Buttons: Only Dismiss (X) */}
-      <div className="flex items-center gap-1 shrink-0 self-start mt-0.5">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.85 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.22, delay: 0.08, ease: [0.16, 1, 0.3, 1] }}
+        className="flex items-center gap-1 shrink-0 self-start mt-0.5"
+      >
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -129,7 +150,7 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
         >
           <X size={13} />
         </button>
-      </div>
+      </motion.div>
     </motion.div>
   );
 };
