@@ -43,18 +43,22 @@ Unlike traditional colorful or cartoonish avatars, the **Grok Bot** design langu
   * Alert: `1 : 1` (perfect luminous circle)
   * Blink: `8 : 1` (razor-thin horizontal slit)
 
-### B. Micro-Saccade Gaze Physics
-The eyes do not remain static when idle. Every 2.5 to 4 seconds, the eyes execute a smooth **micro-saccade**:
-1. Eyes glide together across the X/Y plane: `x: [-4px, +4px]`, `y: [-2px, +2px]`.
-2. Asymmetric inertia: The eye closest to the movement direction moves first by a 25ms lead time, while the trailing eye follows elastically.
-3. Deceleration curve: Uses an exponential ease-out curve (`cubic-bezier(0.16, 1, 0.3, 1)`), avoiding robotic linear transitions.
+### B. Biological Ballistic Saccades vs. Linear Sliding
+Real biological and high-end animatronic eyes (Pixar, Vector, Grok Bot) do **not** slide slowly across the face like elevators:
+1. **Ballistic Saccades**: Gaze changes occur via instantaneous ballistic jumps (duration: **40–60ms** via high-stiffness spring `stiffness: 950, damping: 46`).
+2. **Organic Fixation Pauses**: After each jump, the gaze locks in place for a randomized duration (**1.4s to 3.8s**), observing its surroundings.
+3. **Probabilistic Focus Distribution**: Gaze targets follow a realistic focus hierarchy (45% straight center, 20% glance left, 15% glance right, 10% look up, 10% inquisitive cock).
+4. **Lid-Saccade Vertical Coupling (Listing's Eyelid Law)**:
+   * When gazing **upward** (`y = -2.4`), upper eyelids naturally retract higher (`y = 12.8, height = 16.2`), widening the ocular aperture.
+   * When gazing **downward**, upper eyelids droop downward over the pupil.
+5. **3D Visor Spherical Curvature**: As an eye approaches the lateral perimeter of the helmet, it compresses horizontally along the X-axis (`scaleX: 0.91`), simulating realistic 3D perspective distortion around a spherical glass dome.
 
-### C. The Elastic Razor Blink Cycle
-Standard animations use slow fades or simple line swaps. Grok Bot uses a rapid, high-spring snap:
-* **0ms**: Eye starts at 100% height.
-* **45ms**: Rapid elastic collapse to 5% height (`scaleY: 0.05`).
-* **95ms**: High-velocity expansion with overshoot bounce (`scaleY: 1.15`).
-* **140ms**: Settles back to resting state (`scaleY: 1.0`).
+### C. The Organic Eyelid Blink Engine
+Rather than symmetrical linear fades, real eyelids use fast ballistic descent and spring rebound:
+* **Descent Phase (50ms)**: Eyelids collapse downward to a razor slit at `y = 22.5`.
+* **Rebound Phase (120ms)**: Elastic rebound springs the eyelid back open to the current fixation height.
+* **Double-Blinks**: 12% probability of a rapid double-blink sequence (common when real creatures refocus).
+* **Saccadic Blink Suppression**: 18% probability of triggering a natural blink during a major gaze jump.
 
 ### D. The Asymmetric "Quirky Cocked" Expression (Top-Down Lid Closing)
 Grok's signature witty personality comes from **asymmetry and realistic eyelid physics**:

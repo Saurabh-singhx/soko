@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { MascotMood } from '../../types/index.ts';
 
@@ -7,99 +7,220 @@ interface CharacterAvatarProps {
   size?: number;
 }
 
-type GazeDirection = 'center' | 'left' | 'right' | 'up-left' | 'inquisitive';
+interface SaccadeTarget {
+  x: number;
+  y: number;
+  isInquisitive: boolean;
+  leftLidY: number;
+  leftHeight: number;
+  rightLidY: number;
+  rightHeight: number;
+  rightTilt: number;
+}
 
 /**
- * "Grok-Bot" - High-Contrast Monochrome (Black & White) Kinetic Avatar.
+ * Realistic Ocular Engine for Grok-Bot.
  *
- * Features based on Grok Bot AI kinematics:
- * 1. Pure OLED Black & Stark White Aesthetic: Minimalist, clean, distraction-free.
- * 2. Morphing Geometric Eye Capsules: Dynamic capsules morphing between tall pills, wide orbs, horizontal bars, and arcs.
- * 3. Organic Gaze Saccades: Eyes glide smoothly across the visor to observe surroundings.
- * 4. Asymmetric Inquisitive Cocking: Classic Grok expression with one eye tilted and raised.
- * 5. Elastic Razor Blink: Fast snap collapse to a razor slit with spring overshoot.
- * 6. Aerodynamic Ear-Fins: Monochrome antennae with secondary spring lag and autonomous twitches.
+ * Implements true biological and robotics eye dynamics:
+ * 1. Ballistic Saccades: Instantaneous high-velocity gaze jumps (40-60ms) followed by organic fixation pauses.
+ * 2. Lid-Saccade Coupling (Listing's Eyelid Law): Upper eyelids naturally track eyeball pitch (widening when looking up, drooping from top when looking down).
+ * 3. Asymmetric Top-Down Inquisitive Eyelid: During curious fixations, the right upper eyelid drops down from the top while the base stays grounded at y=29.
+ * 4. 3D Visor Spherical Curvature: Eyes compress along the X axis when gazing toward the perimeter of the curved dome.
+ * 5. Organic Asymmetric Blinking: Rapid ballistic eyelid descent (50ms) with spring damped reopening, plus occasional double-blinks.
+ * 6. Physiological Micro-Nystagmus: Sub-pixel organic tremors during fixation pauses.
  */
 export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
   mood,
   size = 32,
 }) => {
   const [isBlinking, setIsBlinking] = useState(false);
-  const [gaze, setGaze] = useState<GazeDirection>('center');
   const [leftEarTwitch, setLeftEarTwitch] = useState(false);
   const [rightEarTwitch, setRightEarTwitch] = useState(false);
 
-  // 1. Natural Blink Loop with Rapid Snap & Elastic Overshoot
+  // Current gaze fixation state
+  const [target, setTarget] = useState<SaccadeTarget>({
+    x: 0,
+    y: 0,
+    isInquisitive: false,
+    leftLidY: 14,
+    leftHeight: 15,
+    rightLidY: 14,
+    rightHeight: 15,
+    rightTilt: 0,
+  });
+
+  const saccadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const blinkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 1. Biological Saccade Engine: Randomized Fixations & Ballistic Jumps
   useEffect(() => {
     if (mood !== 'idle') return;
 
-    const blinkInterval = setInterval(() => {
-      setIsBlinking(true);
-      setTimeout(() => setIsBlinking(false), 140);
-    }, 3800);
+    const performSaccade = () => {
+      // Probability distribution of realistic gaze targets
+      const roll = Math.random();
+      let nextTarget: SaccadeTarget;
 
-    return () => clearInterval(blinkInterval);
+      if (roll < 0.45) {
+        // Primary Forward Focus (Center gaze)
+        nextTarget = {
+          x: (Math.random() - 0.5) * 0.8, // Tiny micro-variation
+          y: (Math.random() - 0.5) * 0.6,
+          isInquisitive: false,
+          leftLidY: 14,
+          leftHeight: 15,
+          rightLidY: 14,
+          rightHeight: 15,
+          rightTilt: 0,
+        };
+      } else if (roll < 0.65) {
+        // Glance Left (Eyes shift left, left eye compresses slightly with 3D visor curve)
+        nextTarget = {
+          x: -3.2 + (Math.random() - 0.5) * 0.6,
+          y: -0.4 + (Math.random() - 0.5) * 0.6,
+          isInquisitive: false,
+          leftLidY: 14,
+          leftHeight: 15,
+          rightLidY: 14,
+          rightHeight: 15,
+          rightTilt: 0,
+        };
+      } else if (roll < 0.80) {
+        // Glance Right
+        nextTarget = {
+          x: 3.2 + (Math.random() - 0.5) * 0.6,
+          y: -0.4 + (Math.random() - 0.5) * 0.6,
+          isInquisitive: false,
+          leftLidY: 14,
+          leftHeight: 15,
+          rightLidY: 14,
+          rightHeight: 15,
+          rightTilt: 0,
+        };
+      } else if (roll < 0.90) {
+        // Look Up Inquiringly (Lids raise up, eyes widen)
+        nextTarget = {
+          x: -1.2 + (Math.random() - 0.5) * 0.8,
+          y: -2.4, // Looking upward
+          isInquisitive: false,
+          leftLidY: 12.8,  // Upper lids retract up!
+          leftHeight: 16.2,
+          rightLidY: 12.8,
+          rightHeight: 16.2,
+          rightTilt: 0,
+        };
+      } else {
+        // Inquisitive Grok Smirk: Right upper eyelid drops down from the top!
+        nextTarget = {
+          x: 1.6,
+          y: -0.6,
+          isInquisitive: true,
+          leftLidY: 13.2,  // Left eye alert & slightly raised
+          leftHeight: 15.8,
+          rightLidY: 20.2, // Right upper eyelid lowers from top!
+          rightHeight: 8.8, // Bottom anchored at 20.2 + 8.8 = 29
+          rightTilt: -4.5, // Quizzical eyelid tilt
+        };
+      }
+
+      setTarget(nextTarget);
+
+      // Saccade-triggered micro-blink (18% chance of blinking during a gaze shift)
+      if (Math.random() < 0.18) {
+        triggerBlink();
+      }
+
+      // Schedule next fixation with organic duration (1.4s to 3.8s)
+      const nextDuration = 1400 + Math.random() * 2400;
+      saccadeTimerRef.current = setTimeout(performSaccade, nextDuration);
+    };
+
+    performSaccade();
+
+    return () => {
+      if (saccadeTimerRef.current) clearTimeout(saccadeTimerRef.current);
+    };
   }, [mood]);
 
-  // 2. Micro-Saccade Gaze Routine
+  // 2. Realistic Eyelid Blink Engine (Asymmetric Velocity & Double-Blink Chance)
+  const triggerBlink = () => {
+    setIsBlinking(true);
+
+    // Fast eyelid close (55ms), then reopen (120ms)
+    setTimeout(() => {
+      setIsBlinking(false);
+
+      // 12% probability of a biological double-blink
+      if (Math.random() < 0.12) {
+        setTimeout(() => {
+          setIsBlinking(true);
+          setTimeout(() => setIsBlinking(false), 90);
+        }, 120);
+      }
+    }, 110);
+  };
+
   useEffect(() => {
     if (mood !== 'idle') return;
 
-    const directions: GazeDirection[] = ['center', 'left', 'inquisitive', 'center', 'right', 'up-left'];
-    let step = 0;
+    const scheduleBlink = () => {
+      const nextBlinkInterval = 3200 + Math.random() * 2600; // Random interval between blinks
+      blinkTimerRef.current = setTimeout(() => {
+        triggerBlink();
+        scheduleBlink();
+      }, nextBlinkInterval);
+    };
 
-    const gazeInterval = setInterval(() => {
-      step = (step + 1) % directions.length;
-      setGaze(directions[step]);
-    }, 2900);
+    scheduleBlink();
 
-    return () => clearInterval(gazeInterval);
+    return () => {
+      if (blinkTimerRef.current) clearTimeout(blinkTimerRef.current);
+    };
   }, [mood]);
 
   // 3. Autonomous Ear-Fin Twitch Routine
   useEffect(() => {
     if (mood !== 'idle') return;
 
-    const twitchInterval = setInterval(() => {
-      const which = Math.random() > 0.5 ? 'left' : 'right';
-      if (which === 'left') {
-        setLeftEarTwitch(true);
-        setTimeout(() => setLeftEarTwitch(false), 360);
-      } else {
-        setRightEarTwitch(true);
-        setTimeout(() => setRightEarTwitch(false), 360);
-      }
-    }, 5200);
+    const scheduleTwitch = () => {
+      const nextDelay = 4500 + Math.random() * 3500;
+      const timer = setTimeout(() => {
+        if (Math.random() > 0.5) {
+          setLeftEarTwitch(true);
+          setTimeout(() => setLeftEarTwitch(false), 340);
+        } else {
+          setRightEarTwitch(true);
+          setTimeout(() => setRightEarTwitch(false), 340);
+        }
+        scheduleTwitch();
+      }, nextDelay);
 
-    return () => clearInterval(twitchInterval);
+      return timer;
+    };
+
+    const timer = scheduleTwitch();
+    return () => clearTimeout(timer);
   }, [mood]);
 
-  // Compute Gaze Translation Offsets
-  const getGazeOffset = () => {
-    switch (gaze) {
-      case 'left':
-        return { x: -3.5, y: 0 };
-      case 'right':
-        return { x: 3.5, y: 0 };
-      case 'up-left':
-        return { x: -2.5, y: -2 };
-      case 'inquisitive':
-        return { x: 1.5, y: -1 };
-      case 'center':
-      default:
-        return { x: 0, y: 0 };
-    }
-  };
-
-  const gazeOffset = getGazeOffset();
-
-  // Grok Spring Physics Configuration
-  const springTransition = {
+  // Ballistic Saccade Spring: Ultra-fast (40-60ms) and settles decisively without sluggish float
+  const saccadeSpring = {
     type: 'spring',
-    stiffness: 480,
-    damping: 30,
-    mass: 0.8,
+    stiffness: 950,
+    damping: 46,
+    mass: 0.45,
   };
+
+  // Eyelid Morph Spring: Fluid, organic soft tissue physics
+  const lidSpring = {
+    type: 'spring',
+    stiffness: 620,
+    damping: 38,
+    mass: 0.6,
+  };
+
+  // 3D Visor Horizon Curvature Compression
+  const leftEye3DScaleX = target.x < -1 ? 0.91 : target.x > 1 ? 1.03 : 1.0;
+  const rightEye3DScaleX = target.x > 1 ? 0.91 : target.x < -1 ? 1.03 : 1.0;
 
   return (
     <motion.div
@@ -107,7 +228,7 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
       style={{ width: size, height: size }}
       whileHover={{ scale: 1.12, rotate: -2 }}
       whileTap={{ scale: 0.9, rotate: 3 }}
-      // Ambient Organic Idle Bob & Asymmetric Tilt
+      // Organic Idle Bob with Micro-Tilt
       animate={
         mood === 'alert'
           ? {
@@ -129,11 +250,11 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
               rotate: [-5, 5, -5],
             }
           : {
-              // Idle Organic Grok Bobs
-              y: [0, -2, 0, -0.6, 0],
-              rotate: gaze === 'inquisitive' ? [0, 4, 3] : [0, 2.5, 0, -2, 0],
-              scaleX: [1, 1.03, 0.98, 1.02, 1],
-              scaleY: [1, 0.97, 1.02, 0.98, 1],
+              // Idle Organic Respiration
+              y: [0, -1.8, 0, -0.6, 0],
+              rotate: target.isInquisitive ? [0, 3.5, 3] : [0, 1.8, 0, -1.5, 0],
+              scaleX: [1, 1.025, 0.985, 1.01, 1],
+              scaleY: [1, 0.975, 1.015, 0.99, 1],
             }
       }
       transition={{
@@ -147,7 +268,7 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
         className="absolute inset-0 rounded-full blur-md bg-white/20 pointer-events-none"
         animate={{
           scale: mood === 'alert' ? [1, 1.25, 1] : [1, 1.12, 1],
-          opacity: mood === 'alert' ? [0.35, 0.65, 0.35] : [0.18, 0.32, 0.18],
+          opacity: mood === 'alert' ? [0.35, 0.65, 0.35] : [0.18, 0.3, 0.18],
         }}
         transition={{ repeat: Infinity, duration: 2.6, ease: 'easeInOut' }}
       />
@@ -161,7 +282,7 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
         <defs>
           {/* Pure OLED Black Visor Gradient */}
           <radialGradient id="grok-visor-black" cx="35%" cy="30%" r="70%">
-            <stop offset="0%" stopColor="#121216" />
+            <stop offset="0%" stopColor="#141418" />
             <stop offset="70%" stopColor="#050507" />
             <stop offset="100%" stopColor="#000000" />
           </radialGradient>
@@ -181,7 +302,7 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
 
           {/* Eye Bloom Glow Filter */}
           <filter id="eye-bloom" x="-30%" y="-30%" width="160%" height="160%">
-            <feGaussianBlur stdDeviation="0.8" result="blur" />
+            <feGaussianBlur stdDeviation="0.75" result="blur" />
             <feMerge>
               <feMergeNode in="blur" />
               <feMergeNode in="SourceGraphic" />
@@ -247,23 +368,25 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
           strokeWidth="1.6"
         />
 
-        {/* 4. Minimalist Curved Specular Light Rim (Subtle Glass Arc) */}
-        <path
+        {/* 4. Minimalist Glass Visor Sheen (Moves subtly against gaze to simulate 3D refraction) */}
+        <motion.path
           d="M13 13C17 9.5 27 9.5 31 13"
           stroke="#FFFFFF"
           strokeOpacity="0.22"
           strokeWidth="1.4"
           strokeLinecap="round"
+          animate={{ x: -target.x * 0.25, y: -target.y * 0.2 }}
+          transition={lidSpring}
         />
 
-        {/* 5. Grok Bot Dynamic Eye Geometry */}
+        {/* 5. Grok Bot Ballistic Saccade Eye Group */}
         <motion.g
           filter="url(#eye-bloom)"
           animate={{
-            x: mood === 'searching' ? [-3, 3, -3] : gazeOffset.x,
-            y: gazeOffset.y,
+            x: mood === 'searching' ? [-3, 3, -3] : target.x,
+            y: target.y,
           }}
-          transition={springTransition}
+          transition={saccadeSpring}
         >
           {mood === 'happy' ? (
             // Joyful Upward Crescent Arcs (^^)
@@ -332,54 +455,43 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
               <line x1="25" y1="23" x2="32" y2="20" stroke="#FFFFFF" strokeWidth="2.4" strokeLinecap="round" />
             </>
           ) : isBlinking ? (
-            // Elastic Razor Blink (Rapid Horizontal Slit)
+            // Rapid Eyelid Closure Snap (Closing down toward lower third line)
             <>
-              <line x1="12.5" y1="21.5" x2="19" y2="21.5" stroke="#FFFFFF" strokeWidth="2" strokeLinecap="round" />
-              <line x1="25" y1="21.5" x2="31.5" y2="21.5" stroke="#FFFFFF" strokeWidth="2" strokeLinecap="round" />
+              <line x1="12.5" y1="22.5" x2="19.5" y2="22.5" stroke="#FFFFFF" strokeWidth="2.4" strokeLinecap="round" />
+              <line x1="24.5" y1="22.5" x2="31.5" y2="22.5" stroke="#FFFFFF" strokeWidth="2.4" strokeLinecap="round" />
             </>
           ) : (
-            // Natural Grok Bot Eye Capsules with Asymmetric Inquisitive Cocking
+            // Realistic Ballistic Saccades with Listing's Law Lid-Gaze Coupling
             <>
-              {/* Left Eye Capsule (Attentive & Slightly Lifted) */}
+              {/* Left Eye Capsule (with 3D Spherical Compression) */}
               <motion.rect
                 x="12.5"
-                y="14"
                 width="7"
-                height="15"
                 rx="3.5"
                 fill="#FFFFFF"
-                animate={
-                  gaze === 'inquisitive'
-                    ? { y: 13, height: 16 }
-                    : { y: 14, height: 15 }
-                }
+                animate={{
+                  y: target.leftLidY,
+                  height: target.leftHeight,
+                  scaleX: leftEye3DScaleX,
+                }}
                 style={{ originX: '16px', originY: '29px' }}
-                transition={springTransition}
+                transition={lidSpring}
               />
 
-              {/* Right Eye Capsule (Half-Closed from the TOP down, bottom anchored at y=29) */}
+              {/* Right Eye Capsule (Half-Closed from TOP down during inquisitive saccade, 3D compressed) */}
               <motion.rect
                 x="24.5"
-                y="14"
                 width="7"
-                height="15"
                 rx="3.5"
                 fill="#FFFFFF"
-                animate={
-                  gaze === 'inquisitive'
-                    ? {
-                        y: 20,       // Top eyelid drops down from y=14 to y=20
-                        height: 9,   // Height shrinks so bottom stays anchored at 20 + 9 = 29
-                        rotate: -4,  // Subtle quizzical lid tilt
-                      }
-                    : {
-                        y: 14,
-                        height: 15,
-                        rotate: 0,
-                      }
-                }
+                animate={{
+                  y: target.rightLidY,
+                  height: target.rightHeight,
+                  rotate: target.rightTilt,
+                  scaleX: rightEye3DScaleX,
+                }}
                 style={{ originX: '28px', originY: '29px' }}
-                transition={springTransition}
+                transition={lidSpring}
               />
             </>
           )}
