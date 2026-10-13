@@ -790,22 +790,8 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
             strokeWidth="1.5"
           />
 
-          {/* 4. Minimalist Glass Visor Sheen (Micro-parallax against gaze) */}
-          <motion.path
-            d="M14 13C18 10 26 10 30 13"
-            stroke="#FFFFFF"
-            strokeOpacity="0.22"
-            strokeWidth="1.3"
-            strokeLinecap="round"
-            animate={{
-              x: -currentTarget.gazeX * 0.22,
-              y: -currentTarget.gazeY * 0.18,
-            }}
-            transition={lidSpring}
-          />
-
           {/* 
-            5. GROK BOT OCULAR SCREEN ASSEMBLY:
+            4. GROK BOT OCULAR SCREEN ASSEMBLY:
             Enclosed completely within #grok-visor-screen clip path.
           */}
           <g clipPath="url(#grok-visor-screen)">
