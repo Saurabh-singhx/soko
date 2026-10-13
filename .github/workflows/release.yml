@@ -60,7 +60,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
 
       - name: Setup Java 21 & Android Environment
         uses: actions/setup-java@v4
@@ -68,10 +67,10 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Install System Dependencies for Electron Linux
+      - name: Install System Dependencies for Electron Linux & Python
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libnotify-dev libasound2-dev
+          sudo apt-get install -y libgtk-3-dev libnotify-dev libasound2-dev python3-pil
 
       - name: Apply Resolved Build Version
         run: |
@@ -119,7 +118,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
 
       - name: Apply Resolved Build Version
         run: |
@@ -162,12 +160,14 @@ jobs:
         with:
           name: linux-and-apk-assets
           path: release-assets
+          merge-multiple: true
 
       - name: Download Windows Assets
         uses: actions/download-artifact@v4
         with:
           name: windows-assets
           path: release-assets
+          merge-multiple: true
 
       - name: List Release Assets
         run: |
@@ -179,7 +179,7 @@ jobs:
         with:
           tag_name: ${{ needs.prepare-version.outputs.tag }}
           name: "Soko ${{ needs.prepare-version.outputs.tag }} Release"
-          files: release-assets/*
+          files: release-assets/**/*
           draft: false
           prerelease: false
           generate_release_notes: true

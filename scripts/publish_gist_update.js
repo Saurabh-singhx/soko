@@ -125,6 +125,15 @@ async function run() {
       if (rawUrl) console.log('  Raw Feed URL: ', rawUrl);
       console.log('\nTIP: Save this Gist ID as secret or variable "GIST_ID" in your repository settings!');
     }
+
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      try {
+        fs.appendFileSync(
+          process.env.GITHUB_STEP_SUMMARY,
+          `\n### 🚀 Soko Auto-Update Feed Synchronized\n- **Release Version**: \`${version}\`\n- **Gist Release URL**: [${result.html_url}](${result.html_url})\n- **Gist ID**: \`${result.id}\`\n- **Raw Feed URL**: [${rawUrl}](${rawUrl})\n`
+        );
+      } catch (e) {}
+    }
   } catch (err) {
     console.error('✗ Failed to update Gist:', err.message);
     // Don't fail the entire workflow if Gist patch fails
