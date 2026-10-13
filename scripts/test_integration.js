@@ -203,6 +203,14 @@ async function runTests() {
     assert(resList.status === 200, 'GET /api/transfers returns HTTP 200');
     assert(Array.isArray(resList.data?.files), 'Returns files array in storage');
     assert(resList.data.files.length >= 0, 'Storage files list query successful');
+
+    // Test GET /transfers/:filename direct streaming download
+    const resStream = await request('GET', '/transfers/GlassUchhiRakheyJollyLlb3320Kbps.mp3');
+    assert(resStream.status === 200, 'GET /transfers/:filename streams transferred file with HTTP 200');
+
+    // Test POST /api/transfers/open for host file/folder viewing
+    const resOpen = await request('POST', '/api/transfers/open', { action: 'folder' });
+    assert(resOpen.status === 200, 'POST /api/transfers/open returns HTTP 200 to view files on disk');
   } catch (err) {
     assert(false, `Binary upload security check failed: ${err.message}`);
   }

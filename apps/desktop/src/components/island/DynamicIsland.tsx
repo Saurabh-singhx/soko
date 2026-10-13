@@ -111,16 +111,17 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     }
   }, [mode, isHovered, activeNotification]);
 
-  // Auto-collapse completed file transfer after 2.5s
+  // Auto-collapse completed file transfer after 8s (paused when hovered so user can click Open / Folder)
   useEffect(() => {
     if (mode === 'transfer' && activeTransfer?.status === 'completed') {
+      if (isHovered) return;
       const timer = setTimeout(() => {
         setMode('compact');
         setMood('idle');
-      }, 2500);
+      }, 8000);
       return () => clearTimeout(timer);
     }
-  }, [mode, activeTransfer?.status]);
+  }, [mode, activeTransfer?.status, isHovered]);
 
   // Close notification / connection popover when clicking anywhere outside on screen or pressing Escape
   useEffect(() => {

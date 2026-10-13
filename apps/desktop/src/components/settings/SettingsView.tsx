@@ -666,20 +666,30 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                   </span>
                 </div>
 
-                {transferHistory.length > 0 && (
+                <div className="flex items-center gap-2">
                   <button
-                    onClick={() => {
-                      connectionService.clearTransferHistory();
-                      setHistoryNotice('Transfer history cleared. All physical files remain safely on disk.');
-                      setTimeout(() => setHistoryNotice(null), 4000);
-                    }}
-                    className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-linear-text-tertiary hover:text-linear-red hover:bg-linear-red/10 border border-transparent hover:border-linear-red/20 transition-colors"
-                    title="Clear history list (Files on disk will NOT be deleted)"
+                    onClick={() => connectionService.openTransfersFolder()}
+                    className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-linear-text-secondary hover:text-white bg-white/5 hover:bg-white/10 border border-white/5 transition-colors"
+                    title="Open transfers folder in file manager"
                   >
-                    <Trash2 size={12} />
-                    <span>Clear History</span>
+                    <FolderDown size={12} className="text-linear-green" />
+                    <span>Show on Disk</span>
                   </button>
-                )}
+                  {transferHistory.length > 0 && (
+                    <button
+                      onClick={() => {
+                        connectionService.clearTransferHistory();
+                        setHistoryNotice('Transfer history cleared. All physical files remain safely on disk.');
+                        setTimeout(() => setHistoryNotice(null), 4000);
+                      }}
+                      className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-linear-text-tertiary hover:text-linear-red hover:bg-linear-red/10 border border-transparent hover:border-linear-red/20 transition-colors"
+                      title="Clear history list (Files on disk will NOT be deleted)"
+                    >
+                      <Trash2 size={12} />
+                      <span>Clear History</span>
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Explanatory Safety Notice Banner */}
@@ -742,10 +752,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="flex items-center gap-1 text-[10px] font-medium font-mono text-linear-green bg-linear-green/10 border border-linear-green/20 px-2 py-0.5 rounded">
-                          <CheckCircle2 size={10} /> Completed
-                        </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          onClick={() => connectionService.openTransferredFile(item.filename)}
+                          className="flex items-center gap-1 px-2 py-1 rounded bg-[#5E6AD2]/15 hover:bg-[#5E6AD2]/25 text-[#5E6AD2] border border-[#5E6AD2]/30 text-[10px] font-medium transition-colors"
+                          title="Open file in default desktop app"
+                        >
+                          <ExternalLink size={10} /> Open
+                        </button>
+                        <a
+                          href={connectionService.getDownloadUrl(item.filename) + '?download=1'}
+                          download={item.filename}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="p-1 rounded text-linear-text-tertiary hover:text-white hover:bg-white/10 border border-white/5 transition-colors"
+                          title="Download file"
+                        >
+                          <FolderDown size={11} />
+                        </a>
                         <button
                           onClick={() => {
                             connectionService.deleteTransferHistoryItem(item.id);

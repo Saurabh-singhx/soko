@@ -281,15 +281,25 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
               Last: {connectionService.getTransferHistory()[0].filename}
             </span>
           </div>
-          <button
-            onClick={() => {
-              onClose();
-              onOpenSettings();
-            }}
-            className="text-[10px] text-linear-brand hover:underline font-mono shrink-0 ml-2"
-          >
-            History &rarr;
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0 ml-2">
+            <button
+              onClick={() => connectionService.openTransferredFile(connectionService.getTransferHistory()[0].filename)}
+              className="text-[10px] text-linear-brand hover:underline font-mono"
+              title="Open transferred file"
+            >
+              Open
+            </button>
+            <span className="text-white/20">•</span>
+            <button
+              onClick={() => {
+                onClose();
+                onOpenSettings();
+              }}
+              className="text-[10px] text-linear-text-secondary hover:text-white font-mono"
+            >
+              History &rarr;
+            </button>
+          </div>
         </div>
       )}
 

@@ -148,6 +148,51 @@ function sanitizeAndResolveUploadPath(rawFilename) {
   return { cleanFilename: clean, finalPath, partPath };
 }
 
+function getMimeType(filename) {
+  const ext = path.extname(filename || '').toLowerCase();
+  const mimeMap = {
+    '.apk': 'application/vnd.android.package-archive',
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav',
+    '.ogg': 'audio/ogg',
+    '.m4a': 'audio/mp4',
+    '.flac': 'audio/flac',
+    '.aac': 'audio/aac',
+    '.mp4': 'video/mp4',
+    '.webm': 'video/webm',
+    '.mkv': 'video/x-matroska',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.svg': 'image/svg+xml',
+    '.pdf': 'application/pdf',
+    '.txt': 'text/plain; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+    '.zip': 'application/zip',
+  };
+  return mimeMap[ext] || 'application/octet-stream';
+}
+
+function openFileOrFolder(targetPath) {
+  const platform = process.platform;
+  let cmd = null;
+  if (platform === 'linux') {
+    cmd = `xdg-open "${targetPath}"`;
+  } else if (platform === 'darwin') {
+    cmd = `open "${targetPath}"`;
+  } else if (platform === 'win32') {
+    cmd = `start "" "${targetPath}"`;
+  }
+  if (cmd) {
+    exec(cmd, (err) => {
+      if (err) console.warn('[Bridge] Open error:', err.message);
+      else console.log(`[Bridge] Opened: ${targetPath}`);
+    });
+  }
+}
+
 // Active Transfer State Tracker (Supports cancellation, cleanup, and retry)
 let activeTransferSession = {
   id: null,
@@ -208,11 +253,40 @@ function cancelActiveTransfer(reason = 'Cancelled by user') {
 function startSimulatedTransfer(filename = 'soko-v1.0.0-release.apk') {
   cancelActiveTransfer('Restarting transfer');
 
+  if (!fs.existsSync(TRANSFERS_DIR)) {
+    try { fs.mkdirSync(TRANSFERS_DIR, { recursive: true }); } catch {}
+  }
+
+  // Ensure target file actually exists in transfers/ directory
+  const destPath = path.resolve(TRANSFERS_DIR, filename);
+  try {
+    const candidateApks = [
+      path.resolve(__dirname, '../apks/soko-mobile.apk'),
+      path.resolve(__dirname, '../apks/soko-mobile-lite.apk'),
+      path.resolve(__dirname, '../apks/soko-desktop.apk'),
+      path.resolve(__dirname, '../soko-mobile.apk'),
+      path.resolve(__dirname, '../soko-desktop.apk'),
+    ];
+    const sourceApk = candidateApks.find((p) => fs.existsSync(p));
+    if (sourceApk) {
+      fs.copyFileSync(sourceApk, destPath);
+    } else if (!fs.existsSync(destPath)) {
+      fs.writeFileSync(destPath, Buffer.alloc(1024 * 1024, 0));
+    }
+  } catch (e) {
+    console.warn('[Bridge] Error preparing file for transfer:', e.message);
+  }
+
+  const stat = fs.existsSync(destPath) ? fs.statSync(destPath) : null;
+  const totalBytes = stat ? stat.size : 52000000;
+  const initialBytes = Math.min(totalBytes, Math.max(1024, Math.round(totalBytes * 0.15)));
+  const stepBytes = Math.max(1024, Math.round(totalBytes * 0.25));
+
   const transferId = `trans-${Date.now()}`;
   activeTransferSession.id = transferId;
   activeTransferSession.filename = filename;
-  activeTransferSession.totalBytes = 52000000;
-  activeTransferSession.bytesTransferred = 8000000;
+  activeTransferSession.totalBytes = totalBytes;
+  activeTransferSession.bytesTransferred = initialBytes;
 
   broadcastPacket({
     magic: 'SK',
@@ -232,7 +306,7 @@ function startSimulatedTransfer(filename = 'soko-v1.0.0-release.apk') {
   });
 
   activeTransferSession.timer = setInterval(() => {
-    activeTransferSession.bytesTransferred += 11000000;
+    activeTransferSession.bytesTransferred += stepBytes;
     const isDone = activeTransferSession.bytesTransferred >= activeTransferSession.totalBytes;
 
     broadcastPacket({
@@ -255,7 +329,7 @@ function startSimulatedTransfer(filename = 'soko-v1.0.0-release.apk') {
     if (isDone) {
       clearInterval(activeTransferSession.timer);
       activeTransferSession.timer = null;
-      console.log(`[Bridge Transfer] Completed transfer: ${filename} (52 MB)`);
+      console.log(`[Bridge Transfer] Completed transfer: ${filename} (${(totalBytes / 1048576).toFixed(2)} MB)`);
     }
   }, 450);
 }
@@ -888,6 +962,70 @@ const server = http.createServer((req, res) => {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: e.message }));
     }
+    return;
+  }
+
+  // 10. Open file or transfers folder on desktop host system
+  if (url.pathname === '/api/transfers/open' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (chunk) => (body += chunk));
+    req.on('end', () => {
+      try {
+        const data = body ? JSON.parse(body) : {};
+        if (data.action === 'folder' || !data.filename) {
+          openFileOrFolder(TRANSFERS_DIR);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, opened: TRANSFERS_DIR }));
+          return;
+        }
+
+        const pathInfo = sanitizeAndResolveUploadPath(data.filename);
+        if (!pathInfo || !fs.existsSync(pathInfo.finalPath)) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'File not found on disk' }));
+          return;
+        }
+
+        openFileOrFolder(pathInfo.finalPath);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, opened: pathInfo.finalPath }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // 11. Download / Stream transferred file to client (mobile or desktop browser/viewer)
+  if ((url.pathname.startsWith('/transfers/') || url.pathname === '/api/transfers/download') && (req.method === 'GET' || req.method === 'HEAD')) {
+    let rawFilename = '';
+    if (url.pathname === '/api/transfers/download') {
+      rawFilename = url.searchParams.get('filename') || '';
+    } else {
+      rawFilename = decodeURIComponent(url.pathname.replace(/^\/transfers\//, ''));
+    }
+
+    const pathInfo = sanitizeAndResolveUploadPath(rawFilename);
+    if (!pathInfo || !fs.existsSync(pathInfo.finalPath)) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('File not found in storage');
+      return;
+    }
+
+    const stat = fs.statSync(pathInfo.finalPath);
+    const mime = getMimeType(pathInfo.cleanFilename);
+    const disposition = url.searchParams.get('download') === '1' ? 'attachment' : 'inline';
+
+    res.writeHead(200, {
+      'Content-Type': mime,
+      'Content-Length': stat.size,
+      'Content-Disposition': `${disposition}; filename="${pathInfo.cleanFilename}"`,
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'no-cache',
+    });
+
+    fs.createReadStream(pathInfo.finalPath).pipe(res);
     return;
   }
 

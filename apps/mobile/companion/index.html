@@ -657,6 +657,18 @@
           <span id="transferSpeed">0 MB/s</span>
         </div>
 
+        <!-- Download / Save file prompt when transfer completes -->
+        <div id="transferActionWrap" style="display: none; margin-top: 8px;">
+          <button class="btn" id="btnDownloadFinished" style="width: 100%; background: #10B981; display: flex; align-items: center; justify-content: center; gap: 6px;" onclick="openOrDownloadLastFile()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            <span id="btnDownloadFinishedText">Save File to Phone</span>
+          </button>
+        </div>
+
         <!-- Cancel & Retry Control Row -->
         <div style="display: flex; gap: 8px; margin-top: 4px;">
           <button class="btn btn-secondary" id="btnCancelTransfer" style="display: none; flex: 1; border-color: rgba(235, 87, 87, 0.4); color: var(--color-red);" onclick="cancelFileTransfer()">
@@ -904,7 +916,14 @@
             </div>
 
             <div style="display: flex; align-items: center; gap: 6px; shrink: 0;">
-              <span style="font-size: 9px; color: var(--color-green); background: rgba(48,209,88,0.12); border: 1px solid rgba(48,209,88,0.25); padding: 1px 5px; border-radius: 4px; font-family: monospace;">Done</span>
+              <button onclick="openOrDownloadTransferredFile('${safeFilename}')" style="background: rgba(94, 106, 210, 0.15); border: 1px solid rgba(94, 106, 210, 0.35); color: #8F9BF0; padding: 2px 7px; border-radius: 5px; font-size: 10px; cursor: pointer; display: flex; align-items: center; gap: 4px; font-weight: 500;" title="Save to Phone or Open file">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="7 10 12 15 17 10"></polyline>
+                  <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                <span>Save/Open</span>
+              </button>
               <button onclick="deleteMobileHistoryItem('${item.id}', '${safeFilename}')" style="background: none; border: none; color: var(--text-tertiary); cursor: pointer; padding: 4px; border-radius: 4px;" title="Remove from log (file remains on device)">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <polyline points="3 6 5 6 21 6"></polyline>
@@ -915,6 +934,32 @@
           </div>
         `;
       }).join('');
+    }
+
+    let lastTransferredFilename = null;
+
+    function openOrDownloadLastFile() {
+      if (lastTransferredFilename) {
+        openOrDownloadTransferredFile(lastTransferredFilename);
+      }
+    }
+
+    function openOrDownloadTransferredFile(filename) {
+      if (!filename) return;
+      const url = `${getHttpBaseUrl()}/transfers/${encodeURIComponent(filename)}`;
+      if (window.SokoNative && typeof window.SokoNative.downloadFile === 'function') {
+        window.SokoNative.downloadFile(url, filename, '');
+        showToast(`Saving ${filename} to phone Downloads...`);
+      } else {
+        const a = document.createElement('a');
+        a.href = `${url}?download=1`;
+        a.download = filename;
+        a.target = '_blank';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        showToast(`Opening / Saving ${filename}...`);
+      }
     }
 
     setTimeout(loadMobileTransferHistory, 50);
@@ -1080,9 +1125,17 @@
         document.getElementById('btnRetryTransfer').style.display = 'none';
         if (pct === 100) {
           blinkBot();
+          const completedFilename = packet.payload?.filename || 'soko-v1.0.0-release.apk';
+          lastTransferredFilename = completedFilename;
+          const actionWrap = document.getElementById('transferActionWrap');
+          const actionText = document.getElementById('btnDownloadFinishedText');
+          if (actionWrap && actionText) {
+            actionText.innerText = `Save "${completedFilename}" to Phone`;
+            actionWrap.style.display = 'block';
+          }
           addMobileTransferHistory({
             id: packet.payload?.id,
-            filename: packet.payload?.filename || 'soko-transfer.apk',
+            filename: completedFilename,
             totalBytes: packet.payload?.totalBytes || packet.payload?.bytesDownloaded || 52000000,
             direction: 'received',
             status: 'completed',
@@ -1296,6 +1349,13 @@
           document.getElementById('transferSpeed').innerText = 'Complete';
           document.getElementById('btnCancelTransfer').style.display = 'none';
           showToast(`File transferred to Desktop: ${file.name}`);
+          lastTransferredFilename = file.name;
+          const actionWrap = document.getElementById('transferActionWrap');
+          const actionText = document.getElementById('btnDownloadFinishedText');
+          if (actionWrap && actionText) {
+            actionText.innerText = `Open "${file.name}"`;
+            actionWrap.style.display = 'block';
+          }
           addMobileTransferHistory({
             filename: file.name,
             totalBytes: file.size,

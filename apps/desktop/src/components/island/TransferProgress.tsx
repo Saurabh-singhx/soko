@@ -1,7 +1,8 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { FileDown, CheckCircle2, X, RotateCcw, AlertCircle, Ban } from 'lucide-react';
+import { FileDown, CheckCircle2, X, RotateCcw, AlertCircle, Ban, ExternalLink, Folder } from 'lucide-react';
 import { FileTransferStatus } from '../../types/index.ts';
+import { connectionService } from '../../services/connection.ts';
 
 interface TransferProgressProps {
   transfer: FileTransferStatus;
@@ -61,9 +62,31 @@ export const TransferProgress: React.FC<TransferProgressProps> = ({
         {/* Right: State / Actions */}
         <div className="flex items-center gap-1.5 shrink-0">
           {isCompleted && (
-            <span className="flex items-center gap-1 text-[10px] text-linear-green font-medium">
-              <CheckCircle2 size={11} /> Saved
-            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="flex items-center gap-1 text-[10px] text-linear-green font-medium">
+                <CheckCircle2 size={11} /> Saved
+              </span>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  connectionService.openTransferredFile(transfer.filename);
+                }}
+                className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-linear-brand/20 hover:bg-linear-brand/35 text-linear-brand text-[9px] font-medium transition-colors"
+                title="Open transferred file in default app"
+              >
+                <ExternalLink size={9} /> Open
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  connectionService.openTransfersFolder();
+                }}
+                className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-white text-[9px] font-medium transition-colors"
+                title="Show transfers folder"
+              >
+                <Folder size={9} /> Folder
+              </button>
+            </div>
           )}
 
           {isActive && (

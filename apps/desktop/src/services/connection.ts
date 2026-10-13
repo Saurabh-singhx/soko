@@ -252,6 +252,40 @@ class ConnectionManager {
     this.notifyTransferHistory();
   }
 
+  public getDownloadUrl(filename: string): string {
+    const httpBase = this.bridgeUrl.replace(/^ws/, 'http');
+    return `${httpBase}/transfers/${encodeURIComponent(filename)}`;
+  }
+
+  public async openTransferredFile(filename: string): Promise<boolean> {
+    try {
+      const httpBase = this.bridgeUrl.replace(/^ws/, 'http');
+      const res = await fetch(`${httpBase}/api/transfers/open`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename }),
+      });
+      if (res.ok) return true;
+    } catch {}
+    // Fallback: open via browser download
+    window.open(this.getDownloadUrl(filename), '_blank');
+    return false;
+  }
+
+  public async openTransfersFolder(): Promise<boolean> {
+    try {
+      const httpBase = this.bridgeUrl.replace(/^ws/, 'http');
+      const res = await fetch(`${httpBase}/api/transfers/open`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'folder' }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
   private loadTransferHistory(): void {
     try {
       const saved = localStorage.getItem('soko_transfer_history');

@@ -165,10 +165,14 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.webkit.WebChromeClient;
+import android.webkit.DownloadListener;
+import android.webkit.URLUtil;
 import android.webkit.ValueCallback;
 import android.webkit.JavascriptInterface;
 import android.net.Uri;
 import android.content.ClipData;
+import android.app.DownloadManager;
+import android.os.Environment;
 import android.view.Window;
 import android.view.WindowManager;
 import android.graphics.Color;
@@ -226,6 +230,35 @@ public class MainActivity extends Activity {
                 return prefs.getString("bridge_ip", "");
             } catch (Exception e) {
                 return "";
+            }
+        }
+
+        @JavascriptInterface
+        public void downloadFile(String fileUrl, String filename, String mimeType) {
+            try {
+                DownloadManager.Request request = new DownloadManager.Request(Uri.parse(fileUrl));
+                if (mimeType != null && !mimeType.isEmpty()) {
+                    request.setMimeType(mimeType);
+                }
+                String name = (filename != null && !filename.isEmpty()) ? filename : "soko-transfer.bin";
+                request.setTitle(name);
+                request.setDescription("Saved from Soko Desktop link");
+                request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name);
+
+                DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+                if (dm != null) {
+                    dm.enqueue(request);
+                }
+            } catch (Exception e) {
+                try {
+                    Intent intent = new Intent(Intent.ACTION_VIEW);
+                    intent.setDataAndType(Uri.parse(fileUrl), (mimeType != null && !mimeType.isEmpty()) ? mimeType : "*/*");
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(intent);
+                } catch (Exception ex) {
+                    Log.e("SokoApp", "Error downloading file", ex);
+                }
             }
         }
     }
@@ -294,6 +327,37 @@ public class MainActivity extends Activity {
                         uploadMessage = null;
                     }
                     return false;
+                }
+            }
+        });
+
+        webView.setDownloadListener(new DownloadListener() {
+            @Override
+            public void onDownloadStart(String url, String userAgent, String contentDisposition, String mimeType, long contentLength) {
+                try {
+                    DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+                    if (mimeType != null && !mimeType.isEmpty()) {
+                        request.setMimeType(mimeType);
+                    }
+                    String filename = URLUtil.guessFileName(url, contentDisposition, mimeType);
+                    request.setTitle(filename);
+                    request.setDescription("Saved from Soko Desktop");
+                    request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                    request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, filename);
+
+                    DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+                    if (dm != null) {
+                        dm.enqueue(request);
+                    }
+                } catch (Exception e) {
+                    try {
+                        Intent intent = new Intent(Intent.ACTION_VIEW);
+                        intent.setDataAndType(Uri.parse(url), (mimeType != null && !mimeType.isEmpty()) ? mimeType : "*/*");
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(intent);
+                    } catch (Exception ex) {
+                        Log.e("SokoApp", "Download listener error", ex);
+                    }
                 }
             }
         });
