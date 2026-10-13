@@ -34,18 +34,27 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
   const [activeTransfer, setActiveTransfer] = useState<FileTransferStatus | null>(null);
 
   const [isBotClicked, setIsBotClicked] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
+  const [isNotificationExpanded, setIsNotificationExpanded] = useState(false);
 
-  // Auto-collapse notification after 6 seconds if not interacted with
+  // Auto-collapse notification after delay if not actively hovered or expanded
   useEffect(() => {
     if (mode === 'notification') {
+      if (isHovered || isNotificationExpanded) {
+        return; // Pause auto-collapse so user can comfortably read large messages!
+      }
+      const bodyLen = activeNotification?.body?.length || 0;
+      // Generous reading duration: 7.5s for short, 11s for medium, 15s for long messages
+      const readDelay = bodyLen > 180 ? 15000 : bodyLen > 90 ? 11000 : 7500;
       const timer = setTimeout(() => {
         setMode('compact');
         setMood('idle');
         setIsBotClicked(false);
-      }, 6500);
+        setIsNotificationExpanded(false);
+      }, readDelay);
       return () => clearTimeout(timer);
     }
-  }, [mode]);
+  }, [mode, isHovered, isNotificationExpanded, activeNotification]);
 
   // Spring physics transition config
   const springTransition = {
@@ -69,13 +78,42 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
 
   const avatarSize = getAvatarSize();
 
-  // Dimensions based on mode & bot enlargement
+  // Dimensions based on mode & bot enlargement & notification message scale
   const getIslandDimensions = () => {
     switch (mode) {
       case 'compact':
         return { width: isBotClicked ? 212 : 196, height: isBotClicked ? 46 : 42 };
-      case 'notification':
-        return { width: isBotClicked ? 446 : 400, height: isBotClicked ? 98 : 86 };
+      case 'notification': {
+        const bodyLen = activeNotification?.body?.length || 0;
+        const isLong = bodyLen > 100;
+        const isVeryLong = bodyLen > 200;
+
+        if (isNotificationExpanded) {
+          return {
+            width: 530,
+            height: isVeryLong ? 168 : 148,
+          };
+        }
+
+        if (isVeryLong) {
+          return {
+            width: isBotClicked ? 520 : 490,
+            height: isBotClicked ? 134 : 122,
+          };
+        }
+
+        if (isLong) {
+          return {
+            width: isBotClicked ? 476 : 450,
+            height: isBotClicked ? 116 : 106,
+          };
+        }
+
+        return {
+          width: isBotClicked ? 440 : 410,
+          height: isBotClicked ? 100 : 90,
+        };
+      }
       case 'cli':
         return { width: 428, height: 102 };
       case 'transfer':
@@ -85,72 +123,72 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
 
   const dims = getIslandDimensions();
 
-const DEMO_NOTIFICATIONS: MirroredNotification[] = [
-  {
-    id: 'demo-1',
-    appName: 'WhatsApp',
-    packageName: 'com.whatsapp',
-    title: 'Alex Developer',
-    body: 'Hey, I pushed the new changes to main. Check agy!',
-    timestamp: Date.now(),
-  },
-  {
-    id: 'demo-2',
-    appName: 'GitHub',
-    packageName: 'com.github',
-    title: 'Pull Request #42 Merged',
-    body: 'fix(avatar): 360 spin effect and watch left/right tracking',
-    timestamp: Date.now(),
-  },
-  {
-    id: 'demo-3',
-    appName: 'Telegram',
-    packageName: 'org.telegram.messenger',
-    title: 'Soko Dev Community',
-    body: 'New release APK build is now available for download.',
-    timestamp: Date.now(),
-  },
-  {
-    id: 'demo-4',
-    appName: 'Slack',
-    packageName: 'com.slack',
-    title: 'Sarah Chen (#dev)',
-    body: 'Bot ocular kinetics look incredible! Ready for launch.',
-    timestamp: Date.now(),
-  },
-  {
-    id: 'demo-5',
-    appName: 'Discord',
-    packageName: 'com.discord',
-    title: '#announcements',
-    body: 'Grok Bot face expressions are now fully live!',
-    timestamp: Date.now(),
-  },
-  {
-    id: 'demo-6',
-    appName: 'Antigravity',
-    packageName: 'ai.antigravity.cli',
-    title: 'agy Agent Finished',
-    body: 'Workspace analysis completed with 0 warnings.',
-    timestamp: Date.now(),
-  },
-  {
-    id: 'demo-7',
-    appName: 'Linear',
-    packageName: 'app.linear',
-    title: 'SOKO-109 Done',
-    body: 'Dynamic Island mascot and brand icons deployed.',
-    timestamp: Date.now(),
-  },
-  {
-    id: 'demo-8',
-    appName: 'Gmail',
-    packageName: 'com.google.android.gm',
-    title: 'Dev Digest',
-    body: 'Weekly release summary: Soko cross-platform companion.',
-    timestamp: Date.now(),
-  },
-];
+  const DEMO_NOTIFICATIONS: MirroredNotification[] = [
+    {
+      id: 'demo-1',
+      appName: 'WhatsApp',
+      packageName: 'com.whatsapp',
+      title: 'Alex Developer',
+      body: 'Hey Saurabh, I tested the new APK build on Pixel 8 Pro and Galaxy S24. The Bluetooth LE sync latency is under 18ms and notification mirroring handles long messages without any clipping. Great job on the ocular tracking!',
+      timestamp: Date.now(),
+    },
+    {
+      id: 'demo-2',
+      appName: 'GitHub',
+      packageName: 'com.github',
+      title: 'Pull Request #42 Merged',
+      body: 'feat(dynamic-island): Responsive multi-line layout engine for reading large notifications, authentic app brand icons, and 360° mascot spin animations.',
+      timestamp: Date.now(),
+    },
+    {
+      id: 'demo-3',
+      appName: 'Slack',
+      packageName: 'com.slack',
+      title: 'Sarah Chen (#engineering)',
+      body: '@channel Heads up: The new Dynamic Island full notification reader is live. You can now click anywhere on the compact pill to open notifications and read multi-line messages without clipping.',
+      timestamp: Date.now(),
+    },
+    {
+      id: 'demo-4',
+      appName: 'Telegram',
+      packageName: 'org.telegram.messenger',
+      title: 'Soko Dev Community',
+      body: 'Release v1.2.0 is out! Highlights: Full clickable Dynamic Island pill, enhanced ocular kinetic tracking, and responsive multi-line card layout for reading extensive notifications comfortably.',
+      timestamp: Date.now(),
+    },
+    {
+      id: 'demo-5',
+      appName: 'Gmail',
+      packageName: 'com.google.android.gm',
+      title: 'Google Deepmind Dev Digest',
+      body: 'Your weekly telemetry summary is ready: 99.8% BLE sync reliability across all devices, zero dropped frames in OLED mascot animations, and full cross-platform notification mirroring support.',
+      timestamp: Date.now(),
+    },
+    {
+      id: 'demo-6',
+      appName: 'Discord',
+      packageName: 'com.discord',
+      title: '#announcements',
+      body: 'Grok Bot face expressions are now fully live with 360° spin barrel rolls, left/right eye scanning, and OLED contrast styling!',
+      timestamp: Date.now(),
+    },
+    {
+      id: 'demo-7',
+      appName: 'Linear',
+      packageName: 'app.linear',
+      title: 'SOKO-110 Completed',
+      body: 'Dynamic Island interaction update: Click anywhere on compact pill to open full notification with adaptive height scaling and expansion controls.',
+      timestamp: Date.now(),
+    },
+    {
+      id: 'demo-8',
+      appName: 'Antigravity',
+      packageName: 'ai.antigravity.cli',
+      title: 'agy Agent Finished',
+      body: 'Workspace analysis completed with 0 warnings. Build artifacts generated and ready for deployment.',
+      timestamp: Date.now(),
+    },
+  ];
 
   const [demoIndex, setDemoIndex] = useState(0);
 
@@ -243,6 +281,13 @@ const DEMO_NOTIFICATIONS: MirroredNotification[] = [
     }, 300);
   };
 
+  const handlePillClick = () => {
+    if (mode === 'compact') {
+      setIsBotClicked(true);
+      simulateNotification();
+    }
+  };
+
   return (
     <div className="flex flex-col items-center justify-start w-full h-full pt-1">
       {/* Morphing Dynamic Island Pill */}
@@ -250,28 +295,40 @@ const DEMO_NOTIFICATIONS: MirroredNotification[] = [
         layout
         transition={springTransition}
         style={{ width: dims.width, height: dims.height }}
-        className="relative bg-[#08090A] border border-white/10 rounded-island shadow-linear-island flex items-center px-2.5 overflow-hidden backdrop-blur-3xl font-sans"
+        onClick={handlePillClick}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+        className={`relative bg-[#08090A] border rounded-[26px] shadow-linear-island flex items-center px-2.5 overflow-hidden backdrop-blur-3xl font-sans transition-all ${
+          mode === 'compact'
+            ? 'cursor-pointer border-white/10 hover:border-white/20 active:scale-[0.99]'
+            : 'border-white/10'
+        }`}
+        title={mode === 'compact' ? 'Click anywhere to view notification' : undefined}
       >
         {/* Left Anchor: Mascot Character Avatar */}
         <div
-          className="shrink-0 cursor-pointer pr-1.5 flex items-center justify-center transition-all"
-          onClick={() => {
+          className="shrink-0 cursor-pointer pr-1.5 flex items-center justify-center transition-all self-center"
+          onClick={(e) => {
             if (mode === 'compact') {
+              // Click anywhere on pill or mascot triggers notification
               setIsBotClicked(true);
               simulateNotification();
             } else if (mode === 'notification') {
+              e.stopPropagation();
               // Clicked on bot while notification is visible: toggles enlarged bot size!
               setIsBotClicked((prev) => !prev);
             } else {
+              e.stopPropagation();
               setMode('compact');
               setMood('idle');
               setIsBotClicked(false);
+              setIsNotificationExpanded(false);
             }
           }}
           title={
             mode === 'notification'
               ? (isBotClicked ? 'Click to normal size' : 'Click to enlarge bot')
-              : 'Click to expand'
+              : 'Click to open notification'
           }
         >
           <CharacterAvatar
@@ -291,17 +348,23 @@ const DEMO_NOTIFICATIONS: MirroredNotification[] = [
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.96 }}
                 transition={{ duration: 0.15 }}
-                className="flex items-center justify-between w-full"
+                className="flex items-center justify-between w-full select-none"
               >
                 <div className="flex items-center gap-1.5 text-xs text-linear-text-primary font-medium tracking-tight">
                   <span className="w-1.5 h-1.5 rounded-full bg-linear-green" />
                   <span className="text-[11px] text-linear-text-primary">Soko Ready</span>
                 </div>
 
-                <div className="flex items-center gap-2 text-linear-text-tertiary">
+                <div
+                  className="flex items-center gap-2 text-linear-text-tertiary"
+                  onClick={(e) => e.stopPropagation()}
+                >
                   <Bluetooth size={13} className={isConnected ? 'text-linear-brand' : 'text-linear-text-tertiary'} />
                   <button
-                    onClick={onOpenSettings}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenSettings();
+                    }}
                     title="Open Settings"
                     className="p-1 rounded-md hover:bg-white/5 text-linear-text-secondary hover:text-linear-text-primary transition-colors"
                   >
@@ -315,10 +378,13 @@ const DEMO_NOTIFICATIONS: MirroredNotification[] = [
               <NotificationBanner
                 key="notification"
                 notification={activeNotification}
+                isExpanded={isNotificationExpanded}
+                onToggleExpand={() => setIsNotificationExpanded((prev) => !prev)}
                 onDismiss={() => {
                   setMode('compact');
                   setMood('idle');
                   setIsBotClicked(false);
+                  setIsNotificationExpanded(false);
                 }}
               />
             )}

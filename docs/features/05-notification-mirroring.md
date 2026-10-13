@@ -128,3 +128,18 @@ To preserve authentic brand identity while maintaining Linear's strict `#08090A`
 1. **Glassmorphic Squircles**: Icons are housed in a `w-7 h-7` rounded squircle (`border border-white/12`) with a subtle dark brand tint backdrop. This prevents harsh neon clash against the `#08090A` dark canvas.
 2. **Typography Coupling**: The app name in the header is dynamically colored with the app's official brand accent (`style={{ color: brand.color }}`) in uppercase monospace tracking, providing instant cognitive recognition.
 
+---
+
+## 8. Whole-Pill Click Target & Multi-Line Large Notification Reading
+
+### Frictionless Pill Tap Target
+- In compact idle mode (`mode === 'compact'`), clicking **anywhere** on the Dynamic Island pill triggers the full notification preview, eliminating the micro-target friction of having to click solely on the mascot's small head.
+- Internal control elements (`Settings`, `Bluetooth`) utilize event isolation (`e.stopPropagation()`) so configuration dialogs open without accidental notification expansion.
+
+### Responsive Reader Layout for Large Notifications
+- **Adaptive Container Dimensions**: The Dynamic Island smoothly expands from 410px width up to 530px width and up to 134px height based on notification payload length (`body.length > 100` / `body.length > 200`).
+- **Unrestricted Multi-Line Wrapping**: Text truncation (`truncate`) is removed from notification body text; multi-sentence messages wrap naturally with `break-words whitespace-pre-wrap select-text` and custom Linear slim scrollbars for long content.
+- **Dedicated Expand/Reader Mode**: For long emails or extensive chat messages, a Maximize/Minimize toggle button (`Maximize2` / `Minimize2`) expands the card to an expansive 540x168px reading canvas.
+- **Hover-Aware Auto-Dismiss**: Mouse hover (`onMouseEnter`/`onMouseLeave`) pauses the auto-collapse timer indefinitely, ensuring users are never interrupted or rushed while reading long notifications.
+
+
