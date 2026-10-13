@@ -104,6 +104,14 @@ const DEMO_NOTIFICATIONS: MirroredNotification[] = [
   },
   {
     id: 'demo-3',
+    appName: 'Telegram',
+    packageName: 'org.telegram.messenger',
+    title: 'Soko Dev Community',
+    body: 'New release APK build is now available for download.',
+    timestamp: Date.now(),
+  },
+  {
+    id: 'demo-4',
     appName: 'Slack',
     packageName: 'com.slack',
     title: 'Sarah Chen (#dev)',
@@ -111,7 +119,15 @@ const DEMO_NOTIFICATIONS: MirroredNotification[] = [
     timestamp: Date.now(),
   },
   {
-    id: 'demo-4',
+    id: 'demo-5',
+    appName: 'Discord',
+    packageName: 'com.discord',
+    title: '#announcements',
+    body: 'Grok Bot face expressions are now fully live!',
+    timestamp: Date.now(),
+  },
+  {
+    id: 'demo-6',
     appName: 'Antigravity',
     packageName: 'ai.antigravity.cli',
     title: 'agy Agent Finished',
@@ -119,11 +135,19 @@ const DEMO_NOTIFICATIONS: MirroredNotification[] = [
     timestamp: Date.now(),
   },
   {
-    id: 'demo-5',
+    id: 'demo-7',
     appName: 'Linear',
     packageName: 'app.linear',
     title: 'SOKO-109 Done',
-    body: 'Grok Bot notification interaction animations deployed.',
+    body: 'Dynamic Island mascot and brand icons deployed.',
+    timestamp: Date.now(),
+  },
+  {
+    id: 'demo-8',
+    appName: 'Gmail',
+    packageName: 'com.google.android.gm',
+    title: 'Dev Digest',
+    body: 'Weekly release summary: Soko cross-platform companion.',
     timestamp: Date.now(),
   },
 ];

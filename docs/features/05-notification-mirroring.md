@@ -101,3 +101,30 @@ While Android provides full access via `NotificationListenerService`, iOS restri
 - **For iOS Support**: The desktop app acts as an **Apple Notification Center Service (ANCS)** BLE peripheral. The iPhone pairs with the desktop as an accessory (smartwatch profile).
 - **Limitation on iOS**: Cannot filter by app package name programmatically; iOS decides which notifications are forwarded based on system Focus modes.
 - **Current Architecture**: Optimized first for Android with full two-way control, with ANCS hooks ready for future iOS expansions.
+
+---
+
+## 7. Authentic App Brand Icon System & Linear Dark Integration
+
+To preserve authentic brand identity while maintaining Linear's strict `#08090A` dark aesthetic:
+
+| Supported App | Official Brand Color | Squircle Badge Tint | Icon Glyphs |
+| :--- | :--- | :--- | :--- |
+| **WhatsApp** | `#25D366` (Neon Green) | `rgba(37, 211, 102, 0.12)` | Authentic speech bubble & phone receiver |
+| **Telegram** | `#229ED9` (Sky Blue) | `rgba(34, 158, 217, 0.14)` | Circular paper airplane vector |
+| **Slack** | `#ECB22E` (Gold / Multicolor) | `rgba(74, 21, 75, 0.35)` | Official 4-color hashtag octothorpe |
+| **Discord** | `#5865F2` (Blurple) | `rgba(88, 101, 242, 0.16)` | Clyde controller face |
+| **GitHub** | `#F0F6FC` (Titanium White) | `rgba(240, 246, 252, 0.10)` | Invertocat silhouette |
+| **Linear** | `#5E6AD2` (Linear Indigo) | `rgba(94, 106, 210, 0.16)` | Stylized circle ribbon |
+| **Gmail** | `#EA4335` (Google Red) | `rgba(234, 67, 53, 0.14)` | 4-color M-envelope |
+| **Twitter / X** | `#FFFFFF` (Pure White) | `rgba(255, 255, 255, 0.10)` | Minimalist X glyph |
+| **Instagram** | `#E1306C` (Sunset Pink) | `rgba(225, 48, 108, 0.14)` | Sunset gradient camera outline |
+| **Spotify** | `#1DB954` (Spotify Green) | `rgba(29, 185, 84, 0.14)` | 3 audio frequency soundwaves |
+| **YouTube** | `#FF0000` (YouTube Red) | `rgba(255, 0, 0, 0.14)` | Red play button |
+| **Antigravity CLI** | `#00E5FF` (Cyan Accent) | `rgba(0, 229, 255, 0.14)` | Terminal diamond runner glyph |
+| **Messages / SMS** | `#1A73E8` (Google Blue) | `rgba(26, 115, 232, 0.14)` | Material chat bubble |
+
+### Theme Integration Strategy
+1. **Glassmorphic Squircles**: Icons are housed in a `w-7 h-7` rounded squircle (`border border-white/12`) with a subtle dark brand tint backdrop. This prevents harsh neon clash against the `#08090A` dark canvas.
+2. **Typography Coupling**: The app name in the header is dynamically colored with the app's official brand accent (`style={{ color: brand.color }}`) in uppercase monospace tracking, providing instant cognitive recognition.
+
