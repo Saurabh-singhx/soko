@@ -864,6 +864,33 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // 9. List transferred files in storage
+  if (url.pathname === '/api/transfers' && req.method === 'GET') {
+    try {
+      if (!fs.existsSync(TRANSFERS_DIR)) {
+        fs.mkdirSync(TRANSFERS_DIR, { recursive: true });
+      }
+      const files = fs.readdirSync(TRANSFERS_DIR)
+        .filter((f) => !f.endsWith('.part') && !f.startsWith('.'))
+        .map((f) => {
+          const stat = fs.statSync(path.join(TRANSFERS_DIR, f));
+          return {
+            filename: f,
+            size: stat.size,
+            mtime: stat.mtimeMs,
+          };
+        })
+        .sort((a, b) => b.mtime - a.mtime);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ files }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
   res.writeHead(404, { 'Content-Type': 'text/plain' });
   res.end('Not Found');
 });

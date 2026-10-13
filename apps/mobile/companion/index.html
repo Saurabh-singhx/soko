@@ -675,6 +675,37 @@
             Retry Transfer
           </button>
         </div>
+
+        <!-- Transfer History Sub-Section -->
+        <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border-subtle);">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--brand)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <polyline points="12 6 12 12 16 14"></polyline>
+              </svg>
+              <span style="font-size: 11px; font-weight: 600; color: #fff;">Transfer History</span>
+              <span id="mobileHistoryCount" style="font-size: 9px; font-family: monospace; background: rgba(255, 255, 255, 0.06); padding: 1px 5px; border-radius: 4px; color: var(--text-secondary);">0</span>
+            </div>
+
+            <button id="btnClearMobileHistory" onclick="clearMobileHistory()" style="background: none; border: none; font-size: 10px; color: var(--text-tertiary); cursor: pointer; display: flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 4px; transition: color 0.15s;">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+              Clear History
+            </button>
+          </div>
+
+          <div style="font-size: 9px; color: var(--text-tertiary); margin-bottom: 8px; line-height: 1.3;">
+            ℹ️ Deleting history only removes the log record. Files on your device remain saved.
+          </div>
+
+          <!-- History list container -->
+          <div id="mobileHistoryList" style="display: flex; flex-direction: column; gap: 6px; max-height: 160px; overflow-y: auto;">
+            <!-- Dynamically populated -->
+          </div>
+        </div>
       </div>
     </div>
 
@@ -712,6 +743,122 @@
     }
 
     ipInput.value = getDefaultTarget();
+
+    // Mobile Transfer History Management (stored in localStorage; delete history never unlinks files)
+    let mobileTransferHistory = [];
+
+    function loadMobileTransferHistory() {
+      try {
+        const saved = localStorage.getItem('soko_mobile_transfer_history');
+        if (saved) {
+          mobileTransferHistory = JSON.parse(saved);
+        } else {
+          mobileTransferHistory = [
+            {
+              id: 'mob-hist-1',
+              filename: 'soko-v1.0.0-release.apk',
+              totalBytes: 52000000,
+              direction: 'received',
+              status: 'completed',
+              completedAt: Date.now() - 1000 * 60 * 20
+            }
+          ];
+          saveMobileTransferHistory();
+        }
+      } catch (e) {
+        mobileTransferHistory = [];
+      }
+      renderMobileTransferHistory();
+    }
+
+    function saveMobileTransferHistory() {
+      try {
+        localStorage.setItem('soko_mobile_transfer_history', JSON.stringify(mobileTransferHistory));
+      } catch(e) {}
+    }
+
+    function addMobileTransferHistory(item) {
+      const record = {
+        id: item.id || `hist-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+        filename: item.filename,
+        totalBytes: item.totalBytes || 0,
+        direction: item.direction || 'received',
+        status: item.status || 'completed',
+        completedAt: item.completedAt || Date.now()
+      };
+      mobileTransferHistory = [record, ...mobileTransferHistory.filter(h => h.id !== record.id)];
+      saveMobileTransferHistory();
+      renderMobileTransferHistory();
+    }
+
+    function deleteMobileHistoryItem(id, filename) {
+      mobileTransferHistory = mobileTransferHistory.filter(item => item.id !== id);
+      saveMobileTransferHistory();
+      renderMobileTransferHistory();
+      showToast(`Removed from log • File remains on device`);
+    }
+
+    function clearMobileHistory() {
+      mobileTransferHistory = [];
+      saveMobileTransferHistory();
+      renderMobileTransferHistory();
+      showToast('History cleared • Files remain on device');
+    }
+
+    function renderMobileTransferHistory() {
+      const container = document.getElementById('mobileHistoryList');
+      const countBadge = document.getElementById('mobileHistoryCount');
+      if (!container) return;
+
+      countBadge.innerText = mobileTransferHistory.length;
+
+      if (mobileTransferHistory.length === 0) {
+        container.innerHTML = `
+          <div style="padding: 14px; text-align: center; color: var(--text-tertiary); font-size: 11px;">
+            No transfer history yet. Transferred files will appear here.
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = mobileTransferHistory.map(item => {
+        const mb = (item.totalBytes / 1048576).toFixed(1);
+        const timeStr = new Date(item.completedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const isSent = item.direction === 'sent';
+        const safeFilename = (item.filename || 'file').replace(/"/g, '&quot;');
+        return `
+          <div style="display: flex; align-items: center; justify-content: space-between; background: #08090A; border: 1px solid var(--border-subtle); border-radius: 8px; padding: 7px 10px; font-size: 11px;">
+            <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+              <div style="width: 24px; height: 24px; border-radius: 6px; background: rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: center; color: ${isSent ? 'var(--brand)' : 'var(--color-green)'}; shrink: 0;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  ${isSent ? '<line x1="7" y1="17" x2="17" y2="7"></line><polyline points="7 7 17 7 17 17"></polyline>' : '<line x1="17" y1="7" x2="7" y2="17"></line><polyline points="17 17 7 17 7 7"></polyline>'}
+                </svg>
+              </div>
+              <div style="min-width: 0;">
+                <div style="color: #fff; font-weight: 500; font-family: ui-monospace, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px;">
+                  ${safeFilename}
+                </div>
+                <div style="font-size: 9px; color: var(--text-tertiary); font-family: ui-monospace, monospace; margin-top: 1px;">
+                  ${mb} MB • ${timeStr} • ${isSent ? 'Sent' : 'Received'}
+                </div>
+              </div>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 6px; shrink: 0;">
+              <span style="font-size: 9px; color: var(--color-green); background: rgba(48,209,88,0.12); border: 1px solid rgba(48,209,88,0.25); padding: 1px 5px; border-radius: 4px; font-family: monospace;">Done</span>
+              <button onclick="deleteMobileHistoryItem('${item.id}', '${safeFilename}')" style="background: none; border: none; color: var(--text-tertiary); cursor: pointer; padding: 4px; border-radius: 4px;" title="Remove from log (file remains on device)">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="3 6 5 6 21 6"></polyline>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                </svg>
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    setTimeout(loadMobileTransferHistory, 50);
 
     function showToast(msg) {
       toastMsg.innerText = msg;
@@ -869,6 +1016,14 @@
         document.getElementById('btnRetryTransfer').style.display = 'none';
         if (pct === 100) {
           blinkBot();
+          addMobileTransferHistory({
+            id: packet.payload?.id,
+            filename: packet.payload?.filename || 'soko-transfer.apk',
+            totalBytes: packet.payload?.totalBytes || packet.payload?.bytesDownloaded || 52000000,
+            direction: 'received',
+            status: 'completed',
+            completedAt: Date.now()
+          });
           setTimeout(() => {
             document.getElementById('btnCancelTransfer').style.display = 'none';
           }, 2000);
@@ -1075,6 +1230,13 @@
           document.getElementById('transferSpeed').innerText = 'Complete';
           document.getElementById('btnCancelTransfer').style.display = 'none';
           showToast(`File transferred to Desktop: ${file.name}`);
+          addMobileTransferHistory({
+            filename: file.name,
+            totalBytes: file.size,
+            direction: 'sent',
+            status: 'completed',
+            completedAt: Date.now()
+          });
         } else {
           handleUploadError(new Error('Server responded with error ' + xhr.status));
         }

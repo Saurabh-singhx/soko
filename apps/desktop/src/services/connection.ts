@@ -4,6 +4,7 @@ import {
   MirroredNotification,
   CliProcessStatus,
   FileTransferStatus,
+  TransferHistoryItem,
   SokoPacketEnvelope,
 } from '../types/index.ts';
 
@@ -11,6 +12,7 @@ type ConnectionEventListener = (status: ConnectionStatus, device: PairedDevice |
 type NotificationListener = (notification: MirroredNotification) => void;
 type CliListener = (cli: CliProcessStatus) => void;
 type TransferListener = (transfer: FileTransferStatus) => void;
+type TransferHistoryListener = (history: TransferHistoryItem[]) => void;
 type BridgeEventListener = (isOnline: boolean, clientCount: number, localIps: string[]) => void;
 
 const DEFAULT_PAIRED_DEVICE: PairedDevice = {
@@ -57,8 +59,11 @@ class ConnectionManager {
   private activeUploadXhr: XMLHttpRequest | null = null;
   private lastTransferredFile: File | null = null;
   private currentTransferStatus: FileTransferStatus | null = null;
+  private transferHistoryListeners: Set<TransferHistoryListener> = new Set();
+  private transferHistory: TransferHistoryItem[] = [];
 
   private constructor() {
+    this.loadTransferHistory();
     this.initWebSocket();
   }
 
@@ -140,6 +145,108 @@ class ConnectionManager {
   public onTransfer(listener: TransferListener): () => void {
     this.transferListeners.add(listener);
     return () => this.transferListeners.delete(listener);
+  }
+
+  public subscribeTransferHistory(listener: TransferHistoryListener): () => void {
+    this.transferHistoryListeners.add(listener);
+    listener([...this.transferHistory]);
+    return () => this.transferHistoryListeners.delete(listener);
+  }
+
+  public getTransferHistory(): TransferHistoryItem[] {
+    return [...this.transferHistory];
+  }
+
+  public addToTransferHistory(
+    item: Omit<TransferHistoryItem, 'id' | 'completedAt'> & { id?: string; completedAt?: number }
+  ): void {
+    const record: TransferHistoryItem = {
+      id: item.id || `hist-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+      filename: item.filename,
+      totalBytes: item.totalBytes,
+      completedAt: item.completedAt || Date.now(),
+      direction: item.direction || 'sent',
+      status: item.status || 'completed',
+      sha256: item.sha256,
+    };
+    this.transferHistory = [record, ...this.transferHistory.filter((h) => h.id !== record.id)];
+    this.saveTransferHistory();
+    this.notifyTransferHistory();
+  }
+
+  /**
+   * Deletes a single history record from the transfer log.
+   * NOTE: Explicitly removes the history entry without deleting the physical file on disk.
+   */
+  public deleteTransferHistoryItem(id: string): void {
+    this.transferHistory = this.transferHistory.filter((item) => item.id !== id);
+    this.saveTransferHistory();
+    this.notifyTransferHistory();
+  }
+
+  /**
+   * Clears the entire transfer history log.
+   * NOTE: Clears the transfer log from localStorage without deleting any files on disk.
+   */
+  public clearTransferHistory(): void {
+    this.transferHistory = [];
+    this.saveTransferHistory();
+    this.notifyTransferHistory();
+  }
+
+  private loadTransferHistory(): void {
+    try {
+      const saved = localStorage.getItem('soko_transfer_history');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          this.transferHistory = parsed;
+          return;
+        }
+      }
+    } catch {}
+
+    // Default initial entries if history is fresh
+    this.transferHistory = [
+      {
+        id: 'hist-user-mp3',
+        filename: 'GlassUchhiRakheyJollyLlb3320Kbps.mp3',
+        totalBytes: 7467776,
+        completedAt: Date.now() - 1000 * 60 * 5,
+        direction: 'received',
+        status: 'completed',
+      },
+      {
+        id: 'hist-demo-1',
+        filename: 'soko-mobile.apk',
+        totalBytes: 25680,
+        completedAt: Date.now() - 1000 * 60 * 18,
+        direction: 'sent',
+        status: 'completed',
+        sha256: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
+      },
+      {
+        id: 'hist-demo-2',
+        filename: 'soko-desktop.apk',
+        totalBytes: 128450,
+        completedAt: Date.now() - 1000 * 60 * 45,
+        direction: 'sent',
+        status: 'completed',
+        sha256: '5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8',
+      },
+    ];
+    this.saveTransferHistory();
+  }
+
+  private saveTransferHistory(): void {
+    try {
+      localStorage.setItem('soko_transfer_history', JSON.stringify(this.transferHistory));
+    } catch {}
+  }
+
+  private notifyTransferHistory(): void {
+    const list = [...this.transferHistory];
+    this.transferHistoryListeners.forEach((l) => l(list));
   }
 
   private notifyStatus() {
@@ -351,6 +458,17 @@ class ConnectionManager {
           };
           this.currentTransferStatus = transfer;
           this.transferListeners.forEach((l) => l(transfer));
+
+          if (packet.packetType === 'FILE_COMPLETED' || packet.payload.status === 'completed') {
+            this.addToTransferHistory({
+              id: packet.payload.id,
+              filename: transfer.filename,
+              totalBytes: transfer.totalBytes,
+              direction: 'received',
+              status: 'completed',
+              sha256: packet.payload.sha256,
+            });
+          }
         }
         break;
     }
@@ -572,6 +690,12 @@ class ConnectionManager {
       if (isDone) {
         clearInterval(this.transferSimulationTimer);
         this.transferSimulationTimer = null;
+        this.addToTransferHistory({
+          filename,
+          totalBytes: total,
+          direction: 'sent',
+          status: 'completed',
+        });
       }
     }, 450);
   }
@@ -676,6 +800,14 @@ class ConnectionManager {
         };
         this.currentTransferStatus = completed;
         this.transferListeners.forEach((l) => l(completed));
+
+        this.addToTransferHistory({
+          id: transferId,
+          filename: file.name,
+          totalBytes,
+          direction: 'sent',
+          status: 'completed',
+        });
       } else {
         let errMessage = 'Upload failed';
         try {

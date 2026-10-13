@@ -23,9 +23,13 @@ import {
   AlertCircle,
   RotateCcw,
   Ban,
+  History,
+  ArrowUpRight,
+  ArrowDownLeft,
+  Clock,
 } from 'lucide-react';
 import { connectionService } from '../../services/connection.ts';
-import { ConnectionStatus, PairedDevice, FileTransferStatus } from '../../types/index.ts';
+import { ConnectionStatus, PairedDevice, FileTransferStatus, TransferHistoryItem } from '../../types/index.ts';
 
 interface SettingsViewProps {
   onClose?: () => void;
@@ -48,6 +52,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
     connectionService.getCurrentTransfer()
   );
   const [isDragging, setIsDragging] = useState(false);
+  const [transferHistory, setTransferHistory] = useState<TransferHistoryItem[]>(
+    connectionService.getTransferHistory()
+  );
+  const [historyNotice, setHistoryNotice] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubStatus = connectionService.subscribeStatus((status, dev) => {
@@ -65,10 +73,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
       setActiveTransfer(transfer);
     });
 
+    const unsubHistory = connectionService.subscribeTransferHistory((history) => {
+      setTransferHistory(history);
+    });
+
     return () => {
       unsubStatus();
       unsubBridge();
       unsubTransfer();
+      unsubHistory();
     };
   }, []);
 
@@ -641,6 +654,115 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 </div>
               </div>
             )}
+
+            {/* Transfer History Card */}
+            <div className="linear-card rounded-lg p-5 flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <History size={16} className="text-[#5E6AD2]" />
+                  <h3 className="text-xs font-semibold text-white tracking-tight">Transfer History</h3>
+                  <span className="text-[10px] font-mono text-linear-text-secondary bg-white/[0.04] px-1.5 py-0.5 rounded border border-white/5">
+                    {transferHistory.length} {transferHistory.length === 1 ? 'file' : 'files'}
+                  </span>
+                </div>
+
+                {transferHistory.length > 0 && (
+                  <button
+                    onClick={() => {
+                      connectionService.clearTransferHistory();
+                      setHistoryNotice('Transfer history cleared. All physical files remain safely on disk.');
+                      setTimeout(() => setHistoryNotice(null), 4000);
+                    }}
+                    className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-linear-text-tertiary hover:text-linear-red hover:bg-linear-red/10 border border-transparent hover:border-linear-red/20 transition-colors"
+                    title="Clear history list (Files on disk will NOT be deleted)"
+                  >
+                    <Trash2 size={12} />
+                    <span>Clear History</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Explanatory Safety Notice Banner */}
+              <div className="flex items-center justify-between bg-black/40 px-3 py-2 rounded-md border border-white/5 text-[11px] text-linear-text-tertiary">
+                <span>Deleting history only removes the log record. Underlying files on disk are preserved.</span>
+                <span className="text-[10px] font-mono text-linear-green bg-linear-green/10 px-1.5 py-0.5 rounded border border-linear-green/20">
+                  Zero Data Loss
+                </span>
+              </div>
+
+              {historyNotice && (
+                <div className="flex items-center gap-2 bg-linear-green/10 border border-linear-green/20 px-3 py-2 rounded-md text-xs text-linear-green">
+                  <CheckCircle2 size={14} className="shrink-0" />
+                  <span>{historyNotice}</span>
+                </div>
+              )}
+
+              {/* History Items List */}
+              {transferHistory.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-6 text-center text-linear-text-tertiary gap-1">
+                  <Clock size={20} className="opacity-40 mb-1" />
+                  <span className="text-xs font-medium text-linear-text-secondary">No transfer history yet</span>
+                  <span className="text-[11px]">Transfers completed with mobile companion will appear here.</span>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2 max-h-72 overflow-y-auto pr-1">
+                  {transferHistory.map((item) => (
+                    <div
+                      key={item.id}
+                      className="bg-[#08090A] border border-white/5 hover:border-white/10 rounded-md p-2.5 flex items-center justify-between transition-colors group"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-7 h-7 rounded bg-white/[0.04] border border-white/5 flex items-center justify-center text-linear-text-secondary shrink-0">
+                          {item.direction === 'sent' ? (
+                            <ArrowUpRight size={13} className="text-linear-brand" />
+                          ) : (
+                            <ArrowDownLeft size={13} className="text-linear-green" />
+                          )}
+                        </div>
+                        <div className="min-w-0 flex flex-col">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-medium text-white font-mono truncate max-w-xs" title={item.filename}>
+                              {item.filename}
+                            </span>
+                            <span className="text-[9px] font-mono uppercase px-1.5 py-0.2 rounded bg-white/[0.04] text-linear-text-tertiary border border-white/5">
+                              {item.direction === 'sent' ? 'Sent to Phone' : 'Received from Phone'}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[10px] text-linear-text-tertiary font-mono mt-0.5">
+                            <span>{(item.totalBytes / 1_048_576).toFixed(2)} MB</span>
+                            <span>•</span>
+                            <span>{new Date(item.completedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+                            {item.sha256 && (
+                              <>
+                                <span>•</span>
+                                <span title={`SHA-256: ${item.sha256}`}>SHA: {item.sha256.slice(0, 8)}...</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="flex items-center gap-1 text-[10px] font-medium font-mono text-linear-green bg-linear-green/10 border border-linear-green/20 px-2 py-0.5 rounded">
+                          <CheckCircle2 size={10} /> Completed
+                        </span>
+                        <button
+                          onClick={() => {
+                            connectionService.deleteTransferHistoryItem(item.id);
+                            setHistoryNotice(`Removed "${item.filename}" from log. Physical file is preserved.`);
+                            setTimeout(() => setHistoryNotice(null), 3500);
+                          }}
+                          className="p-1 rounded text-linear-text-tertiary hover:text-linear-red hover:bg-linear-red/10 transition-colors opacity-70 group-hover:opacity-100"
+                          title="Remove from history (file remains on disk)"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
             {/* Default Download Directory */}
             <div className="linear-card rounded-lg p-4 flex flex-col gap-3">

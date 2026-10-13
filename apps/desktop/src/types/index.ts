@@ -44,6 +44,16 @@ export interface FileTransferStatus {
   error?: string;
 }
 
+export interface TransferHistoryItem {
+  id: string;
+  filename: string;
+  totalBytes: number;
+  completedAt: number;
+  direction: 'sent' | 'received';
+  status: 'completed' | 'cancelled' | 'failed';
+  sha256?: string;
+}
+
 export interface BluetoothDevice {
   name: string;
   id: string;

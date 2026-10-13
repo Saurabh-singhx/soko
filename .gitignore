@@ -29,3 +29,6 @@ build/
 # Android Build Artifacts
 *.idsig
 build_apk_tmp/
+
+# Uploaded Files & Transfers
+transfers/

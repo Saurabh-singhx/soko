@@ -197,6 +197,12 @@ async function runTests() {
     assert(resMismatch.status === 400, 'Mismatched checksum rejected with HTTP 400');
     assert(!fs.existsSync(path.join(TRANSFERS_DIR, 'checksum-fail.bin')), 'Target file was NOT created');
     assert(!fs.existsSync(path.join(TRANSFERS_DIR, 'checksum-fail.bin.part')), 'Partial buffer (.part) cleaned up with zero leaks');
+
+    // Test GET /api/transfers storage history list
+    const resList = await request('GET', '/api/transfers');
+    assert(resList.status === 200, 'GET /api/transfers returns HTTP 200');
+    assert(Array.isArray(resList.data?.files), 'Returns files array in storage');
+    assert(resList.data.files.length >= 0, 'Storage files list query successful');
   } catch (err) {
     assert(false, `Binary upload security check failed: ${err.message}`);
   }

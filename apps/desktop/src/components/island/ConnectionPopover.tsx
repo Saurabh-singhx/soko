@@ -272,6 +272,27 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
         </button>
       </div>
 
+      {/* Recent Transfer Pill */}
+      {connectionService.getTransferHistory().length > 0 && (
+        <div className="bg-[#121417] border border-white/5 rounded-lg px-2.5 py-1.5 mb-2.5 flex items-center justify-between text-[10px]">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-linear-green" />
+            <span className="text-linear-text-secondary truncate font-mono">
+              Last: {connectionService.getTransferHistory()[0].filename}
+            </span>
+          </div>
+          <button
+            onClick={() => {
+              onClose();
+              onOpenSettings();
+            }}
+            className="text-[10px] text-linear-brand hover:underline font-mono shrink-0 ml-2"
+          >
+            History &rarr;
+          </button>
+        </div>
+      )}
+
       {/* Action Footer */}
       <div className="flex items-center justify-between pt-1 border-t border-white/5">
         {isConnected ? (
