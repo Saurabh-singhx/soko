@@ -140,7 +140,10 @@ To preserve authentic brand identity while maintaining Linear's strict `#08090A`
 - **Automatic Vertical Stretching (No Scroll by Default)**: The Dynamic Island expands vertically to fit the entire notification message without artificial height caps or scrollbars. All paragraphs, sentences, and bullet points display completely.
 - **Subtle Horizontal Expansion**: For bigger notifications, the pill stretches a little horizontally (from 420px to 470px up to 530px–560px), giving lines comfortable breathing room.
 - **Screen-Limit Boundary Scrolling**: If an extraordinarily large notification (e.g. 50+ lines) reaches the physical screen limit (`min(65vh, 440px)`), smooth vertical scrolling automatically activates with Linear's custom slim scrollbar so the island remains bounded on screen.
+- **Click-to-Copy on Text**: Clicking on the notification text immediately copies the message to clipboard with instant feedback (`✓ Copied` badge and text glow). The separate copy button is replaced by direct text interaction.
+- **Click-Anywhere-to-Close (Backdrop Dismiss)**: When a notification is open, clicking anywhere on the screen outside the Dynamic Island pill (or pressing Escape) instantly closes the notification back to compact mode.
 - **Hover-Aware Auto-Dismiss**: Mouse hover (`onMouseEnter`/`onMouseLeave`) pauses the auto-collapse timer indefinitely, ensuring users can read extensive notifications at their own pace without interruption.
+
 
 
 

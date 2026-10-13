@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Bluetooth, Settings } from 'lucide-react';
 import { CharacterAvatar } from './CharacterAvatar.tsx';
@@ -35,6 +35,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
 
   const [isBotClicked, setIsBotClicked] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
+  const islandRef = useRef<HTMLDivElement>(null);
 
   // Auto-collapse notification after delay if not actively hovered
   useEffect(() => {
@@ -53,6 +54,39 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
       return () => clearTimeout(timer);
     }
   }, [mode, isHovered, activeNotification]);
+
+  // Close notification when clicking anywhere outside on screen or pressing Escape
+  useEffect(() => {
+    if (mode === 'notification') {
+      const handleGlobalClick = (e: MouseEvent) => {
+        if (islandRef.current && !islandRef.current.contains(e.target as Node)) {
+          setMode('compact');
+          setMood('idle');
+          setIsBotClicked(false);
+        }
+      };
+
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') {
+          setMode('compact');
+          setMood('idle');
+          setIsBotClicked(false);
+        }
+      };
+
+      // Delay listener attachment to avoid immediately catching the opening click event
+      const timer = setTimeout(() => {
+        window.addEventListener('click', handleGlobalClick);
+        window.addEventListener('keydown', handleKeyDown);
+      }, 50);
+
+      return () => {
+        clearTimeout(timer);
+        window.removeEventListener('click', handleGlobalClick);
+        window.removeEventListener('keydown', handleKeyDown);
+      };
+    }
+  }, [mode]);
 
   // Spring physics transition config
   const springTransition = {
@@ -284,6 +318,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     <div className="flex flex-col items-center justify-start w-full h-full pt-1">
       {/* Morphing Dynamic Island Pill */}
       <motion.div
+        ref={islandRef}
         layout
         transition={springTransition}
         style={{
@@ -412,7 +447,10 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
       </motion.div>
 
       {/* Floating Demo Toolbar (Linear minimalist badge) */}
-      <div className="flex items-center gap-2 mt-2 opacity-35 hover:opacity-100 transition-opacity text-[11px] font-sans text-linear-text-secondary bg-[#08090A]/90 px-2.5 py-1 rounded-full border border-white/10 shadow-lg">
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="flex items-center gap-2 mt-2 opacity-35 hover:opacity-100 transition-opacity text-[11px] font-sans text-linear-text-secondary bg-[#08090A]/90 px-2.5 py-1 rounded-full border border-white/10 shadow-lg"
+      >
         <button onClick={simulateNotification} className="hover:text-linear-text-primary px-1 transition-colors">
           + Notif
         </button>
