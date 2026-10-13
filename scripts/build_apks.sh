@@ -282,7 +282,7 @@ EOF
   "${ZIPALIGN}" -p -f 4 "${WORK}/unaligned.apk" "${WORK}/aligned.apk"
 
   # 9. Sign APK with apksigner
-  local FINAL_OUT="${PROJECT_ROOT}/${OUT_NAME}"
+  local FINAL_OUT="${OUTPUT_DIR}/${OUT_NAME}"
   "${APKSIGNER}" sign \
     --ks "${KEYSTORE}" \
     --ks-key-alias "soko-key" \
@@ -296,21 +296,24 @@ EOF
   echo "Successfully generated signed APK: ${FINAL_OUT} ($(du -h "${FINAL_OUT}" | cut -f1))"
 }
 
+OUTPUT_DIR="${PROJECT_ROOT}/apks"
+mkdir -p "${OUTPUT_DIR}"
+
 # Build Soko Desktop (Dynamic Island HUD for Android)
 build_apk "desktop" "com.soko.desktop" "Soko HUD" "soko-desktop.apk" "${PROJECT_ROOT}/apps/desktop/dist"
 
 # Build Soko Mobile (Mobile Companion Controller)
 build_apk "mobile" "com.soko.mobile" "Soko Mobile" "soko-mobile.apk" ""
 
-# Also create release & debug alias copies in the root directory
-cd "${PROJECT_ROOT}"
+# Also create release & debug alias copies in the apks directory
+cd "${OUTPUT_DIR}"
 cp soko-desktop.apk soko-release.apk
 cp soko-mobile.apk soko-debug.apk
 
 echo "----------------------------------------------------"
-echo "ALL APKS SUCCESSFULLY GENERATED IN ROOT DIRECTORY:"
+echo "ALL APKS SUCCESSFULLY GENERATED IN apks/ DIRECTORY:"
 echo "----------------------------------------------------"
-ls -lh "${PROJECT_ROOT}"/*.apk
+ls -lh "${OUTPUT_DIR}"/*.apk
 
 # Cleanup temp files
 rm -rf "${BUILD_DIR}"
