@@ -16,12 +16,14 @@ class ReactiveMascotWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: size,
-      height: size,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
+    return Transform.rotate(
+      angle: isConnected ? -0.06 : 0.0, // Quirky Grokbot head tilt
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
           // 1. Ambient Background Pulse Halo
           Container(
             width: size * 0.9,
@@ -194,7 +196,8 @@ class ReactiveMascotWidget extends StatelessWidget {
           ),
         ],
       ),
-    );
+    ),
+  );
   }
 
   Widget _buildEye(bool active) {
