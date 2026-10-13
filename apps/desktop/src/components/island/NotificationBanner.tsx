@@ -38,8 +38,13 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
     <motion.div
       initial={{ opacity: 0, y: -6 }}
       animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -4 }}
-      transition={{ duration: 0.18 }}
+      exit={{
+        opacity: 0,
+        scale: 0.96,
+        filter: 'blur(3px)',
+        transition: { duration: 0.16, ease: [0.32, 0, 0.67, 0] },
+      }}
+      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
       className="flex items-start justify-between w-full gap-2 px-1 py-0.5 font-sans select-none"
     >
       {/* Brand Icon Badge + Details Block */}

@@ -88,12 +88,12 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     }
   }, [mode]);
 
-  // Spring physics transition config
+  // Fluid spring physics transition config (calibrated for silky Apple-style motion)
   const springTransition = {
     type: 'spring',
-    stiffness: 450,
-    damping: 32,
-    mass: 0.85,
+    stiffness: 280,
+    damping: 26,
+    mass: 0.8,
   };
 
   // Dynamic avatar size: significantly increased when notification is visible & when clicked
@@ -338,8 +338,10 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         title={mode === 'compact' ? 'Click anywhere to view notification' : undefined}
       >
         {/* Left Anchor: Mascot Character Avatar */}
-        <div
-          className={`shrink-0 cursor-pointer pr-1.5 flex items-center justify-center transition-all ${
+        <motion.div
+          layout
+          transition={springTransition}
+          className={`shrink-0 cursor-pointer pr-1.5 flex items-center justify-center ${
             mode === 'notification' ? 'self-start mt-1' : 'self-center'
           }`}
           onClick={(e) => {
@@ -369,7 +371,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
             size={avatarSize}
             notificationKey={activeNotification?.id}
           />
-        </div>
+        </motion.div>
 
         {/* Center / Body Section */}
         <div
@@ -379,14 +381,23 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
               : 'flex items-center h-full overflow-hidden'
           }`}
         >
-          <AnimatePresence mode="wait">
+          <AnimatePresence mode="popLayout" initial={false}>
             {mode === 'compact' && (
               <motion.div
                 key="compact"
-                initial={{ opacity: 0, scale: 0.96 }}
+                initial={{ opacity: 0, scale: 0.94 }}
                 animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.96 }}
-                transition={{ duration: 0.15 }}
+                exit={{
+                  opacity: 0,
+                  scale: 0.94,
+                  filter: 'blur(2px)',
+                  transition: { duration: 0.14, ease: 'easeOut' },
+                }}
+                transition={{
+                  duration: 0.22,
+                  delay: 0.05,
+                  ease: [0.16, 1, 0.3, 1],
+                }}
                 className="flex items-center justify-between w-full select-none"
               >
                 <div className="flex items-center gap-1.5 text-xs text-linear-text-primary font-medium tracking-tight">

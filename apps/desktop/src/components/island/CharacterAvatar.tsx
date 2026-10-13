@@ -668,8 +668,8 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
         height: size,
       }}
       transition={{
-        width: { type: 'spring', stiffness: 450, damping: 32 },
-        height: { type: 'spring', stiffness: 450, damping: 32 },
+        width: { type: 'spring', stiffness: 280, damping: 26, mass: 0.8 },
+        height: { type: 'spring', stiffness: 280, damping: 26, mass: 0.8 },
       }}
       onClick={handleAvatarClick}
     >
