@@ -34,12 +34,14 @@ export interface CliProcessStatus {
 }
 
 export interface FileTransferStatus {
+  id?: string;
   filename: string;
   bytesDownloaded: number;
   totalBytes: number;
   speedBytesPerSec: number;
   percentage: number;
-  status: 'active' | 'completed' | 'failed';
+  status: 'active' | 'completed' | 'failed' | 'cancelled';
+  error?: string;
 }
 
 export interface BluetoothDevice {
@@ -83,7 +85,10 @@ export interface SokoPacketEnvelope {
     | 'CLI_TERMINATED'
     | 'FILE_OFFER'
     | 'FILE_PROGRESS'
-    | 'FILE_COMPLETED';
+    | 'FILE_COMPLETED'
+    | 'FILE_CANCEL'
+    | 'FILE_FAILED'
+    | 'FILE_RETRY';
   payload: Record<string, any>;
 }
 

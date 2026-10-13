@@ -109,6 +109,17 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     }
   }, [mode, isHovered, activeNotification]);
 
+  // Auto-collapse completed file transfer after 2.5s
+  useEffect(() => {
+    if (mode === 'transfer' && activeTransfer?.status === 'completed') {
+      const timer = setTimeout(() => {
+        setMode('compact');
+        setMood('idle');
+      }, 2500);
+      return () => clearTimeout(timer);
+    }
+  }, [mode, activeTransfer?.status]);
+
   // Close notification / connection popover when clicking anywhere outside on screen or pressing Escape
   useEffect(() => {
     const handleGlobalClick = (e: MouseEvent) => {
@@ -321,47 +332,9 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
   };
 
   const simulateTransfer = () => {
-    setActiveTransfer({
-      filename: 'soko-v1.0.0-release.apk',
-      bytesDownloaded: 14_000_000,
-      totalBytes: 52_000_000,
-      speedBytesPerSec: 42_000_000,
-      percentage: 27,
-      status: 'active',
-    });
     setMood('working');
     setMode('transfer');
-
-    let current = 14_000_000;
-    const interval = setInterval(() => {
-      current += 15_000_000;
-      if (current >= 52_000_000) {
-        clearInterval(interval);
-        setActiveTransfer({
-          filename: 'soko-v1.0.0-release.apk',
-          bytesDownloaded: 52_000_000,
-          totalBytes: 52_000_000,
-          speedBytesPerSec: 0,
-          percentage: 100,
-          status: 'completed',
-        });
-        setMood('happy');
-        setTimeout(() => {
-          setMode('compact');
-          setMood('idle');
-        }, 3000);
-      } else {
-        setActiveTransfer((prev) =>
-          prev
-            ? {
-                ...prev,
-                bytesDownloaded: current,
-                percentage: (current / 52_000_000) * 100,
-              }
-            : null
-        );
-      }
-    }, 300);
+    connectionService.sendTestTransfer('soko-v1.0.0-release.apk');
   };
 
   const handlePillClick = () => {
@@ -544,6 +517,23 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
               <TransferProgress
                 key="transfer"
                 transfer={activeTransfer}
+                onCancel={() => {
+                  connectionService.stopTransferSimulation();
+                  connectionService.cancelTransfer(activeTransfer.id, activeTransfer.filename);
+                  setActiveTransfer({
+                    ...activeTransfer,
+                    status: 'cancelled',
+                  });
+                  setMood('error');
+                }}
+                onRetry={() => {
+                  connectionService.retryTransfer(activeTransfer.id, activeTransfer.filename);
+                  setMood('working');
+                }}
+                onDismiss={() => {
+                  setMode('compact');
+                  setMood('idle');
+                }}
               />
             )}
           </AnimatePresence>

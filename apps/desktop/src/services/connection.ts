@@ -321,14 +321,20 @@ class ConnectionManager {
       case 'FILE_OFFER':
       case 'FILE_PROGRESS':
       case 'FILE_COMPLETED':
+      case 'FILE_CANCEL':
+      case 'FILE_FAILED':
         if (packet.payload) {
+          const isCancel = packet.packetType === 'FILE_CANCEL' || packet.payload.status === 'cancelled';
+          const isFailed = packet.packetType === 'FILE_FAILED' || packet.payload.status === 'failed';
           const transfer: FileTransferStatus = {
+            id: packet.payload.id || 'transfer-1',
             filename: packet.payload.filename || 'mobile-transfer.apk',
             bytesDownloaded: packet.payload.bytesDownloaded || 0,
             totalBytes: packet.payload.totalBytes || 52000000,
-            speedBytesPerSec: packet.payload.speedBytesPerSec || 42000000,
-            percentage: packet.payload.percentage || 0,
-            status: packet.payload.status || 'active',
+            speedBytesPerSec: isCancel || isFailed ? 0 : (packet.payload.speedBytesPerSec || 42000000),
+            percentage: isCancel || isFailed ? 0 : (packet.payload.percentage || 0),
+            status: isCancel ? 'cancelled' : isFailed ? 'failed' : (packet.payload.status || 'active'),
+            error: packet.payload.error,
           };
           this.transferListeners.forEach((l) => l(transfer));
         }
@@ -424,17 +430,106 @@ class ConnectionManager {
     );
   }
 
-  public sendTestTransfer() {
+  private transferSimulationTimer: any = null;
+
+  public cancelTransfer(id = 'transfer-1', filename = 'soko-v1.0.0-release.apk') {
+    this.stopTransferSimulation();
+
+    // Broadcast cancellation over WebSocket to phone and bridge
+    const packet: SokoPacketEnvelope = {
+      magic: 'SK',
+      version: 1,
+      packetId: Date.now(),
+      timestamp: Date.now(),
+      packetType: 'FILE_CANCEL',
+      payload: {
+        id,
+        filename,
+        status: 'cancelled',
+        error: 'Transfer aborted by user',
+      },
+    };
+    this.sendPacket(packet);
+
+    // Notify local listeners
     this.transferListeners.forEach((l) =>
       l({
-        filename: 'soko-v1.0.0-release.apk',
-        bytesDownloaded: 14000000,
+        id,
+        filename,
+        bytesDownloaded: 0,
         totalBytes: 52000000,
-        speedBytesPerSec: 42000000,
-        percentage: 27,
-        status: 'active',
+        speedBytesPerSec: 0,
+        percentage: 0,
+        status: 'cancelled',
+        error: 'Transfer aborted by user',
       })
     );
+  }
+
+  public retryTransfer(id = 'transfer-1', filename = 'soko-v1.0.0-release.apk') {
+    this.stopTransferSimulation();
+
+    // Broadcast retry event
+    const packet: SokoPacketEnvelope = {
+      magic: 'SK',
+      version: 1,
+      packetId: Date.now(),
+      timestamp: Date.now(),
+      packetType: 'FILE_RETRY',
+      payload: {
+        id,
+        filename,
+      },
+    };
+    this.sendPacket(packet);
+
+    // Restart fresh transfer
+    this.sendTestTransfer(filename);
+  }
+
+  public stopTransferSimulation() {
+    if (this.transferSimulationTimer) {
+      clearInterval(this.transferSimulationTimer);
+      this.transferSimulationTimer = null;
+    }
+  }
+
+  public sendTestTransfer(filename = 'soko-v1.0.0-release.apk') {
+    this.stopTransferSimulation();
+
+    let bytes = 8000000;
+    const total = 52000000;
+
+    const initial: FileTransferStatus = {
+      id: 'transfer-1',
+      filename,
+      bytesDownloaded: bytes,
+      totalBytes: total,
+      speedBytesPerSec: 42000000,
+      percentage: Math.round((bytes / total) * 100),
+      status: 'active',
+    };
+    this.transferListeners.forEach((l) => l(initial));
+
+    this.transferSimulationTimer = setInterval(() => {
+      bytes += 11000000;
+      const isDone = bytes >= total;
+      const updated: FileTransferStatus = {
+        id: 'transfer-1',
+        filename,
+        bytesDownloaded: isDone ? total : bytes,
+        totalBytes: total,
+        speedBytesPerSec: isDone ? 0 : 42000000,
+        percentage: isDone ? 100 : Math.round((bytes / total) * 100),
+        status: isDone ? 'completed' : 'active',
+      };
+      this.transferListeners.forEach((l) => l(updated));
+
+      if (isDone) {
+        clearInterval(this.transferSimulationTimer);
+        this.transferSimulationTimer = null;
+      }
+    }, 450);
   }
 }
 

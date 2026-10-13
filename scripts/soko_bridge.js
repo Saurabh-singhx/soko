@@ -14,7 +14,10 @@
  * - Replay-resistant packet framing (SK magic bytes)
  * - Bi-directional heartbeat health monitoring (HEARTBEAT_PING/PONG)
  * - Real-time remote CLI execution and output streaming
- * - High-speed hotspot file streaming simulation
+ * - High-speed hotspot file streaming with:
+ *     * Instant cancellation & cleanup (removes .part files)
+ *     * Automatic retry
+ *     * Real binary file upload endpoint (/api/upload)
  * - Safe port fallback (defaults to 8766 to avoid conflicts with 8765)
  * ==============================================================================
  */
@@ -55,8 +58,124 @@ let pairedDevice = {
   isAuthorized: true,
 };
 
-// Path to mobile companion web application
+// Path to mobile companion web application and transfer directory
 const COMPANION_INDEX = path.resolve(__dirname, '../apps/mobile/companion/index.html');
+const TRANSFERS_DIR = path.resolve(__dirname, '../transfers');
+if (!fs.existsSync(TRANSFERS_DIR)) {
+  try { fs.mkdirSync(TRANSFERS_DIR, { recursive: true }); } catch {}
+}
+
+// Active Transfer State Tracker (Supports cancellation, cleanup, and retry)
+let activeTransferSession = {
+  id: null,
+  filename: null,
+  timer: null,
+  writeStream: null,
+  partPath: null,
+  totalBytes: 52000000,
+  bytesTransferred: 0,
+};
+
+function cancelActiveTransfer(reason = 'Cancelled by user') {
+  if (activeTransferSession.timer) {
+    clearInterval(activeTransferSession.timer);
+    activeTransferSession.timer = null;
+  }
+
+  if (activeTransferSession.writeStream) {
+    try {
+      activeTransferSession.writeStream.destroy();
+    } catch {}
+    activeTransferSession.writeStream = null;
+  }
+
+  // Proper disk cleanup: remove temporary .part buffer immediately!
+  if (activeTransferSession.partPath && fs.existsSync(activeTransferSession.partPath)) {
+    try {
+      fs.unlinkSync(activeTransferSession.partPath);
+      console.log(`[Bridge Transfer Cleanup] Removed partial buffer: ${activeTransferSession.partPath}`);
+    } catch (e) {
+      console.error('[Bridge Transfer Cleanup Error]', e);
+    }
+  }
+
+  const cancelledPacket = {
+    magic: 'SK',
+    version: 1,
+    packetId: Date.now(),
+    timestamp: Date.now(),
+    packetType: 'FILE_CANCEL',
+    payload: {
+      id: activeTransferSession.id || 'transfer-1',
+      filename: activeTransferSession.filename || 'mobile-transfer.apk',
+      status: 'cancelled',
+      error: reason,
+    },
+  };
+
+  broadcastPacket(cancelledPacket);
+  console.log(`[Bridge Transfer] Transfer cancelled: ${reason}`);
+
+  activeTransferSession.id = null;
+  activeTransferSession.filename = null;
+  activeTransferSession.partPath = null;
+  activeTransferSession.bytesTransferred = 0;
+}
+
+function startSimulatedTransfer(filename = 'soko-v1.0.0-release.apk') {
+  cancelActiveTransfer('Restarting transfer');
+
+  const transferId = `trans-${Date.now()}`;
+  activeTransferSession.id = transferId;
+  activeTransferSession.filename = filename;
+  activeTransferSession.totalBytes = 52000000;
+  activeTransferSession.bytesTransferred = 8000000;
+
+  broadcastPacket({
+    magic: 'SK',
+    version: 1,
+    packetId: Date.now(),
+    timestamp: Date.now(),
+    packetType: 'FILE_OFFER',
+    payload: {
+      id: transferId,
+      filename,
+      bytesDownloaded: activeTransferSession.bytesTransferred,
+      totalBytes: activeTransferSession.totalBytes,
+      speedBytesPerSec: 42000000,
+      percentage: Math.round((activeTransferSession.bytesTransferred / activeTransferSession.totalBytes) * 100),
+      status: 'active',
+    },
+  });
+
+  activeTransferSession.timer = setInterval(() => {
+    activeTransferSession.bytesTransferred += 11000000;
+    const isDone = activeTransferSession.bytesTransferred >= activeTransferSession.totalBytes;
+
+    broadcastPacket({
+      magic: 'SK',
+      version: 1,
+      packetId: Date.now(),
+      timestamp: Date.now(),
+      packetType: isDone ? 'FILE_COMPLETED' : 'FILE_PROGRESS',
+      payload: {
+        id: transferId,
+        filename,
+        bytesDownloaded: isDone ? activeTransferSession.totalBytes : activeTransferSession.bytesTransferred,
+        totalBytes: activeTransferSession.totalBytes,
+        speedBytesPerSec: isDone ? 0 : 42000000,
+        percentage: isDone ? 100 : Math.round((activeTransferSession.bytesTransferred / activeTransferSession.totalBytes) * 100),
+        status: isDone ? 'completed' : 'active',
+      },
+    });
+
+    if (isDone) {
+      clearInterval(activeTransferSession.timer);
+      activeTransferSession.timer = null;
+      console.log(`[Bridge Transfer] Completed transfer: ${filename} (52 MB)`);
+    }
+  }, 450);
+}
 
 // Encode WebSocket frame (RFC 6455)
 function encodeWsFrame(payload) {
@@ -239,6 +358,18 @@ function handleWsFrame(socket, buffer) {
       return;
     }
 
+    // Cancel file transfer packet from phone or desktop
+    if (packet.packetType === 'FILE_CANCEL') {
+      cancelActiveTransfer(packet.payload?.error || 'Cancelled by peer');
+      return;
+    }
+
+    // Retry file transfer packet from phone or desktop
+    if (packet.packetType === 'FILE_RETRY') {
+      startSimulatedTransfer(packet.payload?.filename || 'soko-v1.0.0-release.apk');
+      return;
+    }
+
     // Default: broadcast to all other peers (e.g. phone -> desktop Dynamic Island)
     broadcastPacket(packet, socket);
     console.log(`[Bridge WS] Relayed packet: ${packet.packetType}`);
@@ -414,57 +545,158 @@ const server = http.createServer((req, res) => {
     req.on('data', (chunk) => (body += chunk));
     req.on('end', () => {
       try {
-        const data = JSON.parse(body);
+        const data = body ? JSON.parse(body) : {};
         const filename = data.filename || 'soko-v1.0.0-release.apk';
-
-        let bytes = 12000000;
-        const total = 52000000;
-
-        broadcastPacket({
-          magic: 'SK',
-          version: 1,
-          packetId: Date.now(),
-          timestamp: Date.now(),
-          packetType: 'FILE_OFFER',
-          payload: {
-            filename,
-            bytesDownloaded: bytes,
-            totalBytes: total,
-            speedBytesPerSec: 42000000,
-            percentage: Math.round((bytes / total) * 100),
-            status: 'active',
-          },
-        });
-
-        const interval = setInterval(() => {
-          bytes += 14000000;
-          const isDone = bytes >= total;
-          broadcastPacket({
-            magic: 'SK',
-            version: 1,
-            packetId: Date.now(),
-            timestamp: Date.now(),
-            packetType: isDone ? 'FILE_COMPLETED' : 'FILE_PROGRESS',
-            payload: {
-              filename,
-              bytesDownloaded: isDone ? total : bytes,
-              totalBytes: total,
-              speedBytesPerSec: isDone ? 0 : 42000000,
-              percentage: isDone ? 100 : Math.round((bytes / total) * 100),
-              status: isDone ? 'completed' : 'active',
-            },
-          });
-
-          if (isDone) clearInterval(interval);
-        }, 400);
+        startSimulatedTransfer(filename);
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true }));
+        res.end(JSON.stringify({ success: true, filename }));
       } catch (err) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
       }
     });
+    return;
+  }
+
+  // 6. Cancel file transfer endpoint
+  if (url.pathname === '/api/transfer/cancel' && req.method === 'POST') {
+    cancelActiveTransfer('Cancelled via REST API');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, status: 'cancelled' }));
+    return;
+  }
+
+  // 7. Retry file transfer endpoint
+  if (url.pathname === '/api/transfer/retry' && req.method === 'POST') {
+    startSimulatedTransfer('soko-v1.0.0-release.apk');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, status: 'active' }));
+    return;
+  }
+
+  // 8. Real file binary upload (supports Wi-Fi / Hotspot streaming with .part cleanup)
+  if (url.pathname === '/api/upload' && (req.method === 'POST' || req.method === 'PUT')) {
+    const filename = url.searchParams.get('filename') || `transfer-${Date.now()}.bin`;
+    const safeFilename = path.basename(filename);
+    const partPath = path.join(TRANSFERS_DIR, `${safeFilename}.part`);
+    const finalPath = path.join(TRANSFERS_DIR, safeFilename);
+
+    cancelActiveTransfer('Replacing with new file upload');
+
+    console.log(`[Bridge Upload] Receiving file: ${safeFilename}`);
+    const writeStream = fs.createWriteStream(partPath);
+    activeTransferSession.partPath = partPath;
+    activeTransferSession.writeStream = writeStream;
+    activeTransferSession.filename = safeFilename;
+
+    let receivedBytes = 0;
+    const totalBytes = parseInt(req.headers['content-length'] || '0', 10) || 1000000;
+    let lastBroadcastTime = 0;
+
+    broadcastPacket({
+      magic: 'SK',
+      version: 1,
+      packetId: Date.now(),
+      timestamp: Date.now(),
+      packetType: 'FILE_OFFER',
+      payload: {
+        filename: safeFilename,
+        bytesDownloaded: 0,
+        totalBytes,
+        speedBytesPerSec: 42000000,
+        percentage: 0,
+        status: 'active',
+      },
+    });
+
+    req.on('data', (chunk) => {
+      receivedBytes += chunk.length;
+      writeStream.write(chunk);
+
+      const now = Date.now();
+      if (now - lastBroadcastTime > 200) {
+        lastBroadcastTime = now;
+        broadcastPacket({
+          magic: 'SK',
+          version: 1,
+          packetId: Date.now(),
+          timestamp: Date.now(),
+          packetType: 'FILE_PROGRESS',
+          payload: {
+            filename: safeFilename,
+            bytesDownloaded: receivedBytes,
+            totalBytes,
+            speedBytesPerSec: 42000000,
+            percentage: Math.min(99, Math.round((receivedBytes / totalBytes) * 100)),
+            status: 'active',
+          },
+        });
+      }
+    });
+
+    req.on('end', () => {
+      writeStream.end(() => {
+        // Atomic rename: .part -> final filename
+        try {
+          fs.renameSync(partPath, finalPath);
+          console.log(`[Bridge Upload] Successfully saved: ${finalPath} (${receivedBytes} bytes)`);
+
+          broadcastPacket({
+            magic: 'SK',
+            version: 1,
+            packetId: Date.now(),
+            timestamp: Date.now(),
+            packetType: 'FILE_COMPLETED',
+            payload: {
+              filename: safeFilename,
+              bytesDownloaded: receivedBytes,
+              totalBytes: receivedBytes,
+              speedBytesPerSec: 0,
+              percentage: 100,
+              status: 'completed',
+            },
+          });
+
+          activeTransferSession.partPath = null;
+          activeTransferSession.writeStream = null;
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, filename: safeFilename, bytes: receivedBytes }));
+        } catch (e) {
+          console.error('[Bridge Upload Rename Error]', e);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: e.message }));
+        }
+      });
+    });
+
+    // Cleanup on abort or network error
+    const handleAbort = (err) => {
+      console.warn(`[Bridge Upload Aborted] Cleaning up temporary file: ${partPath}`);
+      try { writeStream.destroy(); } catch {}
+      if (fs.existsSync(partPath)) {
+        try { fs.unlinkSync(partPath); } catch {}
+      }
+      activeTransferSession.partPath = null;
+      activeTransferSession.writeStream = null;
+
+      broadcastPacket({
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'FILE_CANCEL',
+        payload: {
+          filename: safeFilename,
+          status: 'cancelled',
+          error: err ? err.message : 'Upload connection aborted',
+        },
+      });
+    };
+
+    req.on('aborted', () => handleAbort(new Error('Client aborted upload')));
+    req.on('error', (err) => handleAbort(err));
     return;
   }
 
@@ -491,7 +723,7 @@ function startServer(portToTry) {
     console.log('================================================================');
     console.log(` Soko Universal Connection Bridge running on port ${PORT}`);
     console.log('----------------------------------------------------------------');
-    console.log(' Mobile Companion Web App URL (Open on phone browser):');
+    console.log(' Mobile Companion Web App URL (Wi-Fi or Hotspot):');
     ips.forEach((ip) => {
       console.log(`   ► http://${ip}:${PORT}`);
     });
@@ -499,6 +731,7 @@ function startServer(portToTry) {
     console.log('----------------------------------------------------------------');
     console.log(` WebSocket Conduit: ws://0.0.0.0:${PORT}`);
     console.log(' REST Endpoints:    POST /api/notify | POST /api/cli | POST /api/transfer');
+    console.log(' File Endpoints:    POST /api/transfer/cancel | POST /api/transfer/retry | POST /api/upload');
     console.log('================================================================');
   });
 }

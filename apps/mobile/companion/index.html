@@ -610,14 +610,25 @@
       </div>
 
       <div class="transfer-box">
-        <button class="btn" style="background: #10B981;" onclick="triggerFileTransfer()">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-            <polyline points="17 8 12 3 7 8"></polyline>
-            <line x1="12" y1="3" x2="12" y2="15"></line>
-          </svg>
-          Send APK to Desktop Island
-        </button>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn" style="background: #10B981; flex: 1;" onclick="triggerFileTransfer()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="17 8 12 3 7 8"></polyline>
+              <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+            Send 52MB APK
+          </button>
+
+          <button class="btn btn-secondary" style="flex: 1;" onclick="document.getElementById('realFileInput').click()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+            </svg>
+            Pick Any File
+          </button>
+        </div>
+        <input type="file" id="realFileInput" style="display: none;" onchange="uploadRealFile(this)" />
 
         <div class="progress-bar-wrap">
           <div class="progress-bar-fill" id="transferFill"></div>
@@ -626,6 +637,25 @@
         <div class="transfer-stats">
           <span id="transferStatus">Idle</span>
           <span id="transferSpeed">0 MB/s</span>
+        </div>
+
+        <!-- Cancel & Retry Control Row -->
+        <div style="display: flex; gap: 8px; margin-top: 4px;">
+          <button class="btn btn-secondary" id="btnCancelTransfer" style="display: none; flex: 1; border-color: rgba(235, 87, 87, 0.4); color: var(--color-red);" onclick="cancelFileTransfer()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+            Cancel Transfer
+          </button>
+
+          <button class="btn" id="btnRetryTransfer" style="display: none; flex: 1; background: var(--brand);" onclick="retryFileTransfer()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="1 4 1 10 7 10"></polyline>
+              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+            </svg>
+            Retry Transfer
+          </button>
         </div>
       </div>
     </div>
@@ -798,9 +828,29 @@
         blinkBot();
       } else if (packet.packetType === 'FILE_PROGRESS' || packet.packetType === 'FILE_COMPLETED') {
         const pct = packet.payload?.percentage || 0;
-        document.getElementById('transferFill').style.width = pct + '%';
+        const fill = document.getElementById('transferFill');
+        fill.style.background = 'linear-gradient(90deg, var(--brand), var(--color-green))';
+        fill.style.width = pct + '%';
         document.getElementById('transferStatus').innerText = pct === 100 ? 'Transfer Completed!' : `Sending: ${pct}%`;
         document.getElementById('transferSpeed').innerText = pct === 100 ? 'Done' : '42 MB/s';
+        document.getElementById('btnCancelTransfer').style.display = pct === 100 ? 'none' : 'flex';
+        document.getElementById('btnRetryTransfer').style.display = 'none';
+        if (pct === 100) {
+          blinkBot();
+          setTimeout(() => {
+            document.getElementById('btnCancelTransfer').style.display = 'none';
+          }, 2000);
+        }
+      } else if (packet.packetType === 'FILE_CANCEL' || packet.packetType === 'FILE_FAILED') {
+        const isCancel = packet.packetType === 'FILE_CANCEL';
+        const fill = document.getElementById('transferFill');
+        fill.style.background = isCancel ? 'var(--color-amber)' : 'var(--color-red)';
+        fill.style.width = '100%';
+        document.getElementById('transferStatus').innerText = isCancel ? 'Transfer Cancelled' : 'Transfer Failed';
+        document.getElementById('transferSpeed').innerText = isCancel ? 'Partial buffer deleted' : (packet.payload?.error || 'Interrupted');
+        document.getElementById('btnCancelTransfer').style.display = 'none';
+        document.getElementById('btnRetryTransfer').style.display = 'flex';
+        blinkBot();
       }
     }
 
@@ -890,14 +940,20 @@
       showToast(`Triggered: ${title}`);
     }
 
-    function triggerFileTransfer() {
+    let activeUploadXhr = null;
+
+    function triggerFileTransfer(filename = 'soko-v1.0.0-release.apk') {
       blinkBot();
-      document.getElementById('transferFill').style.width = '15%';
+      const fill = document.getElementById('transferFill');
+      fill.style.background = 'linear-gradient(90deg, var(--brand), var(--color-green))';
+      fill.style.width = '15%';
       document.getElementById('transferStatus').innerText = 'Starting 42MB/s Hotspot Stream...';
       document.getElementById('transferSpeed').innerText = '42 MB/s';
+      document.getElementById('btnCancelTransfer').style.display = 'flex';
+      document.getElementById('btnRetryTransfer').style.display = 'none';
 
       const payload = {
-        filename: 'soko-v1.0.0-release.apk',
+        filename,
         totalBytes: 52000000
       };
 
@@ -906,7 +962,113 @@
         postHttp('/api/transfer', payload);
       }
 
-      showToast('APK Transfer offered to Desktop Island!');
+      showToast(`Transfer started: ${filename}`);
+    }
+
+    function cancelFileTransfer() {
+      blinkBot();
+      if (activeUploadXhr) {
+        try { activeUploadXhr.abort(); } catch(e) {}
+        activeUploadXhr = null;
+      }
+
+      const payload = { status: 'cancelled', error: 'Aborted by mobile user' };
+      const sentWs = sendPacket('FILE_CANCEL', payload);
+      if (!sentWs) {
+        postHttp('/api/transfer/cancel', payload);
+      }
+
+      const fill = document.getElementById('transferFill');
+      fill.style.background = 'var(--color-amber)';
+      fill.style.width = '100%';
+      document.getElementById('transferStatus').innerText = 'Transfer Cancelled';
+      document.getElementById('transferSpeed').innerText = 'Partial buffer deleted';
+      document.getElementById('btnCancelTransfer').style.display = 'none';
+      document.getElementById('btnRetryTransfer').style.display = 'flex';
+
+      showToast('Transfer cancelled • Cleaned up partial buffer');
+    }
+
+    function retryFileTransfer() {
+      blinkBot();
+      showToast('Retrying file transfer...');
+      const sentWs = sendPacket('FILE_RETRY', { filename: 'soko-v1.0.0-release.apk' });
+      if (!sentWs) {
+        postHttp('/api/transfer/retry', {});
+      }
+      triggerFileTransfer();
+    }
+
+    function uploadRealFile(input) {
+      if (!input.files || input.files.length === 0) return;
+      const file = input.files[0];
+      blinkBot();
+
+      const fill = document.getElementById('transferFill');
+      fill.style.background = 'linear-gradient(90deg, var(--brand), var(--color-green))';
+      fill.style.width = '5%';
+      document.getElementById('transferStatus').innerText = `Uploading: ${file.name}`;
+      document.getElementById('transferSpeed').innerText = 'Calculating...';
+      document.getElementById('btnCancelTransfer').style.display = 'flex';
+      document.getElementById('btnRetryTransfer').style.display = 'none';
+
+      const xhr = new XMLHttpRequest();
+      activeUploadXhr = xhr;
+
+      let lastLoaded = 0;
+      let lastTime = Date.now();
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const pct = Math.round((e.loaded / e.total) * 100);
+          fill.style.width = pct + '%';
+          const now = Date.now();
+          const timeDiff = (now - lastTime) / 1000;
+          if (timeDiff > 0.3) {
+            const bytesDiff = e.loaded - lastLoaded;
+            const mbPerSec = ((bytesDiff / timeDiff) / 1048576).toFixed(1);
+            document.getElementById('transferSpeed').innerText = `${mbPerSec} MB/s`;
+            lastLoaded = e.loaded;
+            lastTime = now;
+          }
+          document.getElementById('transferStatus').innerText = `Uploading: ${pct}% (${(e.loaded/1048576).toFixed(1)} / ${(e.total/1048576).toFixed(1)} MB)`;
+        }
+      };
+
+      xhr.onload = () => {
+        activeUploadXhr = null;
+        if (xhr.status >= 200 && xhr.status < 300) {
+          fill.style.width = '100%';
+          document.getElementById('transferStatus').innerText = `Saved to Desktop: ${file.name}`;
+          document.getElementById('transferSpeed').innerText = 'Complete';
+          document.getElementById('btnCancelTransfer').style.display = 'none';
+          showToast(`File transferred to Desktop: ${file.name}`);
+        } else {
+          handleUploadError(new Error('Server responded with error ' + xhr.status));
+        }
+      };
+
+      xhr.onerror = () => handleUploadError(new Error('Connection interrupted'));
+      xhr.onabort = () => {
+        activeUploadXhr = null;
+      };
+
+      xhr.open('POST', `${getHttpBaseUrl()}/api/upload?filename=${encodeURIComponent(file.name)}`);
+      xhr.send(file);
+
+      showToast(`Streaming ${file.name} to Desktop Island...`);
+    }
+
+    function handleUploadError(err) {
+      activeUploadXhr = null;
+      const fill = document.getElementById('transferFill');
+      fill.style.background = 'var(--color-red)';
+      fill.style.width = '100%';
+      document.getElementById('transferStatus').innerText = 'Upload Failed';
+      document.getElementById('transferSpeed').innerText = err.message;
+      document.getElementById('btnCancelTransfer').style.display = 'none';
+      document.getElementById('btnRetryTransfer').style.display = 'flex';
+      showToast('Transfer failed • Temporary file deleted');
     }
 
     // Auto connect on startup
