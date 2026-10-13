@@ -85,16 +85,61 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
 
   const dims = getIslandDimensions();
 
+const DEMO_NOTIFICATIONS: MirroredNotification[] = [
+  {
+    id: 'demo-1',
+    appName: 'WhatsApp',
+    packageName: 'com.whatsapp',
+    title: 'Alex Developer',
+    body: 'Hey, I pushed the new changes to main. Check agy!',
+    timestamp: Date.now(),
+  },
+  {
+    id: 'demo-2',
+    appName: 'GitHub',
+    packageName: 'com.github',
+    title: 'Pull Request #42 Merged',
+    body: 'fix(avatar): 360 spin effect and watch left/right tracking',
+    timestamp: Date.now(),
+  },
+  {
+    id: 'demo-3',
+    appName: 'Slack',
+    packageName: 'com.slack',
+    title: 'Sarah Chen (#dev)',
+    body: 'Bot ocular kinetics look incredible! Ready for launch.',
+    timestamp: Date.now(),
+  },
+  {
+    id: 'demo-4',
+    appName: 'Antigravity',
+    packageName: 'ai.antigravity.cli',
+    title: 'agy Agent Finished',
+    body: 'Workspace analysis completed with 0 warnings.',
+    timestamp: Date.now(),
+  },
+  {
+    id: 'demo-5',
+    appName: 'Linear',
+    packageName: 'app.linear',
+    title: 'SOKO-109 Done',
+    body: 'Grok Bot notification interaction animations deployed.',
+    timestamp: Date.now(),
+  },
+];
+
+  const [demoIndex, setDemoIndex] = useState(0);
+
   // Test simulation trigger helpers for demo / local inspection
   const simulateNotification = () => {
-    setActiveNotification({
-      id: 'demo-1',
-      appName: 'WhatsApp',
-      packageName: 'com.whatsapp',
-      title: 'Alex Developer',
-      body: 'Hey, I pushed the new changes to main. Check agy!',
+    const nextIndex = (demoIndex + 1) % DEMO_NOTIFICATIONS.length;
+    setDemoIndex(nextIndex);
+    const notif = {
+      ...DEMO_NOTIFICATIONS[nextIndex],
+      id: `demo-${nextIndex}-${Date.now()}`,
       timestamp: Date.now(),
-    });
+    };
+    setActiveNotification(notif);
     setMood('alert');
     setMode('notification');
   };
@@ -205,7 +250,11 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
               : 'Click to expand'
           }
         >
-          <CharacterAvatar mood={mood} size={avatarSize} />
+          <CharacterAvatar
+            mood={mood}
+            size={avatarSize}
+            notificationKey={activeNotification?.id}
+          />
         </div>
 
         {/* Center / Body Section */}

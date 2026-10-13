@@ -111,3 +111,36 @@ The avatar dynamically adapts to user interactions and notifications:
 * **Compact Pill**: `32px` mascot avatar in a `196px × 42px` island.
 * **Notification Visible**: Enlarges to `48px` in a `400px × 86px` island.
 * **Notification Clicked (Enlarged Bot)**: Enlarges to **`64px`** in a `446px × 98px` island, offering a showcase view of the Grok Bot OLED face with full sub-pixel precision.
+
+---
+
+## 5. Notification Choreographies & Interactive Reactions
+
+To make the mascot feel alive, aware of its environment, and delightfully responsive, notifications trigger rich, varied choreography routines:
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                   NOTIFICATION CHOREOGRAPHY VARIETIES                   │
+├───────────────────┬───────────────────┬────────────────────────────────┤
+│ VARIETY A:        │ VARIETY B:        │ VARIETY C:                     │
+│ 360° SPIN ROLL    │ SCANNER SWEEP     │ CURIOUS DOUBLE-TAKE            │
+│                   │                   │                                │
+│    ↺ (360° flip)  │   ───► ───►       │   (Eyes snap right at card)    │
+│  Eyes snap RIGHT  │  Eyes track text  │   Surprise blink + 360° flip   │
+│  at notification  │  from left-to-right│   Inquisitive smirk at sender │
+├───────────────────┴───────────────────┴────────────────────────────────┤
+│ VARIETY D: RADAR PERK & EAR TWITCH                                     │
+│ Ear-fins spring to +24°/-24°, eyes widen into alert capsules, glance   │
+│ right-left-center before settling on the message card.                 │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+1. **Watch Right (Awareness of UI Layout)**:
+   Because notification text appears to the **right** of the avatar inside the Dynamic Island, the bot actively snaps its gaze to $x = +3.4\text{px}$, literally reading the incoming message.
+2. **Watch Left & Center Check**:
+   After inspecting the message card, the bot glances back left ($x = -2.6\text{px}$) to check its environment, then looks back at the message with a curious top-down eyelid squint.
+3. **Interactive Click Spin**:
+   Clicking directly on the avatar triggers an acrobatic $360°$ spring flip (`rotate += 360°`), a playful double-blink, and toggles the enlarged $64\text{px}$ view.
+4. **Rotating Notification Queue**:
+   The desktop demo toolbar cycles through 5 distinct apps (WhatsApp, GitHub, Slack, Antigravity, Linear), triggering unique reaction sequences for each notification.
+
