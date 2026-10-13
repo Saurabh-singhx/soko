@@ -48,7 +48,9 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
 
   const [isBotClicked, setIsBotClicked] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
   const islandRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Subscribe to live connection manager events
   useEffect(() => {
@@ -331,6 +333,40 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     }, 4500);
   };
 
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setMood('working');
+      setMode('transfer');
+      connectionService.sendRealFile(file);
+      e.target.value = '';
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      setMood('working');
+      setMode('transfer');
+      connectionService.sendRealFile(file);
+    }
+  };
+
   const simulateTransfer = () => {
     setMood('working');
     setMode('transfer');
@@ -346,6 +382,15 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
 
   return (
     <div className="flex flex-col items-center justify-start w-full h-full pt-1">
+      {/* Hidden Native File Input for Real Desktop APK / File Selection */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".apk,application/vnd.android.package-archive,*"
+        className="hidden"
+        onChange={handleFileSelect}
+      />
+
       {/* Morphing Dynamic Island Pill */}
       <motion.div
         ref={islandRef}
@@ -358,14 +403,27 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         onClick={handlePillClick}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
-        className={`relative bg-[#08090A] border rounded-[26px] shadow-linear-island flex px-2.5 overflow-hidden backdrop-blur-3xl font-sans transition-colors duration-200 ${
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        className={`relative bg-[#08090A] border rounded-[26px] shadow-linear-island flex px-2.5 overflow-hidden backdrop-blur-3xl font-sans transition-all duration-200 ${
+          isDragOver
+            ? 'border-linear-green ring-2 ring-linear-green/30 scale-[1.02]'
+            : ''
+        } ${
           mode === 'compact'
             ? 'cursor-pointer border-white/10 hover:border-white/20 active:scale-[0.99] items-center'
             : mode === 'notification'
             ? 'border-white/10 min-h-[88px] max-h-[min(75vh,520px)] items-start py-2.5'
             : 'border-white/10 items-center'
         }`}
-        title={mode === 'compact' ? 'Click anywhere to view notification' : undefined}
+        title={
+          isDragOver
+            ? 'Drop APK or file here to send instantly!'
+            : mode === 'compact'
+            ? 'Click anywhere to view notification (Drag & drop file to send)'
+            : undefined
+        }
       >
         {/* Left Anchor: Mascot Character Avatar */}
         <motion.div
@@ -570,7 +628,21 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
           + agy CLI
         </button>
         <span className="text-white/20">•</span>
-        <button onClick={simulateTransfer} className="hover:text-linear-green px-1 transition-colors">
+        <button
+          onClick={(e) => {
+            if (e.altKey) {
+              simulateTransfer();
+            } else {
+              fileInputRef.current?.click();
+            }
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            simulateTransfer();
+          }}
+          title="Click to select & send APK from desktop (Alt+Click or Right-Click for 52MB test)"
+          className="hover:text-linear-green px-1 transition-colors"
+        >
           + Send APK
         </button>
       </div>

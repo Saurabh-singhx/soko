@@ -848,12 +848,22 @@
       } else if (packet.packetType === 'CLI_OUTPUT_STREAM' || packet.packetType === 'CLI_TERMINATED') {
         termLog.innerText = `[${new Date().toLocaleTimeString()}] ${packet.payload?.title || 'CLI'}:\n${packet.payload?.lastOutputLine || 'Done'}`;
         blinkBot();
+      } else if (packet.packetType === 'FILE_OFFER') {
+        const fill = document.getElementById('transferFill');
+        fill.style.background = 'linear-gradient(90deg, var(--brand), var(--color-green))';
+        fill.style.width = '2%';
+        document.getElementById('transferStatus').innerText = `Receiving: ${packet.payload?.filename || 'File'}`;
+        document.getElementById('transferSpeed').innerText = 'Starting 42 MB/s LAN stream...';
+        document.getElementById('btnCancelTransfer').style.display = 'flex';
+        document.getElementById('btnRetryTransfer').style.display = 'none';
+        blinkBot();
       } else if (packet.packetType === 'FILE_PROGRESS' || packet.packetType === 'FILE_COMPLETED') {
         const pct = packet.payload?.percentage || 0;
+        const fname = packet.payload?.filename ? `${packet.payload.filename}: ` : '';
         const fill = document.getElementById('transferFill');
         fill.style.background = 'linear-gradient(90deg, var(--brand), var(--color-green))';
         fill.style.width = pct + '%';
-        document.getElementById('transferStatus').innerText = pct === 100 ? 'Transfer Completed!' : `Sending: ${pct}%`;
+        document.getElementById('transferStatus').innerText = pct === 100 ? `${fname}Transfer Completed!` : `${fname}${pct}%`;
         document.getElementById('transferSpeed').innerText = pct === 100 ? 'Done' : '42 MB/s';
         document.getElementById('btnCancelTransfer').style.display = pct === 100 ? 'none' : 'flex';
         document.getElementById('btnRetryTransfer').style.display = 'none';

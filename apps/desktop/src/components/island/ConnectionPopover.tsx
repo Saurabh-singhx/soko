@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { motion } from 'framer-motion';
 import {
   Smartphone,
@@ -16,6 +16,7 @@ import {
   Globe,
   Bell,
   Terminal,
+  FolderDown,
 } from 'lucide-react';
 import { ConnectionStatus, PairedDevice } from '../../types/index.ts';
 import { connectionService } from '../../services/connection.ts';
@@ -49,11 +50,21 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
   onClose,
 }) => {
   const [copiedIp, setCopiedIp] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const isConnected = status === 'connected';
   const isScanning = status === 'scanning' || status === 'connecting';
   const localIps = connectionService.getLocalIps();
   const primaryIp = localIps[0] || '192.168.31.210';
   const mobileUrl = `http://${primaryIp}:8766`;
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      connectionService.sendRealFile(file);
+      e.target.value = '';
+      onClose();
+    }
+  };
 
   const copyMobileLink = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -229,6 +240,15 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
         </button>
       </div>
 
+      {/* Hidden file input for native file selection */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".apk,application/vnd.android.package-archive,*"
+        className="hidden"
+        onChange={handleFileSelect}
+      />
+
       {/* Quick Test Actions */}
       <div className="flex items-center gap-1.5 mb-2.5">
         <button
@@ -242,6 +262,13 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
           className="flex-1 flex items-center justify-center gap-1 py-1 rounded bg-white/5 hover:bg-white/10 text-[10px] text-linear-text-secondary hover:text-white border border-white/5 transition-colors"
         >
           <Terminal size={10} /> Test CLI
+        </button>
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          title="Select an APK or file from desktop to transmit"
+          className="flex-1 flex items-center justify-center gap-1 py-1 rounded bg-white/5 hover:bg-white/10 text-[10px] text-linear-green border border-white/5 transition-colors"
+        >
+          <FolderDown size={10} /> Send APK
         </button>
       </div>
 

@@ -493,8 +493,8 @@ function handleWsFrame(socket, buffer) {
 // HTTP Server for Mobile UI and REST endpoints
 const server = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Checksum-Sha256, Content-Length, Authorization, *');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);

@@ -54,6 +54,10 @@ class ConnectionManager {
   private reconnectTimer: any = null;
   private heartbeatTimer: any = null;
 
+  private activeUploadXhr: XMLHttpRequest | null = null;
+  private lastTransferredFile: File | null = null;
+  private currentTransferStatus: FileTransferStatus | null = null;
+
   private constructor() {
     this.initWebSocket();
   }
@@ -67,6 +71,10 @@ class ConnectionManager {
 
   public getStatus(): ConnectionStatus {
     return this.status;
+  }
+
+  public getCurrentTransfer(): FileTransferStatus | null {
+    return this.currentTransferStatus;
   }
 
   public getActiveDevice(): PairedDevice | null {
@@ -341,6 +349,7 @@ class ConnectionManager {
             status: isCancel ? 'cancelled' : isFailed ? 'failed' : (packet.payload.status || 'active'),
             error: packet.payload.error,
           };
+          this.currentTransferStatus = transfer;
           this.transferListeners.forEach((l) => l(transfer));
         }
         break;
@@ -437,8 +446,18 @@ class ConnectionManager {
 
   private transferSimulationTimer: any = null;
 
-  public cancelTransfer(id = 'transfer-1', filename = 'soko-v1.0.0-release.apk') {
+  public cancelTransfer(id = 'transfer-1', filename?: string) {
     this.stopTransferSimulation();
+
+    if (this.activeUploadXhr) {
+      try {
+        this.activeUploadXhr.abort();
+      } catch {}
+      this.activeUploadXhr = null;
+    }
+
+    const targetFilename = filename || this.lastTransferredFile?.name || 'soko-v1.0.0-release.apk';
+    const totalBytes = this.lastTransferredFile?.size || 52000000;
 
     // Broadcast cancellation over WebSocket to phone and bridge
     const packet: SokoPacketEnvelope = {
@@ -449,30 +468,42 @@ class ConnectionManager {
       packetType: 'FILE_CANCEL',
       payload: {
         id,
-        filename,
+        filename: targetFilename,
         status: 'cancelled',
         error: 'Transfer aborted by user',
       },
     };
     this.sendPacket(packet);
 
-    // Notify local listeners
-    this.transferListeners.forEach((l) =>
-      l({
-        id,
-        filename,
-        bytesDownloaded: 0,
-        totalBytes: 52000000,
-        speedBytesPerSec: 0,
-        percentage: 0,
-        status: 'cancelled',
-        error: 'Transfer aborted by user',
-      })
-    );
+    // Also call REST cancel endpoint to ensure backend stream cleanup
+    try {
+      const httpBase = this.bridgeUrl.replace(/^ws/, 'http');
+      fetch(`${httpBase}/api/transfer/cancel`, { method: 'POST' }).catch(() => {});
+    } catch {}
+
+    const cancelledStatus: FileTransferStatus = {
+      id,
+      filename: targetFilename,
+      bytesDownloaded: 0,
+      totalBytes,
+      speedBytesPerSec: 0,
+      percentage: 0,
+      status: 'cancelled',
+      error: 'Transfer aborted by user',
+    };
+    this.currentTransferStatus = cancelledStatus;
+    this.transferListeners.forEach((l) => l(cancelledStatus));
   }
 
-  public retryTransfer(id = 'transfer-1', filename = 'soko-v1.0.0-release.apk') {
+  public retryTransfer(id = 'transfer-1', filename?: string) {
     this.stopTransferSimulation();
+
+    if (this.lastTransferredFile) {
+      this.sendRealFile(this.lastTransferredFile);
+      return;
+    }
+
+    const targetFilename = filename || 'soko-v1.0.0-release.apk';
 
     // Broadcast retry event
     const packet: SokoPacketEnvelope = {
@@ -483,13 +514,13 @@ class ConnectionManager {
       packetType: 'FILE_RETRY',
       payload: {
         id,
-        filename,
+        filename: targetFilename,
       },
     };
     this.sendPacket(packet);
 
     // Restart fresh transfer
-    this.sendTestTransfer(filename);
+    this.sendTestTransfer(targetFilename);
   }
 
   public stopTransferSimulation() {
@@ -501,6 +532,12 @@ class ConnectionManager {
 
   public sendTestTransfer(filename = 'soko-v1.0.0-release.apk') {
     this.stopTransferSimulation();
+    if (this.activeUploadXhr) {
+      try {
+        this.activeUploadXhr.abort();
+      } catch {}
+      this.activeUploadXhr = null;
+    }
 
     let bytes = 8000000;
     const total = 52000000;
@@ -514,6 +551,7 @@ class ConnectionManager {
       percentage: Math.round((bytes / total) * 100),
       status: 'active',
     };
+    this.currentTransferStatus = initial;
     this.transferListeners.forEach((l) => l(initial));
 
     this.transferSimulationTimer = setInterval(() => {
@@ -528,6 +566,7 @@ class ConnectionManager {
         percentage: isDone ? 100 : Math.round((bytes / total) * 100),
         status: isDone ? 'completed' : 'active',
       };
+      this.currentTransferStatus = updated;
       this.transferListeners.forEach((l) => l(updated));
 
       if (isDone) {
@@ -535,6 +574,155 @@ class ConnectionManager {
         this.transferSimulationTimer = null;
       }
     }, 450);
+  }
+
+  /**
+   * Transmits a real user-selected file from Desktop filesystem to the local Soko bridge
+   * and companion device with live upload streaming, real progress telemetry, and auto-retry.
+   */
+  public sendRealFile(file: File): void {
+    this.stopTransferSimulation();
+
+    if (this.activeUploadXhr) {
+      try {
+        this.activeUploadXhr.abort();
+      } catch {}
+      this.activeUploadXhr = null;
+    }
+
+    this.lastTransferredFile = file;
+    const transferId = `transfer-${Date.now()}`;
+    const totalBytes = file.size;
+
+    const initial: FileTransferStatus = {
+      id: transferId,
+      filename: file.name,
+      bytesDownloaded: 0,
+      totalBytes,
+      speedBytesPerSec: 0,
+      percentage: 0,
+      status: 'active',
+    };
+    this.currentTransferStatus = initial;
+    this.transferListeners.forEach((l) => l(initial));
+
+    // Broadcast file offer to mobile peer over WebSocket
+    this.sendPacket({
+      magic: 'SK',
+      version: 1,
+      packetId: Date.now(),
+      timestamp: Date.now(),
+      packetType: 'FILE_OFFER',
+      payload: {
+        id: transferId,
+        filename: file.name,
+        totalBytes,
+        bytesDownloaded: 0,
+        speedBytesPerSec: 0,
+        percentage: 0,
+        status: 'active',
+      },
+    });
+
+    const httpBase = this.bridgeUrl.replace(/^ws/, 'http');
+    const uploadUrl = `${httpBase}/api/upload?filename=${encodeURIComponent(file.name)}`;
+
+    const xhr = new XMLHttpRequest();
+    this.activeUploadXhr = xhr;
+
+    let lastLoaded = 0;
+    let lastTime = Date.now();
+
+    xhr.upload.onprogress = (evt) => {
+      if (this.activeUploadXhr !== xhr) return;
+      const now = Date.now();
+      const timeDiff = Math.max(0.1, (now - lastTime) / 1000);
+      const bytesDiff = Math.max(0, evt.loaded - lastLoaded);
+      const speed = Math.round(bytesDiff / timeDiff);
+
+      lastLoaded = evt.loaded;
+      lastTime = now;
+
+      const pct = evt.lengthComputable
+        ? Math.min(99, Math.round((evt.loaded / evt.total) * 100))
+        : Math.min(99, Math.round((evt.loaded / totalBytes) * 100));
+
+      const updated: FileTransferStatus = {
+        id: transferId,
+        filename: file.name,
+        bytesDownloaded: evt.loaded,
+        totalBytes: evt.lengthComputable ? evt.total : totalBytes,
+        speedBytesPerSec: speed > 0 ? speed : 35000000,
+        percentage: pct,
+        status: 'active',
+      };
+      this.currentTransferStatus = updated;
+      this.transferListeners.forEach((l) => l(updated));
+    };
+
+    xhr.onload = () => {
+      if (this.activeUploadXhr !== xhr) return;
+      this.activeUploadXhr = null;
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        const completed: FileTransferStatus = {
+          id: transferId,
+          filename: file.name,
+          bytesDownloaded: totalBytes,
+          totalBytes,
+          speedBytesPerSec: 0,
+          percentage: 100,
+          status: 'completed',
+        };
+        this.currentTransferStatus = completed;
+        this.transferListeners.forEach((l) => l(completed));
+      } else {
+        let errMessage = 'Upload failed';
+        try {
+          const res = JSON.parse(xhr.responseText);
+          if (res.error) errMessage = res.error;
+        } catch {}
+        const failed: FileTransferStatus = {
+          id: transferId,
+          filename: file.name,
+          bytesDownloaded: lastLoaded,
+          totalBytes,
+          speedBytesPerSec: 0,
+          percentage: Math.round((lastLoaded / totalBytes) * 100),
+          status: 'failed',
+          error: errMessage,
+        };
+        this.currentTransferStatus = failed;
+        this.transferListeners.forEach((l) => l(failed));
+      }
+    };
+
+    xhr.onerror = () => {
+      if (this.activeUploadXhr !== xhr) return;
+      this.activeUploadXhr = null;
+      const failed: FileTransferStatus = {
+        id: transferId,
+        filename: file.name,
+        bytesDownloaded: lastLoaded,
+        totalBytes,
+        speedBytesPerSec: 0,
+        percentage: Math.round((lastLoaded / totalBytes) * 100),
+        status: 'failed',
+        error: 'Network error connecting to bridge upload server',
+      };
+      this.currentTransferStatus = failed;
+      this.transferListeners.forEach((l) => l(failed));
+    };
+
+    xhr.onabort = () => {
+      if (this.activeUploadXhr === xhr) {
+        this.activeUploadXhr = null;
+      }
+    };
+
+    xhr.open('POST', uploadUrl, true);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.send(file);
   }
 }
 

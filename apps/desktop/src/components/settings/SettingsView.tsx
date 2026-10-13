@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Terminal,
   FolderDown,
@@ -18,9 +18,14 @@ import {
   Check,
   ExternalLink,
   Bell,
+  UploadCloud,
+  FileUp,
+  AlertCircle,
+  RotateCcw,
+  Ban,
 } from 'lucide-react';
 import { connectionService } from '../../services/connection.ts';
-import { ConnectionStatus, PairedDevice } from '../../types/index.ts';
+import { ConnectionStatus, PairedDevice, FileTransferStatus } from '../../types/index.ts';
 
 interface SettingsViewProps {
   onClose?: () => void;
@@ -38,6 +43,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
   const [copiedMobileUrl, setCopiedMobileUrl] = useState(false);
   const [isBridgeOnline, setIsBridgeOnline] = useState(connectionService.isBridgeOnline());
   const [activeClients, setActiveClients] = useState(connectionService.getActiveClients());
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [activeTransfer, setActiveTransfer] = useState<FileTransferStatus | null>(
+    connectionService.getCurrentTransfer()
+  );
+  const [isDragging, setIsDragging] = useState(false);
 
   useEffect(() => {
     const unsubStatus = connectionService.subscribeStatus((status, dev) => {
@@ -51,11 +61,34 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
       setActiveClients(count);
     });
 
+    const unsubTransfer = connectionService.onTransfer((transfer) => {
+      setActiveTransfer(transfer);
+    });
+
     return () => {
       unsubStatus();
       unsubBridge();
+      unsubTransfer();
     };
   }, []);
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      connectionService.sendRealFile(file);
+      e.target.value = '';
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      connectionService.sendRealFile(file);
+    }
+  };
 
   // Whitelist state
   const [commands, setCommands] = useState([
@@ -363,7 +396,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                     <Terminal size={12} className="text-linear-brand" /> Run CLI
                   </button>
                   <button
-                    onClick={() => connectionService.sendTestTransfer()}
+                    onClick={(e) => {
+                      if (e.altKey) {
+                        connectionService.sendTestTransfer();
+                      } else {
+                        fileInputRef.current?.click();
+                      }
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      connectionService.sendTestTransfer();
+                    }}
+                    title="Click to select file from desktop (Alt+Click for test APK)"
                     className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded bg-white/5 hover:bg-white/10 text-[11px] text-white border border-white/5 transition-colors"
                   >
                     <FolderDown size={12} className="text-linear-green" /> Send APK
@@ -451,12 +495,154 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
         {activeTab === 'files' && (
           <div className="max-w-xl flex flex-col gap-6">
             <div>
-              <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">Hotspot File Conduit</h2>
+              <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">Hotspot File Conduit & Transmit</h2>
               <p className="text-xs text-linear-text-secondary mt-1">
-                Build APKs and assets transferred over Mobile Hotspot LAN are saved here with SHA-256 validation.
+                Select or drag APKs and project files to transmit to the Mobile Companion over local Wi-Fi / Hotspot LAN at up to 42 MB/s.
               </p>
             </div>
 
+            {/* Hidden Native File Input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".apk,application/vnd.android.package-archive,*"
+              className="hidden"
+              onChange={handleFileSelect}
+            />
+
+            {/* Drag & Drop File Selector Box */}
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setIsDragging(true);
+              }}
+              onDragLeave={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setIsDragging(false);
+              }}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              className={`border-2 border-dashed rounded-xl p-8 flex flex-col items-center justify-center text-center cursor-pointer transition-all duration-200 ${
+                isDragging
+                  ? 'border-linear-brand bg-[#5E6AD2]/10 scale-[1.01]'
+                  : 'border-white/10 hover:border-white/20 bg-[#121417] hover:bg-[#15181C]'
+              }`}
+            >
+              <div className="w-12 h-12 rounded-xl bg-linear-brand/10 border border-linear-brand/20 flex items-center justify-center text-linear-brand mb-3">
+                <UploadCloud size={24} />
+              </div>
+              <h3 className="text-sm font-semibold text-white tracking-tight">
+                Click to browse or drag & drop files here
+              </h3>
+              <p className="text-xs text-linear-text-secondary mt-1 max-w-sm">
+                Select any <span className="font-mono text-white">.apk</span> or binary payload from your desktop filesystem to transmit to your phone.
+              </p>
+
+              <div className="flex items-center gap-3 mt-4" onClick={(e) => e.stopPropagation()}>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="linear-button-primary px-4 py-2 flex items-center gap-2 text-xs"
+                >
+                  <FileUp size={14} /> Choose File from Desktop
+                </button>
+                <button
+                  onClick={() => connectionService.sendTestTransfer('soko-v1.0.0-release.apk')}
+                  className="linear-button-secondary px-3 py-2 flex items-center gap-1.5 text-xs"
+                  title="Simulate high-speed transfer with 52MB test APK"
+                >
+                  Send 52MB Demo APK
+                </button>
+              </div>
+            </div>
+
+            {/* Live / Recent File Transfer Status Card */}
+            {activeTransfer && (
+              <div className="linear-card rounded-lg p-4 flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <FolderDown
+                      size={16}
+                      className={`shrink-0 ${
+                        activeTransfer.status === 'completed'
+                          ? 'text-linear-green'
+                          : activeTransfer.status === 'cancelled'
+                          ? 'text-linear-amber'
+                          : activeTransfer.status === 'failed'
+                          ? 'text-linear-red'
+                          : 'text-linear-brand'
+                      }`}
+                    />
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-xs font-semibold text-white font-mono truncate max-w-xs">
+                        {activeTransfer.filename}
+                      </span>
+                      <span className="text-[10px] text-linear-text-secondary font-mono">
+                        {(activeTransfer.bytesDownloaded / 1_048_576).toFixed(1)} MB / {(activeTransfer.totalBytes / 1_048_576).toFixed(1)} MB
+                        {activeTransfer.status === 'active' && ` • ${(activeTransfer.speedBytesPerSec / 1_048_576).toFixed(1)} MB/s`}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    {activeTransfer.status === 'active' && (
+                      <button
+                        onClick={() => connectionService.cancelTransfer(activeTransfer.id, activeTransfer.filename)}
+                        className="px-2.5 py-1 rounded bg-linear-red/10 hover:bg-linear-red/20 text-linear-red border border-linear-red/20 text-xs font-medium transition-colors flex items-center gap-1"
+                      >
+                        <X size={12} /> Cancel
+                      </button>
+                    )}
+                    {activeTransfer.status === 'completed' && (
+                      <span className="flex items-center gap-1 text-xs text-linear-green font-medium font-mono">
+                        <CheckCircle2 size={13} /> Completed
+                      </span>
+                    )}
+                    {(activeTransfer.status === 'cancelled' || activeTransfer.status === 'failed') && (
+                      <div className="flex items-center gap-2">
+                        <span className={`flex items-center gap-1 text-[11px] font-mono px-2 py-0.5 rounded ${
+                          activeTransfer.status === 'cancelled'
+                            ? 'text-linear-amber bg-linear-amber/10 border border-linear-amber/20'
+                            : 'text-linear-red bg-linear-red/10 border border-linear-red/20'
+                        }`}>
+                          {activeTransfer.status === 'cancelled' ? <Ban size={11} /> : <AlertCircle size={11} />}
+                          {activeTransfer.status === 'cancelled' ? 'Cancelled' : 'Failed'}
+                        </span>
+                        <button
+                          onClick={() => connectionService.retryTransfer(activeTransfer.id, activeTransfer.filename)}
+                          className="px-2.5 py-1 rounded bg-white/10 hover:bg-white/20 text-white text-xs font-medium transition-colors flex items-center gap-1"
+                        >
+                          <RotateCcw size={12} /> Retry
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Progress bar */}
+                <div className="w-full bg-white/10 rounded-full h-1.5 overflow-hidden">
+                  <div
+                    className={`h-full transition-all duration-150 rounded-full ${
+                      activeTransfer.status === 'completed'
+                        ? 'bg-linear-green'
+                        : activeTransfer.status === 'cancelled'
+                        ? 'bg-linear-amber'
+                        : activeTransfer.status === 'failed'
+                        ? 'bg-linear-red'
+                        : 'bg-linear-brand'
+                    }`}
+                    style={{
+                      width: activeTransfer.status === 'cancelled' || activeTransfer.status === 'failed'
+                        ? '100%'
+                        : `${Math.min(100, activeTransfer.percentage)}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Default Download Directory */}
             <div className="linear-card rounded-lg p-4 flex flex-col gap-3">
               <label className="text-xs font-medium text-linear-text-primary tracking-tight">Default Download Directory</label>
               <div className="flex gap-2">
@@ -466,7 +652,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                   onChange={(e) => setDownloadDir(e.target.value)}
                   className="flex-1 bg-[#08090A] border border-white/10 rounded-md px-3 py-1.5 text-xs font-mono text-linear-text-primary focus:outline-none focus:border-[#5E6AD2]"
                 />
-                <button className="linear-button-secondary px-3 py-1.5">
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="linear-button-secondary px-3 py-1.5"
+                >
                   Browse
                 </button>
               </div>
