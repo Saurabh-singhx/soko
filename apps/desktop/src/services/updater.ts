@@ -27,6 +27,7 @@ export interface UpdateInfo {
 
 export const CURRENT_VERSION = '1.0.0';
 const DEFAULT_REPO = 'Saurabh-singhx/soko';
+export const DEFAULT_FEED_URL = 'https://gist.githubusercontent.com/Saurabh-singhx/04c5db7f1bed9206d1b858cd44bfb8eb/raw/soko-version.json';
 
 // Helper to compare semver versions (returns 1 if a > b, -1 if a < b, 0 if equal)
 export function compareVersions(a: string, b: string): number {
@@ -49,7 +50,7 @@ class AutoUpdateService {
   private listeners: ((info: UpdateInfo) => void)[] = [];
 
   constructor() {
-    this.feedUrl = localStorage.getItem('soko_update_feed_url') || '';
+    this.feedUrl = localStorage.getItem('soko_update_feed_url') || DEFAULT_FEED_URL;
   }
 
   public getFeedUrl(): string {

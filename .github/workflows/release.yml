@@ -191,7 +191,7 @@ jobs:
           SOKO_VERSION: ${{ needs.prepare-version.outputs.version }}
           SOKO_BUILD_NUMBER: ${{ github.run_number }}
           GIST_SECRET: ${{ secrets.GIST_SECRET || secrets.GIST_TOKEN }}
-          GIST_ID: ${{ secrets.GIST_ID || vars.GIST_ID }}
+          GIST_ID: ${{ secrets.GIST_ID || vars.GIST_ID || '04c5db7f1bed9206d1b858cd44bfb8eb' }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           node scripts/publish_gist_update.js
