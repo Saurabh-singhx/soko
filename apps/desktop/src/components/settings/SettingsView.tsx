@@ -29,6 +29,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { connectionService } from '../../services/connection.ts';
+import { autoUpdateService, UpdateInfo, CURRENT_VERSION } from '../../services/updater.ts';
 import { ConnectionStatus, PairedDevice, FileTransferStatus, TransferHistoryItem } from '../../types/index.ts';
 
 interface SettingsViewProps {
@@ -36,7 +37,11 @@ interface SettingsViewProps {
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
-  const [activeTab, setActiveTab] = useState<'pairing' | 'cli' | 'files' | 'security' | 'mascot'>('pairing');
+  const [activeTab, setActiveTab] = useState<'pairing' | 'cli' | 'files' | 'security' | 'mascot' | 'updates'>('pairing');
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(autoUpdateService.getCachedUpdateInfo());
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [feedUrlInput, setFeedUrlInput] = useState(autoUpdateService.getFeedUrl());
+  const [feedSaved, setFeedSaved] = useState(false);
   const [mascotIdleTimeout, setMascotIdleTimeout] = useState<number>(() => {
     try {
       const stored = localStorage.getItem('soko_idle_timeout');
@@ -237,6 +242,30 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 <span>Mascot & Island</span>
               </div>
               <span className="linear-kbd">5</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setActiveTab('updates');
+                if (!updateInfo) {
+                  setIsCheckingUpdate(true);
+                  autoUpdateService.checkForUpdates().then((res) => {
+                    setUpdateInfo(res);
+                    setIsCheckingUpdate(false);
+                  });
+                }
+              }}
+              className={`flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs font-medium tracking-tight transition-colors ${
+                activeTab === 'updates'
+                  ? 'bg-white/[0.08] text-white shadow-hairline'
+                  : 'text-linear-text-secondary hover:text-white hover:bg-white/[0.04]'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <RefreshCw size={14} className={activeTab === 'updates' ? 'text-[#5E6AD2]' : 'text-linear-text-tertiary'} />
+                <span>Auto-Updates & Feed</span>
+              </div>
+              <span className="linear-kbd">6</span>
             </button>
           </nav>
         </div>
@@ -925,6 +954,159 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 <p>• After the selected idle duration without mouse interactions, the island contracts to a 68×64px circular orb.</p>
                 <p>• Status indicators & buttons fade away, leaving only Soko's face enlarged to 56px.</p>
                 <p>• Hovering your mouse, clicking, or receiving any incoming notification immediately wakes Soko up and restores the full pill.</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Auto-Updates & Gist Feed Tab */}
+        {activeTab === 'updates' && (
+          <div className="max-w-xl flex flex-col gap-6">
+            <div>
+              <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">Auto-Updates & Version Feed</h2>
+              <p className="text-xs text-linear-text-secondary mt-1">
+                Continuous build updates, version synchronization, and zero-rate-limit Gist distribution.
+              </p>
+            </div>
+
+            {/* Current Version Card */}
+            <div className="linear-card rounded-xl p-5 flex flex-col gap-4 border border-white/10 bg-[#121417]">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-linear-brand/10 border border-linear-brand/30 flex items-center justify-center text-linear-brand">
+                    <RefreshCw size={20} className={isCheckingUpdate ? 'animate-spin' : ''} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-white tracking-tight">Soko Desktop</span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                        v{CURRENT_VERSION}
+                      </span>
+                    </div>
+                    <p className="text-xs text-linear-text-secondary mt-0.5">
+                      Release Channel: <span className="text-white font-medium">Stable</span>
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={async () => {
+                    setIsCheckingUpdate(true);
+                    try {
+                      const res = await autoUpdateService.checkForUpdates();
+                      setUpdateInfo(res);
+                    } finally {
+                      setIsCheckingUpdate(false);
+                    }
+                  }}
+                  disabled={isCheckingUpdate}
+                  className="linear-button-primary px-3 py-1.5 flex items-center gap-1.5 text-xs font-medium"
+                >
+                  <RefreshCw size={12} className={isCheckingUpdate ? 'animate-spin' : ''} />
+                  {isCheckingUpdate ? 'Checking...' : 'Check for Updates'}
+                </button>
+              </div>
+
+              {/* Status Banner */}
+              {updateInfo && (
+                <div className="mt-2">
+                  {updateInfo.hasUpdate ? (
+                    <div className="bg-amber-500/10 border border-amber-500/25 rounded-lg p-3.5 flex flex-col gap-2.5">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-amber-400 text-xs font-medium">
+                          <AlertCircle size={15} />
+                          <span>New Update Available: <b>v{updateInfo.latestVersion}</b></span>
+                        </div>
+                        {updateInfo.releaseDate && (
+                          <span className="text-[10px] text-linear-text-tertiary font-mono">
+                            {new Date(updateInfo.releaseDate).toLocaleDateString()}
+                          </span>
+                        )}
+                      </div>
+
+                      {updateInfo.releaseNotes && (
+                        <p className="text-xs text-white/80 whitespace-pre-line bg-black/30 p-2.5 rounded border border-white/5 font-mono text-[11px]">
+                          {updateInfo.releaseNotes}
+                        </p>
+                      )}
+
+                      <div className="flex items-center gap-2 mt-1">
+                        {updateInfo.recommendedDownloadUrl && (
+                          <button
+                            onClick={() => autoUpdateService.openUrl(updateInfo.recommendedDownloadUrl!)}
+                            className="linear-button-primary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                          >
+                            <ExternalLink size={12} /> Download Update
+                          </button>
+                        )}
+                        {updateInfo.releaseUrl && (
+                          <button
+                            onClick={() => autoUpdateService.openUrl(updateInfo.releaseUrl!)}
+                            className="linear-button-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                          >
+                            <ExternalLink size={12} /> Release Notes
+                          </button>
+                        )}
+                        {updateInfo.downloads?.androidApk && (
+                          <button
+                            onClick={() => autoUpdateService.openUrl(updateInfo.downloads!.androidApk!)}
+                            className="px-2.5 py-1.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] text-linear-text-secondary hover:text-white border border-white/10 text-xs flex items-center gap-1.5"
+                          >
+                            <Smartphone size={12} /> Download Mobile APK
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3 flex items-center gap-2 text-emerald-400 text-xs">
+                      <CheckCircle2 size={15} />
+                      <span>You are running the latest version of Soko (v{CURRENT_VERSION}).</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Gist Feed Configuration */}
+            <div className="linear-card rounded-xl p-5 flex flex-col gap-4 border border-white/10 bg-[#121417]">
+              <div>
+                <h3 className="text-sm font-semibold text-white tracking-tight">GitHub Gist Auto-Update Feed</h3>
+                <p className="text-xs text-linear-text-secondary mt-1">
+                  Soko uses a public GitHub Gist (<span className="font-mono text-emerald-400">soko-version.json</span>) for instantaneous, rate-limit-free version updates without hitting GitHub API restrictions.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-medium text-linear-text-secondary">
+                  Raw Gist Feed URL (Optional custom endpoint)
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={feedUrlInput}
+                    onChange={(e) => setFeedUrlInput(e.target.value)}
+                    placeholder="https://gist.githubusercontent.com/.../raw/soko-version.json"
+                    className="linear-input flex-1 text-xs font-mono py-2"
+                  />
+                  <button
+                    onClick={() => {
+                      autoUpdateService.setFeedUrl(feedUrlInput);
+                      setFeedSaved(true);
+                      setTimeout(() => setFeedSaved(false), 2000);
+                    }}
+                    className="linear-button-primary px-3 py-2 text-xs flex items-center gap-1.5 shrink-0"
+                  >
+                    {feedSaved ? <Check size={13} /> : <Sliders size={13} />}
+                    {feedSaved ? 'Saved' : 'Save Feed'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="bg-black/30 border border-white/5 rounded-lg p-3 text-[11px] text-linear-text-tertiary flex flex-col gap-1.5 font-mono">
+                <span className="text-white/80 font-medium font-sans">How Gist Secrets Work:</span>
+                <p>1. In GitHub repo Settings &gt; Secrets, add <span className="text-linear-brand">GIST_SECRET</span> (a Personal Access Token with gist scope).</p>
+                <p>2. On every build, GitHub Actions automatically updates the Gist with new binary links.</p>
+                <p>3. Clients query the raw Gist URL instantly with zero API rate limits or authentication.</p>
               </div>
             </div>
           </div>

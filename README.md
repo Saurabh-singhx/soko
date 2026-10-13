@@ -209,6 +209,28 @@ This generates:
 
 ---
 
+## 🔄 Continuous Builds & Gist Auto-Updates
+
+Soko uses continuous build versioning and an atomic GitHub Gist feed for zero-rate-limit auto-updates.
+
+### 1. Monotonic Build Versioning
+- **Automatic Version Increments**: Every build pushed to `master`/`main` or triggered via GitHub Actions automatically bumps the build version (`1.0.<run_number>`), keeping desktop and mobile packages synchronized.
+- **Manual Tags**: Pushing a tag (`git tag v1.0.5 && git push origin v1.0.5`) automatically releases that explicit version.
+
+### 2. Setting Up the Gist Secret for Auto-Updates
+To allow GitHub Actions to automatically update the client version feed on every build:
+
+1. **Create a GitHub Token**: Go to [GitHub Settings > Developer Settings > Personal Access Tokens (Classic)](https://github.com/settings/tokens) and generate a token with the **`gist`** scope.
+2. **Add Secret to Repository**:
+   - Go to your repo: **Settings > Secrets and variables > Actions > New repository secret**.
+   - Name: `GIST_SECRET`
+   - Value: paste your GitHub Token.
+3. *(Optional)* **Set GIST_ID**: If you already created a Gist for Soko, add `GIST_ID` as a repository secret or variable. If omitted, the workflow will automatically create one on the first run and output its ID in the build logs!
+
+Desktop clients can configure their raw Gist feed URL directly in **Settings > Auto-Updates & Feed** to enjoy instantaneous update alerts and 1-click downloads.
+
+---
+
 ## 🧪 Testing
 
 Soko includes a comprehensive end-to-end integration test suite verifying health telemetry, notification dispatch, remote CLI whitelist enforcement, path traversal protection, and SHA-256 upload verification:

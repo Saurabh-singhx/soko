@@ -300,6 +300,16 @@ ipcMain.on('soko:open-file', (_event, filename) => {
   }
 });
 
+ipcMain.on('soko:open-external', (_event, url) => {
+  if (url && (url.startsWith('https://') || url.startsWith('http://'))) {
+    shell.openExternal(url);
+  }
+});
+
+ipcMain.handle('soko:get-version', () => {
+  return app.getVersion();
+});
+
 ipcMain.on('soko:set-window-size', (_event, { width, height }) => {
   if (islandWindow && !islandWindow.isDestroyed()) {
     // Keep window width locked at 440px so horizontal center (islandX) NEVER shifts

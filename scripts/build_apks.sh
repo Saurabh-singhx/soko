@@ -9,28 +9,56 @@ set -e
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${PROJECT_ROOT}/build_apk_tmp"
+
+# Detect Android SDK Home
 SDK_HOME="${ANDROID_HOME:-/home/saurabh/Android/Sdk}"
-BUILD_TOOLS="${SDK_HOME}/build-tools/35.0.0"
-PLATFORM_JAR="${SDK_HOME}/platforms/android-35/android.jar"
+if [ ! -d "${SDK_HOME}" ] && [ -d "/usr/local/lib/android/sdk" ]; then
+  SDK_HOME="/usr/local/lib/android/sdk"
+fi
+
+# Detect Build Tools (pick highest version installed)
+BUILD_TOOLS_DIR="${SDK_HOME}/build-tools"
+if [ -d "${BUILD_TOOLS_DIR}" ]; then
+  BUILD_TOOLS="$(find "${BUILD_TOOLS_DIR}" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+else
+  BUILD_TOOLS="${SDK_HOME}/build-tools/35.0.0"
+fi
+
+# Detect Platform JAR (pick highest API platform)
+PLATFORMS_DIR="${SDK_HOME}/platforms"
+if [ -d "${PLATFORMS_DIR}" ]; then
+  PLATFORM_DIR="$(find "${PLATFORMS_DIR}" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+  PLATFORM_JAR="${PLATFORM_DIR}/android.jar"
+else
+  PLATFORM_JAR="${SDK_HOME}/platforms/android-35/android.jar"
+fi
 
 AAPT2="${BUILD_TOOLS}/aapt2"
 D8="${BUILD_TOOLS}/d8"
 ZIPALIGN="${BUILD_TOOLS}/zipalign"
 APKSIGNER="${BUILD_TOOLS}/apksigner"
 
+# Dynamic Version Resolution
+VERSION_NAME="${SOKO_VERSION:-$(node -p "require('${PROJECT_ROOT}/package.json').version" 2>/dev/null || echo "1.0.0")}"
+VERSION_CODE="${SOKO_BUILD_NUMBER:-$(git -C "${PROJECT_ROOT}" rev-list --count HEAD 2>/dev/null || echo "1")}"
+
 echo "=== Soko Android APK Generator ==="
 echo "Project Root: ${PROJECT_ROOT}"
 echo "Android SDK: ${SDK_HOME}"
 echo "Build Tools: ${BUILD_TOOLS}"
+echo "Target Platform: ${PLATFORM_JAR}"
+echo "Build Version: ${VERSION_NAME} (code: ${VERSION_CODE})"
 
 # Ensure desktop web assets are freshly built
 echo "[1/6] Building apps/desktop web assets..."
 cd "${PROJECT_ROOT}/apps/desktop"
 npm run build
 
-# Generate Soko Bot Mascot launcher icons (matching mobile navbar logo)
-echo "[1b/6] Generating Soko Bot mascot icons for Android launcher..."
-python3 "${PROJECT_ROOT}/scripts/generate_apk_icon.py"
+# Generate Soko Bot Mascot launcher icons if needed
+if [ ! -f "${PROJECT_ROOT}/apps/mobile/res/mipmap-xxxhdpi/ic_launcher.png" ]; then
+  echo "[1b/6] Generating Soko Bot mascot icons for Android launcher..."
+  python3 "${PROJECT_ROOT}/scripts/generate_apk_icon.py" || true
+fi
 
 # Prepare temporary build directory
 rm -rf "${BUILD_DIR}"
@@ -115,8 +143,8 @@ EOF
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="${PKG_NAME}"
-    android:versionCode="1"
-    android:versionName="1.0.0">
+    android:versionCode="${VERSION_CODE}"
+    android:versionName="${VERSION_NAME}">
 
     <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35" />
 

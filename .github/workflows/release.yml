@@ -1,17 +1,56 @@
-name: Release Multi-Platform Binaries
+name: Release Multi-Platform Binaries & Auto-Update Feed
 
 on:
   push:
+    branches:
+      - master
+      - main
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Custom version override (e.g. 1.0.1)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
 
 jobs:
-  build-linux:
-    name: Build Linux Binaries
+  prepare-version:
+    name: Resolve Continuous Build Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Calculate Monotonic Build Version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.version }}" ]]; then
+            VER="${{ github.event.inputs.version }}"
+          elif [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VER="${GITHUB_REF_NAME#v}"
+          else
+            # Continuous build: starts from 1.0.<run_number>
+            VER="1.0.${{ github.run_number }}"
+          fi
+          # Strip any leading 'v'
+          VER="${VER#v}"
+          TAG="v${VER}"
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "=================================================="
+          echo " Soko Release Target: ${VER} (${TAG})"
+          echo "=================================================="
+
+  build-linux-and-apk:
+    name: Build Linux Binaries & Android APKs
+    needs: [prepare-version]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -23,7 +62,22 @@ jobs:
           node-version: 20
           cache: 'npm'
 
-      - name: Install Dependencies
+      - name: Setup Java 21 & Android Environment
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Install System Dependencies for Electron Linux
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libnotify-dev libasound2-dev
+
+      - name: Apply Resolved Build Version
+        run: |
+          node scripts/update_version.js "${{ needs.prepare-version.outputs.version }}"
+
+      - name: Install Node Dependencies
         run: |
           npm install
           npm --prefix apps/desktop install
@@ -31,20 +85,31 @@ jobs:
       - name: Build Web Frontend
         run: npm run build:desktop
 
-      - name: Build Linux Targets
+      - name: Package Linux Desktop Targets (.AppImage, .deb, .tar.gz)
         run: npm run build:linux
 
-      - name: Upload Linux Assets
+      - name: Build Standalone Android APKs (soko-mobile & lite)
+        env:
+          SOKO_VERSION: ${{ needs.prepare-version.outputs.version }}
+          SOKO_BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          bash scripts/build_apks.sh
+
+      - name: Upload Linux & Android Release Assets
         uses: actions/upload-artifact@v4
         with:
-          name: linux-binaries
+          name: linux-and-apk-assets
           path: |
             dist-desktop/*.AppImage
             dist-desktop/*.deb
             dist-desktop/*.tar.gz
+            apks/soko-mobile.apk
+            apks/soko-mobile-lite.apk
+            apks/soko-desktop.apk
 
   build-windows:
     name: Build Windows Binaries
+    needs: [prepare-version]
     runs-on: windows-latest
     steps:
       - name: Checkout Code
@@ -56,7 +121,11 @@ jobs:
           node-version: 20
           cache: 'npm'
 
-      - name: Install Dependencies
+      - name: Apply Resolved Build Version
+        run: |
+          node scripts/update_version.js "${{ needs.prepare-version.outputs.version }}"
+
+      - name: Install Node Dependencies
         run: |
           npm install
           npm --prefix apps/desktop install
@@ -64,41 +133,65 @@ jobs:
       - name: Build Web Frontend
         run: npm run build:desktop
 
-      - name: Build Windows Targets
+      - name: Package Windows Desktop Targets (.exe, .zip)
         run: npm run build:windows
 
       - name: Upload Windows Assets
         uses: actions/upload-artifact@v4
         with:
-          name: windows-binaries
+          name: windows-assets
           path: |
             dist-desktop/*.exe
             dist-desktop/*.zip
 
   publish-release:
-    name: Publish Unified GitHub Release
-    needs: [build-linux, build-windows]
+    name: Publish Unified GitHub Release & Update Gist Feed
+    needs: [prepare-version, build-linux-and-apk, build-windows]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Download Linux Binaries
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download Linux & Android Assets
         uses: actions/download-artifact@v4
         with:
-          name: linux-binaries
+          name: linux-and-apk-assets
           path: release-assets
 
-      - name: Download Windows Binaries
+      - name: Download Windows Assets
         uses: actions/download-artifact@v4
         with:
-          name: windows-binaries
+          name: windows-assets
           path: release-assets
 
-      - name: Publish Unified Release
+      - name: List Release Assets
+        run: |
+          echo "=== Collated Multi-Platform Release Binaries ==="
+          ls -lh release-assets/
+
+      - name: Publish Unified Multi-Platform GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.prepare-version.outputs.tag }}
+          name: "Soko ${{ needs.prepare-version.outputs.tag }} Release"
           files: release-assets/*
           draft: false
           prerelease: false
           generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Synchronize Auto-Update Gist Feed (GIST_SECRET)
+        env:
+          SOKO_VERSION: ${{ needs.prepare-version.outputs.version }}
+          SOKO_BUILD_NUMBER: ${{ github.run_number }}
+          GIST_SECRET: ${{ secrets.GIST_SECRET || secrets.GIST_TOKEN }}
+          GIST_ID: ${{ secrets.GIST_ID || vars.GIST_ID }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          node scripts/publish_gist_update.js

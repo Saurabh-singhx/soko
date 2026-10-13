@@ -17,7 +17,8 @@
     "build:all": "bash scripts/build_apks.sh && npm --prefix apps/desktop run dist",
     "bridge": "node scripts/soko_bridge.js",
     "start": "node scripts/soko_bridge.js",
-    "test": "node scripts/test_integration.js"
+    "test": "node scripts/test_integration.js",
+    "version:bump": "node scripts/update_version.js"
   },
   "keywords": [
     "dynamic-island",

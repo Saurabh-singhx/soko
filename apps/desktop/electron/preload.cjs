@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   closeSettings: () => ipcRenderer.send('soko:close-settings'),
   openTransfersFolder: () => ipcRenderer.send('soko:open-transfers'),
   openFile: (filename) => ipcRenderer.send('soko:open-file', filename),
+  openExternal: (url) => ipcRenderer.send('soko:open-external', url),
+  getVersion: () => ipcRenderer.invoke('soko:get-version'),
   moveWindow: (deltaX, deltaY) => ipcRenderer.send('soko:move-window', { deltaX, deltaY }),
   resetPosition: () => ipcRenderer.send('soko:reset-window-pos'),
   setWindowSize: (width, height) => ipcRenderer.send('soko:set-window-size', { width, height }),

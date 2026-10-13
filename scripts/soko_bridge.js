@@ -29,6 +29,15 @@ const os = require('os');
 const crypto = require('crypto');
 const { spawn, exec, execSync } = require('child_process');
 
+let appVersion = '1.0.0';
+try {
+  const pkgPath = path.resolve(__dirname, '../package.json');
+  if (fs.existsSync(pkgPath)) {
+    const pkgData = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    if (pkgData.version) appVersion = pkgData.version;
+  }
+} catch (e) {}
+
 let PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8766;
 
 // Find local IP addresses for easy mobile pairing
@@ -1163,7 +1172,7 @@ const server = http.createServer((req, res) => {
       JSON.stringify({
         status: 'online',
         service: 'Soko Connection Bridge',
-        version: '1.0.0',
+        version: appVersion,
         activeClients: activeClients.size,
         localIps: getLocalIps(),
         port: PORT,
