@@ -56,9 +56,18 @@ export const CliStatusWidget: React.FC<CliStatusWidgetProps> = ({
       </div>
 
       {/* Terminal Monospace Stream Tail */}
-      <div className="bg-[#050607] rounded-md px-2 py-1 font-mono text-[10px] text-linear-text-secondary truncate border border-white/5 flex items-center">
-        <span className="text-linear-brand select-none mr-1.5 font-medium">$</span>
-        <span className="truncate">{status.lastOutputLine || 'Running task...'}</span>
+      <div className="bg-[#050607] rounded-md px-2 py-1.5 font-mono text-[10px] text-linear-text-secondary border border-white/5 flex flex-col justify-center min-h-[26px] max-h-[58px] overflow-y-auto leading-relaxed select-text">
+        <div className="flex items-center min-w-0">
+          <span className="text-linear-brand select-none mr-1.5 font-medium shrink-0">$</span>
+          <span className="text-linear-text-primary/95 truncate font-medium">
+            {status.lastOutputLine || 'Running task...'}
+          </span>
+        </div>
+        {status.output && status.output.includes('\n') && (
+          <div className="text-linear-text-secondary whitespace-pre-wrap pl-3.5 mt-0.5 text-[9.5px]">
+            {status.output.split('\n').slice(1).join('\n')}
+          </div>
+        )}
       </div>
     </motion.div>
   );

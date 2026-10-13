@@ -286,6 +286,35 @@ class ConnectionManager {
     }
   }
 
+  public async executeCliCommand(command: string = 'sysinfo'): Promise<void> {
+    const sentWs = this.sendPacket({
+      magic: 'SK',
+      version: 1,
+      packetId: Date.now(),
+      timestamp: Date.now(),
+      packetType: 'CLI_EXECUTE',
+      payload: {
+        commandId: `cmd-${command}`,
+        command,
+        status: 'running',
+        startedAt: Date.now(),
+      },
+    });
+
+    if (!sentWs) {
+      try {
+        const httpBase = this.bridgeUrl.replace(/^ws/, 'http');
+        await fetch(`${httpBase}/api/cli`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ command }),
+        });
+      } catch (err) {
+        console.warn('Failed to dispatch CLI command over HTTP:', err);
+      }
+    }
+  }
+
   private loadTransferHistory(): void {
     try {
       const saved = localStorage.getItem('soko_transfer_history');
@@ -527,6 +556,7 @@ class ConnectionManager {
             status: packet.payload.status || 'running',
             startedAt: packet.payload.startedAt || Date.now(),
             lastOutputLine: packet.payload.lastOutputLine || packet.payload.line || '',
+            output: packet.payload.output || packet.payload.lastOutputLine || '',
             exitCode: packet.payload.exitCode,
           };
           this.cliListeners.forEach((l) => l(cli));
@@ -625,10 +655,16 @@ class ConnectionManager {
   /**
    * Dispatches outgoing packet to WebSocket bridge if connected.
    */
-  public sendPacket(packet: SokoPacketEnvelope) {
+  public sendPacket(packet: SokoPacketEnvelope): boolean {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(packet));
+      try {
+        this.ws.send(JSON.stringify(packet));
+        return true;
+      } catch {
+        return false;
+      }
     }
+    return false;
   }
 
   /**

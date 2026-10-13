@@ -596,24 +596,54 @@
       </div>
 
       <div class="cli-grid">
-        <button class="cli-card" onclick="executeRemoteCli('status', 'Antigravity CLI Agent')">
-          <div class="cli-card-title">Check Agent Status</div>
-          <div class="cli-card-cmd">$ agy status</div>
+        <button class="cli-card" onclick="executeRemoteCli('sysinfo', 'System Specs & Health')">
+          <div class="cli-card-title">System Specs</div>
+          <div class="cli-card-cmd">$ uname, uptime, RAM, disk</div>
         </button>
 
-        <button class="cli-card" onclick="executeRemoteCli('test', 'Test Suite Runner')">
-          <div class="cli-card-title">Run Integration Tests</div>
-          <div class="cli-card-cmd">$ agy test --suite</div>
+        <button class="cli-card" onclick="executeRemoteCli('mem', 'Memory & Swap Telemetry')">
+          <div class="cli-card-title">Memory & RAM</div>
+          <div class="cli-card-cmd">$ free -h</div>
+        </button>
+
+        <button class="cli-card" onclick="executeRemoteCli('disk', 'Storage & Filesystems')">
+          <div class="cli-card-title">Disk Storage</div>
+          <div class="cli-card-cmd">$ df -h (partitions)</div>
+        </button>
+
+        <button class="cli-card" onclick="executeRemoteCli('top-procs', 'Top CPU Processes')">
+          <div class="cli-card-title">Top Processes</div>
+          <div class="cli-card-cmd">$ ps top 6 CPU</div>
+        </button>
+
+        <button class="cli-card" onclick="executeRemoteCli('battery', 'Power & Battery')">
+          <div class="cli-card-title">Power / Battery</div>
+          <div class="cli-card-cmd">$ upower / battery</div>
+        </button>
+
+        <button class="cli-card" onclick="executeRemoteCli('net-stats', 'Network Interfaces')">
+          <div class="cli-card-title">Network & IPs</div>
+          <div class="cli-card-cmd">$ ip addr / route</div>
+        </button>
+
+        <button class="cli-card" onclick="executeRemoteCli('ports', 'Active Ports & Services')">
+          <div class="cli-card-title">Listening Ports</div>
+          <div class="cli-card-cmd">$ ss -tlpn (:8766)</div>
         </button>
 
         <button class="cli-card" onclick="executeRemoteCli('git-status', 'Git Workspace')">
-          <div class="cli-card-title">Check Git Status</div>
-          <div class="cli-card-cmd">$ git status -s</div>
+          <div class="cli-card-title">Git Status</div>
+          <div class="cli-card-cmd">$ git status & log</div>
         </button>
 
-        <button class="cli-card" onclick="executeRemoteCli('sysinfo', 'Host Telemetry')">
-          <div class="cli-card-title">System Specs</div>
-          <div class="cli-card-cmd">$ uname -m -o</div>
+        <button class="cli-card" onclick="executeRemoteCli('status', 'Antigravity CLI Agent')">
+          <div class="cli-card-title">Agent Status</div>
+          <div class="cli-card-cmd">$ agy status</div>
+        </button>
+
+        <button class="cli-card" onclick="executeRemoteCli('test', 'Integration Test Suite')">
+          <div class="cli-card-title">Run Tests</div>
+          <div class="cli-card-cmd">$ agy test (30 suites)</div>
         </button>
       </div>
 
@@ -1102,7 +1132,8 @@
         const ping = Date.now() - (packet.payload?.timestamp || lastPingTimestamp);
         pingBadge.innerText = `${Math.max(1, ping)} ms`;
       } else if (packet.packetType === 'CLI_OUTPUT_STREAM' || packet.packetType === 'CLI_TERMINATED') {
-        termLog.innerText = `[${new Date().toLocaleTimeString()}] ${packet.payload?.title || 'CLI'}:\n${packet.payload?.lastOutputLine || 'Done'}`;
+        const out = packet.payload?.output || packet.payload?.lastOutputLine || 'Done';
+        termLog.innerText = `[${new Date().toLocaleTimeString()}] ${packet.payload?.title || 'CLI'}:\n${out}`;
         blinkBot();
       } else if (packet.packetType === 'FILE_OFFER') {
         const fill = document.getElementById('transferFill');
@@ -1226,20 +1257,26 @@
 
     function executeRemoteCli(command, title) {
       blinkBot();
-      termLog.innerText = `[${new Date().toLocaleTimeString()}] Executing: agy ${command}...\nStreaming logs from desktop...`;
+      termLog.innerText = `[${new Date().toLocaleTimeString()}] Executing: ${title} ($ ${command})...\nStreaming output from desktop host...`;
 
       const payload = {
-        commandId: `agy-${command}`,
+        commandId: `cmd-${command}`,
         title: title,
         command: command,
         status: 'running',
         startedAt: Date.now(),
-        lastOutputLine: `Running remote command: agy ${command}`
+        lastOutputLine: `Running: ${command}...`
       };
 
       const sentWs = sendPacket('CLI_EXECUTE', payload);
       if (!sentWs) {
-        postHttp('/api/cli', { command: command });
+        postHttp('/api/cli', { command: command }).then(res => {
+          if (res) {
+            const out = res.output || res.lastOutputLine || (res.success ? 'Command completed' : res.error);
+            termLog.innerText = `[${new Date().toLocaleTimeString()}] ${res.title || title}:\n${out}`;
+            blinkBot();
+          }
+        });
       }
 
       showToast(`Triggered: ${title}`);

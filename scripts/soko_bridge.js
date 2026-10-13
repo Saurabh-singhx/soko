@@ -74,12 +74,54 @@ const SAS_PAIRING_PIN = '482 195';
 
 // Strict CLI execution whitelist to prevent Remote Code Execution (RCE)
 const CLI_WHITELIST = {
-  'status': { title: 'Antigravity Status', cmd: 'agy status' },
-  'agy-status': { title: 'Antigravity Status', cmd: 'agy status' },
-  'test': { title: 'Integration Test Suite', cmd: 'npm test --if-present' },
-  'agy-test': { title: 'Integration Test Suite', cmd: 'npm test --if-present' },
-  'git-status': { title: 'Git Status Check', cmd: 'git status -s' },
-  'sysinfo': { title: 'System Specs', cmd: 'uname -m -o && uptime' },
+  'sysinfo': {
+    title: 'System Specs & Health',
+    cmd: 'echo "OS: $(uname -srm 2>/dev/null || uname -a)"; echo "Uptime: $(uptime -p 2>/dev/null || uptime)"; free -h 2>/dev/null | awk \'/Mem:/ {print "RAM: "$3" / "$2" (free: "$4")"}\'; df -h / 2>/dev/null | awk \'NR==2 {print "Disk (/): "$3" / "$2" ("$5" used)"}\'',
+  },
+  'mem': {
+    title: 'Memory & Swap Telemetry',
+    cmd: 'free -h',
+  },
+  'disk': {
+    title: 'Storage & Filesystems',
+    cmd: 'df -h -x tmpfs -x devtmpfs',
+  },
+  'top-procs': {
+    title: 'Top CPU Processes',
+    cmd: 'ps -eo pid,comm,%cpu,%mem --sort=-%cpu | head -n 6',
+  },
+  'battery': {
+    title: 'Power & Battery',
+    cmd: 'upower -i $(upower -e 2>/dev/null | grep battery | head -n 1) 2>/dev/null | grep -E "state|percentage|time to" || cat /sys/class/power_supply/BAT*/capacity 2>/dev/null && echo "%" || echo "AC Desktop Power (Online)"',
+  },
+  'net-stats': {
+    title: 'Network Interfaces',
+    cmd: 'ip -brief addr 2>/dev/null || ip route get 1.1.1.1 2>/dev/null || hostname -I',
+  },
+  'ports': {
+    title: 'Active Ports & Services',
+    cmd: 'ss -tlpn 2>/dev/null | grep -E "8766|3000|5173" || echo "Soko Bridge active on :8766"',
+  },
+  'git-status': {
+    title: 'Git Status & Workspace',
+    cmd: 'git status -s && git log -1 --oneline 2>/dev/null',
+  },
+  'status': {
+    title: 'Antigravity Status',
+    cmd: 'agy status 2>/dev/null || (node -v && git branch --show-current)',
+  },
+  'agy-status': {
+    title: 'Antigravity Status',
+    cmd: 'agy status 2>/dev/null || (node -v && git branch --show-current)',
+  },
+  'test': {
+    title: 'Integration Test Suite',
+    cmd: 'node scripts/test_integration.js',
+  },
+  'agy-test': {
+    title: 'Integration Test Suite',
+    cmd: 'node scripts/test_integration.js',
+  },
 };
 
 /**
@@ -556,12 +598,146 @@ function handleWsFrame(socket, buffer) {
       return;
     }
 
+    // Remote CLI execution over WebSocket
+    if (packet.packetType === 'CLI_EXECUTE') {
+      const command = packet.payload?.command || (packet.payload?.commandId ? packet.payload.commandId.replace(/^(cmd-|agy-)/, '') : 'sysinfo');
+      executeWhitelistedCli(command);
+      return;
+    }
+
     // Default: broadcast to all other peers (e.g. phone -> desktop Dynamic Island)
     broadcastPacket(packet, socket);
     console.log(`[Bridge WS] Relayed packet: ${packet.packetType}`);
   } catch (e) {
     // Ping/pong or malformed frame
   }
+}
+
+/**
+ * Safely executes a whitelisted CLI command with strict defenses against:
+ * 1. Hanging / Freezing (6s timeout kills process)
+ * 2. Memory explosion (512KB buffer limit)
+ * 3. Empty or null output (guaranteed fallback)
+ * 4. WebSocket & HTTP parity
+ */
+function executeWhitelistedCli(command, onFinished = null) {
+  const whitelisted = CLI_WHITELIST[command];
+  if (!whitelisted) {
+    console.warn(`[Security Alert] Unauthorized CLI command attempt blocked: '${command}'`);
+    const errPayload = {
+      commandId: `cmd-${command}`,
+      title: 'Security Alert',
+      status: 'failed',
+      startedAt: Date.now(),
+      lastOutputLine: `Security violation: Command '${command}' not permitted in execution whitelist.`,
+      output: `Security violation: Command '${command}' not permitted in execution whitelist.`,
+      exitCode: 403,
+    };
+    broadcastPacket({
+      magic: 'SK',
+      version: 1,
+      packetId: Date.now(),
+      timestamp: Date.now(),
+      packetType: 'CLI_OUTPUT_STREAM',
+      payload: errPayload,
+    });
+    if (onFinished) onFinished(403, { error: errPayload.lastOutputLine, exitCode: 403 });
+    return;
+  }
+
+  console.log(`[Bridge CLI] Executing authorized command: ${command}`);
+
+  // Notify start to all connected clients
+  broadcastPacket({
+    magic: 'SK',
+    version: 1,
+    packetId: Date.now(),
+    timestamp: Date.now(),
+    packetType: 'CLI_EXECUTE',
+    payload: {
+      commandId: `cmd-${command}`,
+      title: whitelisted.title || `Remote CLI (${command})`,
+      command: command,
+      status: 'running',
+      startedAt: Date.now(),
+      lastOutputLine: `Running: ${whitelisted.title}...`,
+    },
+  });
+
+  const shellCmd = whitelisted.cmd;
+  if (!shellCmd) {
+    const successPayload = {
+      commandId: `cmd-${command}`,
+      title: whitelisted.title,
+      command: command,
+      status: 'completed',
+      startedAt: Date.now() - 500,
+      lastOutputLine: 'Command executed with 0 errors.',
+      output: 'Task completed successfully.',
+      exitCode: 0,
+    };
+    broadcastPacket({
+      magic: 'SK',
+      version: 1,
+      packetId: Date.now(),
+      timestamp: Date.now(),
+      packetType: 'CLI_OUTPUT_STREAM',
+      payload: successPayload,
+    });
+    if (onFinished) onFinished(200, { success: true, ...successPayload });
+    return;
+  }
+
+  // Execute with strict 6s timeout and 512KB buffer limit to prevent ANY hanging
+  exec(
+    shellCmd,
+    {
+      cwd: path.resolve(__dirname, '..'),
+      timeout: 6000,
+      maxBuffer: 512 * 1024,
+      env: { ...process.env, TERM: 'dumb', CI: 'true' },
+    },
+    (error, stdout, stderr) => {
+      const isTimeout = error && (error.killed || error.signal === 'SIGTERM');
+      let fullOutput = (stdout || '').trim();
+      if (!fullOutput && stderr) fullOutput = (stderr || '').trim();
+
+      if (isTimeout) {
+        fullOutput = 'Command timed out after 6 seconds (terminated to prevent hanging).';
+      } else if (!fullOutput) {
+        fullOutput = 'Command completed successfully (zero output returned).';
+      }
+
+      // First non-empty line for single-line Dynamic Island pill
+      const lines = fullOutput.split('\n').map((l) => l.trim()).filter(Boolean);
+      const firstLine = lines[0] || fullOutput;
+
+      const isFailed = Boolean(error && !isTimeout && (error.code !== 0));
+      const finishPayload = {
+        commandId: `cmd-${command}`,
+        title: whitelisted.title,
+        command: command,
+        status: isFailed ? 'failed' : 'completed',
+        startedAt: Date.now(),
+        lastOutputLine: firstLine,
+        output: fullOutput,
+        exitCode: error ? (error.code || 1) : 0,
+      };
+
+      broadcastPacket({
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'CLI_OUTPUT_STREAM',
+        payload: finishPayload,
+      });
+
+      if (onFinished) {
+        onFinished(isFailed ? 500 : 200, { success: !isFailed, ...finishPayload });
+      }
+    }
+  );
 }
 
 // HTTP Server for Mobile UI and REST endpoints
@@ -640,7 +816,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // 4. Trigger remote CLI command from phone (Strict Whitelist Protected)
+  // 4. Trigger remote CLI command from phone or desktop (Strict Whitelist Protected)
   if (url.pathname === '/api/cli' && req.method === 'POST') {
     let body = '';
     req.on('data', (chunk) => (body += chunk));
@@ -649,87 +825,10 @@ const server = http.createServer((req, res) => {
         const data = JSON.parse(body);
         const command = data.command || 'status';
 
-        // Security check: Whitelist gatekeeper (docs/features/04-remote-cli-execution.md)
-        const whitelisted = CLI_WHITELIST[command];
-        if (!whitelisted) {
-          console.warn(`[Security Alert] Unauthorized CLI command attempt blocked: '${command}'`);
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(
-            JSON.stringify({
-              error: `Security violation: Command '${command}' not permitted in execution whitelist.`,
-            })
-          );
-          return;
-        }
-
-        console.log(`[Bridge CLI] Executing authorized command: ${command}`);
-
-        // Notify start to all clients
-        broadcastPacket({
-          magic: 'SK',
-          version: 1,
-          packetId: Date.now(),
-          timestamp: Date.now(),
-          packetType: 'CLI_EXECUTE',
-          payload: {
-            commandId: `cmd-${command}`,
-            title: whitelisted.title || `Remote CLI (${command})`,
-            status: 'running',
-            startedAt: Date.now(),
-            lastOutputLine: `Executing command: ${whitelisted.cmd || command}...`,
-          },
+        executeWhitelistedCli(command, (statusCode, result) => {
+          res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result));
         });
-
-        // Run safe system commands or simulate agent workflow
-        let shellCmd = null;
-        if (command === 'git-status') {
-          shellCmd = 'git status -s';
-        } else if (command === 'sysinfo') {
-          shellCmd = 'uname -m -o && uptime';
-        }
-
-        if (shellCmd) {
-          exec(shellCmd, { cwd: path.resolve(__dirname, '..') }, (error, stdout, stderr) => {
-            const output = stdout.trim() || stderr.trim() || 'Executed with zero output.';
-            broadcastPacket({
-              magic: 'SK',
-              version: 1,
-              packetId: Date.now(),
-              timestamp: Date.now(),
-              packetType: 'CLI_OUTPUT_STREAM',
-              payload: {
-                commandId: `cmd-${command}`,
-                title: whitelisted.title || `Remote CLI (${command})`,
-                status: 'completed',
-                startedAt: Date.now() - 1000,
-                lastOutputLine: output.split('\n')[0] || output,
-                exitCode: error ? 1 : 0,
-              },
-            });
-          });
-        } else {
-          // Antigravity Agent simulation with realistic streaming
-          setTimeout(() => {
-            broadcastPacket({
-              magic: 'SK',
-              version: 1,
-              packetId: Date.now(),
-              timestamp: Date.now(),
-              packetType: 'CLI_OUTPUT_STREAM',
-              payload: {
-                commandId: `agy-${command}`,
-                title: whitelisted.title || `Antigravity Agent (${command})`,
-                status: 'completed',
-                startedAt: Date.now() - 2500,
-                lastOutputLine: whitelisted.safeOutput || `Agent finished: ${command} completed successfully with 0 errors.`,
-                exitCode: 0,
-              },
-            });
-          }, 2400);
-        }
-
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, command }));
       } catch (err) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));

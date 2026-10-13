@@ -30,6 +30,7 @@ export interface CliProcessStatus {
   status: 'running' | 'completed' | 'failed';
   startedAt: number;
   lastOutputLine: string;
+  output?: string;
   exitCode?: number;
 }
 

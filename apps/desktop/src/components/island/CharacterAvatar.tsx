@@ -661,15 +661,22 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
 
   return (
     <motion.div
-      layout
-      className="relative flex items-center justify-center select-none cursor-pointer shrink-0"
+      className="relative flex items-center justify-center select-none cursor-pointer shrink-0 aspect-square"
+      style={{
+        width: size,
+        height: size,
+        minWidth: size,
+        minHeight: size,
+        maxWidth: size,
+        maxHeight: size,
+      }}
       animate={{
         width: size,
         height: size,
       }}
       transition={{
-        width: { type: 'spring', stiffness: 260, damping: 25, mass: 0.75 },
-        height: { type: 'spring', stiffness: 260, damping: 25, mass: 0.75 },
+        width: { type: 'spring', stiffness: 280, damping: 26, mass: 0.7 },
+        height: { type: 'spring', stiffness: 280, damping: 26, mass: 0.7 },
       }}
       onClick={handleAvatarClick}
     >
@@ -679,7 +686,7 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
         and holds stable, deliberate micro-tilts when inquisitive.
       */}
       <motion.div
-        className="w-full h-full relative flex items-center justify-center"
+        className="w-full h-full aspect-square relative flex items-center justify-center"
         whileHover={{ scale: 1.06 }}
         whileTap={{ scale: 0.94 }}
         animate={{
@@ -692,9 +699,10 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
 
         <svg
           viewBox="0 0 44 44"
+          preserveAspectRatio="xMidYMid meet"
           fill="none"
           xmlns="http://www.w3.org/2000/svg"
-          className="w-full h-full relative z-10 drop-shadow-2xl"
+          className="w-full h-full aspect-square relative z-10 drop-shadow-2xl"
         >
           <defs>
             {/* 

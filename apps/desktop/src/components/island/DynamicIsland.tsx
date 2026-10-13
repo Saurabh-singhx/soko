@@ -123,6 +123,18 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     }
   }, [mode, activeTransfer?.status, isHovered]);
 
+  // Auto-collapse completed or failed CLI command after 6s (paused when hovered)
+  useEffect(() => {
+    if (mode === 'cli' && (activeCli?.status === 'completed' || activeCli?.status === 'failed')) {
+      if (isHovered) return;
+      const timer = setTimeout(() => {
+        setMode('compact');
+        setMood('idle');
+      }, 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [mode, activeCli?.status, isHovered]);
+
   // Close notification / connection popover when clicking anywhere outside on screen or pressing Escape
   useEffect(() => {
     const handleGlobalClick = (e: MouseEvent) => {
@@ -159,12 +171,12 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     };
   }, [mode]);
 
-  // Fluid spring physics transition config (calibrated for silky Apple-style motion)
+  // Fluid spring physics transition config (calibrated for silky Apple-style motion without stretching)
   const springTransition = {
     type: 'spring',
-    stiffness: 260,
-    damping: 25,
-    mass: 0.75,
+    stiffness: 280,
+    damping: 26,
+    mass: 0.7,
   };
 
   // Dynamic avatar size: significantly increased when notification is visible & when clicked
@@ -205,10 +217,12 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         // up to screen limit max-h-[min(75vh,520px)] where scroll takes over.
         return { width, height: undefined };
       }
-      case 'cli':
-        return { width: 428, height: 102 };
+      case 'cli': {
+        const hasMultiline = Boolean(activeCli?.output && activeCli.output.includes('\n'));
+        return { width: 440, height: hasMultiline ? 116 : 82 };
+      }
       case 'transfer':
-        return { width: 348, height: 80 };
+        return { width: 360, height: 78 };
     }
   };
 
@@ -303,35 +317,15 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     setMode('notification');
   };
 
+  const CLI_QUICK_COMMANDS = ['sysinfo', 'mem', 'disk', 'top-procs', 'git-status'];
+  const [cliCmdIndex, setCliCmdIndex] = useState(0);
+
   const simulateCli = () => {
-    setActiveCli({
-      commandId: 'agy-run',
-      title: 'Antigravity CLI Agent',
-      status: 'running',
-      startedAt: Date.now(),
-      lastOutputLine: 'Analyzing workspace dependencies and compiling...',
-    });
+    const cmd = CLI_QUICK_COMMANDS[cliCmdIndex % CLI_QUICK_COMMANDS.length];
+    setCliCmdIndex((prev) => prev + 1);
     setMood('working');
     setMode('cli');
-
-    setTimeout(() => {
-      setActiveCli((prev) =>
-        prev
-          ? {
-              ...prev,
-              status: 'completed',
-              lastOutputLine: 'Completed successfully with 0 errors.',
-              exitCode: 0,
-            }
-          : null
-      );
-      setMood('happy');
-
-      setTimeout(() => {
-        setMode('compact');
-        setMood('idle');
-      }, 3500);
-    }, 4500);
+    connectionService.executeCliCommand(cmd);
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -407,7 +401,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={`relative bg-[#08090A] border rounded-[26px] shadow-linear-island flex px-2.5 overflow-hidden backdrop-blur-3xl font-sans transition-all duration-200 ${
+        className={`relative bg-[#08090A] border rounded-[26px] shadow-linear-island flex px-2.5 overflow-hidden backdrop-blur-3xl font-sans transition-colors duration-200 ${
           isDragOver
             ? 'border-linear-green ring-2 ring-linear-green/30 scale-[1.02]'
             : ''
@@ -416,7 +410,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
             ? 'cursor-pointer border-white/10 hover:border-white/20 active:scale-[0.99] items-center'
             : mode === 'notification'
             ? 'border-white/10 min-h-[88px] max-h-[min(75vh,520px)] items-start py-2.5'
-            : 'border-white/10 items-center'
+            : 'border-white/10 items-center py-2'
         }`}
         title={
           isDragOver
@@ -428,9 +422,11 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
       >
         {/* Left Anchor: Mascot Character Avatar */}
         <motion.div
-          layout
+          layout="position"
           transition={springTransition}
-          className="shrink-0 cursor-pointer pr-1.5 flex items-center justify-center self-start mt-1"
+          className={`shrink-0 cursor-pointer pr-2 flex items-center justify-center ${
+            mode === 'notification' ? 'self-start mt-1' : 'self-center my-auto'
+          }`}
           onClick={(e) => {
             if (mode === 'compact') {
               // Click anywhere on pill or mascot triggers notification
