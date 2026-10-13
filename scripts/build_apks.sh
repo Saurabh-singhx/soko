@@ -303,17 +303,20 @@ mkdir -p "${OUTPUT_DIR}"
 build_apk "desktop" "com.soko.desktop" "Soko HUD" "soko-desktop.apk" "${PROJECT_ROOT}/apps/desktop/dist"
 
 # Build Soko Mobile (Mobile Companion Controller)
-build_apk "mobile" "com.soko.mobile" "Soko Mobile" "soko-mobile.apk" ""
+build_apk "mobile" "com.soko.mobile" "Soko Mobile" "soko-mobile.apk" "${PROJECT_ROOT}/apps/mobile/companion"
 
-# Also create release & debug alias copies in the apks directory
+# Also create release & debug alias copies in the apks directory and copy to project root
 cd "${OUTPUT_DIR}"
 cp soko-desktop.apk soko-release.apk
 cp soko-mobile.apk soko-debug.apk
+cp soko-desktop.apk "${PROJECT_ROOT}/soko-desktop.apk"
+cp soko-mobile.apk "${PROJECT_ROOT}/soko-mobile.apk"
 
 echo "----------------------------------------------------"
-echo "ALL APKS SUCCESSFULLY GENERATED IN apks/ DIRECTORY:"
+echo "ALL APKS SUCCESSFULLY GENERATED IN apks/ AND ROOT:"
 echo "----------------------------------------------------"
 ls -lh "${OUTPUT_DIR}"/*.apk
+ls -lh "${PROJECT_ROOT}"/*.apk
 
 # Cleanup temp files
 rm -rf "${BUILD_DIR}"

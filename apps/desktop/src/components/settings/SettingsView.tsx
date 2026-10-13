@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Terminal,
   FolderDown,
@@ -11,7 +11,16 @@ import {
   CheckCircle2,
   X,
   Sliders,
+  RefreshCw,
+  Power,
+  Globe,
+  Copy,
+  Check,
+  ExternalLink,
+  Bell,
 } from 'lucide-react';
+import { connectionService } from '../../services/connection.ts';
+import { ConnectionStatus, PairedDevice } from '../../types/index.ts';
 
 interface SettingsViewProps {
   onClose?: () => void;
@@ -19,7 +28,34 @@ interface SettingsViewProps {
 
 export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
   const [activeTab, setActiveTab] = useState<'pairing' | 'cli' | 'files' | 'security'>('pairing');
-  const [pairingPin] = useState('482 195');
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>(
+    connectionService.getStatus()
+  );
+  const [pairedDevice, setPairedDevice] = useState<PairedDevice | null>(
+    connectionService.getActiveDevice()
+  );
+  const [pairingPin, setPairingPin] = useState(connectionService.getSasPin());
+  const [copiedMobileUrl, setCopiedMobileUrl] = useState(false);
+  const [isBridgeOnline, setIsBridgeOnline] = useState(connectionService.isBridgeOnline());
+  const [activeClients, setActiveClients] = useState(connectionService.getActiveClients());
+
+  useEffect(() => {
+    const unsubStatus = connectionService.subscribeStatus((status, dev) => {
+      setConnectionStatus(status);
+      setPairedDevice(dev);
+      setPairingPin(connectionService.getSasPin());
+    });
+
+    const unsubBridge = connectionService.subscribeBridge((online, count) => {
+      setIsBridgeOnline(online);
+      setActiveClients(count);
+    });
+
+    return () => {
+      unsubStatus();
+      unsubBridge();
+    };
+  }, []);
 
   // Whitelist state
   const [commands, setCommands] = useState([
@@ -163,9 +199,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
         {activeTab === 'pairing' && (
           <div className="max-w-xl flex flex-col gap-6">
             <div>
-              <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">Device Pairing</h2>
+              <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">Device Pairing & Link Status</h2>
               <p className="text-xs text-linear-text-secondary mt-1">
-                Pair your mobile phone using Bluetooth Low Energy. Verify connection authenticity via the 6-digit confirmation code.
+                Pair your mobile phone using Bluetooth Low Energy and local network discovery. Verify connection authenticity via the 6-digit confirmation code.
               </p>
             </div>
 
@@ -174,8 +210,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
               <span className="text-[10px] font-medium text-linear-text-tertiary uppercase tracking-wider font-mono">
                 Short Authentication String (SAS PIN)
               </span>
-              <div className="text-2xl font-mono font-medium tracking-widest text-linear-text-primary bg-[#08090A] px-6 py-2.5 rounded-md border border-white/10 shadow-inner">
-                {pairingPin}
+              <div className="flex items-center gap-3">
+                <div className="text-2xl font-mono font-medium tracking-widest text-linear-text-primary bg-[#08090A] px-6 py-2.5 rounded-md border border-white/10 shadow-inner">
+                  {pairingPin}
+                </div>
+                <button
+                  onClick={() => setPairingPin(connectionService.regeneratePin())}
+                  title="Regenerate Pairing PIN"
+                  className="p-2.5 rounded-md bg-white/5 hover:bg-white/10 text-linear-text-secondary hover:text-white border border-white/10 transition-colors"
+                >
+                  <RefreshCw size={14} />
+                </button>
               </div>
               <p className="text-[11px] text-linear-text-secondary text-center max-w-sm">
                 Confirm that this 6-digit number matches the PIN displayed in the Soko mobile companion app.
@@ -184,25 +229,147 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
 
             {/* Paired Device Card */}
             <div className="linear-card rounded-lg p-4 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-md bg-[#5E6AD2]/15 border border-[#5E6AD2]/30 flex items-center justify-center text-[#5E6AD2]">
-                  <Smartphone size={16} />
-                </div>
-                <div>
-                  <h3 className="text-xs font-semibold text-linear-text-primary tracking-tight">Pixel 8 Pro (Active)</h3>
-                  <div className="flex items-center gap-2 text-[11px] text-linear-text-secondary mt-0.5">
-                    <span className="text-linear-green flex items-center gap-1 font-medium">
-                      <CheckCircle2 size={11} /> Paired & Authenticated
-                    </span>
-                    <span className="text-linear-text-tertiary">•</span>
-                    <span className="font-mono text-linear-text-tertiary">RSSI: -58 dBm</span>
+              {connectionStatus === 'connected' && pairedDevice ? (
+                <>
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-md bg-[#5E6AD2]/15 border border-[#5E6AD2]/30 flex items-center justify-center text-[#5E6AD2]">
+                      <Smartphone size={16} />
+                    </div>
+                    <div>
+                      <h3 className="text-xs font-semibold text-linear-text-primary tracking-tight">
+                        {pairedDevice.name}
+                      </h3>
+                      <div className="flex items-center gap-2 text-[11px] text-linear-text-secondary mt-0.5 font-mono">
+                        <span className="text-linear-green flex items-center gap-1 font-medium">
+                          <CheckCircle2 size={11} /> Paired & Authenticated
+                        </span>
+                        <span className="text-linear-text-tertiary">•</span>
+                        <span className="text-linear-text-tertiary">RSSI: {pairedDevice.rssi} dBm</span>
+                        <span className="text-linear-text-tertiary">•</span>
+                        <span className="text-linear-text-tertiary">Ping: {pairedDevice.pingMs}ms</span>
+                      </div>
+                    </div>
                   </div>
+
+                  <button
+                    onClick={() => connectionService.disconnectDevice()}
+                    className="px-2.5 py-1 rounded-md bg-linear-red/10 hover:bg-linear-red/20 text-linear-red text-xs font-medium border border-linear-red/20 transition-colors"
+                  >
+                    Unpair
+                  </button>
+                </>
+              ) : connectionStatus === 'scanning' || connectionStatus === 'connecting' ? (
+                <div className="flex items-center justify-between w-full">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-md bg-linear-amber/15 border border-linear-amber/30 flex items-center justify-center text-linear-amber">
+                      <RefreshCw size={16} className="animate-spin" />
+                    </div>
+                    <div>
+                      <h3 className="text-xs font-semibold text-white">Scanning for Devices...</h3>
+                      <span className="text-[11px] text-linear-text-secondary font-mono">
+                        Advertising Soko BLE Service (7D2A0001)...
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => connectionService.disconnectDevice()}
+                    className="px-2.5 py-1 rounded-md bg-white/5 text-linear-text-secondary text-xs hover:text-white"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between w-full">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-md bg-linear-red/15 border border-linear-red/30 flex items-center justify-center text-linear-red">
+                      <Power size={16} />
+                    </div>
+                    <div>
+                      <h3 className="text-xs font-semibold text-white">No Device Connected</h3>
+                      <span className="text-[11px] text-linear-text-secondary font-mono">
+                        Bluetooth & Hotspot ready for pairing
+                      </span>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => connectionService.scanAndConnect()}
+                    className="linear-button-primary px-3 py-1 text-xs"
+                  >
+                    Scan & Connect
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Universal Bridge & Mobile Companion Link */}
+            <div className="linear-card rounded-lg p-5 flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className={`w-2 h-2 rounded-full ${isBridgeOnline ? 'bg-linear-green animate-pulse' : 'bg-linear-red'}`} />
+                  <Globe size={14} className="text-[#5E6AD2]" />
+                  <h3 className="text-xs font-semibold text-white tracking-tight">
+                    Universal Connection Bridge (Node.js)
+                  </h3>
+                </div>
+                <span className="text-[10px] font-mono text-linear-text-secondary bg-white/[0.04] px-2 py-0.5 rounded border border-white/5">
+                  Port 8766 • {activeClients} Client{activeClients !== 1 ? 's' : ''} Active
+                </span>
+              </div>
+
+              <p className="text-[11px] text-linear-text-secondary">
+                To test from your Android phone on local Wi-Fi, open this URL in your mobile browser or enter it into the Soko Mobile Companion APK:
+              </p>
+
+              <div className="flex items-center justify-between bg-black/50 px-3 py-2 rounded-md border border-white/10 font-mono text-xs">
+                <span className="text-white select-all">http://{connectionService.getLocalIps()[0] || '192.168.31.210'}:8766</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      navigator.clipboard?.writeText(`http://${connectionService.getLocalIps()[0] || '192.168.31.210'}:8766`);
+                      setCopiedMobileUrl(true);
+                      setTimeout(() => setCopiedMobileUrl(false), 2000);
+                    }}
+                    className="p-1 rounded hover:bg-white/10 text-linear-text-tertiary hover:text-white transition-colors"
+                    title="Copy URL"
+                  >
+                    {copiedMobileUrl ? <Check size={13} className="text-linear-green" /> : <Copy size={13} />}
+                  </button>
+                  <button
+                    onClick={() => window.open(`http://${connectionService.getLocalIps()[0] || '192.168.31.210'}:8766`, '_blank')}
+                    className="flex items-center gap-1 text-[11px] text-linear-brand hover:underline font-mono"
+                  >
+                    Open App <ExternalLink size={10} />
+                  </button>
                 </div>
               </div>
 
-              <button className="px-2.5 py-1 rounded-md bg-linear-red/10 hover:bg-linear-red/20 text-linear-red text-xs font-medium border border-linear-red/20 transition-colors">
-                Unpair
-              </button>
+              {/* Direct Diagnostic Triggers */}
+              <div className="pt-2 border-t border-white/5 flex flex-col gap-2">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-linear-text-tertiary">
+                  Instant Link Verification Triggers
+                </span>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    onClick={() => connectionService.sendTestNotification('WhatsApp', 'Alex Rivera', 'Live connection verified from Settings!')}
+                    className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded bg-white/5 hover:bg-white/10 text-[11px] text-white border border-white/5 transition-colors"
+                  >
+                    <Bell size={12} className="text-[#25D366]" /> Send Notif
+                  </button>
+                  <button
+                    onClick={() => connectionService.sendTestCli('status')}
+                    className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded bg-white/5 hover:bg-white/10 text-[11px] text-white border border-white/5 transition-colors"
+                  >
+                    <Terminal size={12} className="text-linear-brand" /> Run CLI
+                  </button>
+                  <button
+                    onClick={() => connectionService.sendTestTransfer()}
+                    className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded bg-white/5 hover:bg-white/10 text-[11px] text-white border border-white/5 transition-colors"
+                  >
+                    <FolderDown size={12} className="text-linear-green" /> Send APK
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         )}

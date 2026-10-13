@@ -48,3 +48,42 @@ export interface BluetoothDevice {
   rssi: number;
   isConnected: boolean;
 }
+
+export type ConnectionStatus = 'disconnected' | 'scanning' | 'connecting' | 'connected';
+export type TransportProtocol = 'ble' | 'wifi' | 'dual';
+
+export interface PairedDevice {
+  id: string;
+  name: string;
+  model: string;
+  rssi: number;
+  pingMs: number;
+  transport: TransportProtocol;
+  batteryLevel?: number;
+  lastSeen: number;
+  isAuthorized: boolean;
+  ipAddress?: string;
+}
+
+export interface SokoPacketEnvelope {
+  magic: 'SK';
+  version: 1;
+  packetId: number;
+  timestamp: number;
+  packetType:
+    | 'HEARTBEAT_PING'
+    | 'HEARTBEAT_PONG'
+    | 'BRIDGE_STATUS'
+    | 'PAIR_REQUEST'
+    | 'PAIR_CONFIRM'
+    | 'NOTIFICATION_POST'
+    | 'NOTIFICATION_DISMISS'
+    | 'CLI_EXECUTE'
+    | 'CLI_OUTPUT_STREAM'
+    | 'CLI_TERMINATED'
+    | 'FILE_OFFER'
+    | 'FILE_PROGRESS'
+    | 'FILE_COMPLETED';
+  payload: Record<string, any>;
+}
+

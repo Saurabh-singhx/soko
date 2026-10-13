@@ -5,12 +5,16 @@ import { CharacterAvatar } from './CharacterAvatar.tsx';
 import { NotificationBanner } from './NotificationBanner.tsx';
 import { CliStatusWidget } from './CliStatusWidget.tsx';
 import { TransferProgress } from './TransferProgress.tsx';
+import { ConnectionPopover } from './ConnectionPopover.tsx';
+import { connectionService } from '../../services/connection.ts';
 import {
   IslandMode,
   MascotMood,
   MirroredNotification,
   CliProcessStatus,
   FileTransferStatus,
+  ConnectionStatus,
+  PairedDevice,
 } from '../../types/index.ts';
 
 interface DynamicIslandProps {
@@ -26,7 +30,16 @@ interface DynamicIslandProps {
 export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) => {
   const [mode, setMode] = useState<IslandMode>('compact');
   const [mood, setMood] = useState<MascotMood>('idle');
-  const [isConnected] = useState(true);
+
+  // Live connection state
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>(
+    connectionService.getStatus()
+  );
+  const [pairedDevice, setPairedDevice] = useState<PairedDevice | null>(
+    connectionService.getActiveDevice()
+  );
+  const [sasPin, setSasPin] = useState(connectionService.getSasPin());
+  const [isConnectionPopoverOpen, setIsConnectionPopoverOpen] = useState(false);
 
   // Active state payloads
   const [activeNotification, setActiveNotification] = useState<MirroredNotification | null>(null);
@@ -36,6 +49,47 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
   const [isBotClicked, setIsBotClicked] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const islandRef = useRef<HTMLDivElement>(null);
+
+  // Subscribe to live connection manager events
+  useEffect(() => {
+    const unsubStatus = connectionService.subscribeStatus((status, dev) => {
+      setConnectionStatus(status);
+      setPairedDevice(dev);
+      if (status === 'disconnected') {
+        setMood('searching');
+      } else if (status === 'connected' && mode === 'compact') {
+        setMood('idle');
+      }
+    });
+
+    const unsubNotif = connectionService.onNotification((notif) => {
+      setActiveNotification(notif);
+      setMood('alert');
+      setMode('notification');
+      setIsConnectionPopoverOpen(false);
+    });
+
+    const unsubCli = connectionService.onCli((cli) => {
+      setActiveCli(cli);
+      setMood(cli.status === 'running' ? 'working' : 'happy');
+      setMode('cli');
+      setIsConnectionPopoverOpen(false);
+    });
+
+    const unsubTransfer = connectionService.onTransfer((transfer) => {
+      setActiveTransfer(transfer);
+      setMood(transfer.status === 'active' ? 'working' : 'happy');
+      setMode('transfer');
+      setIsConnectionPopoverOpen(false);
+    });
+
+    return () => {
+      unsubStatus();
+      unsubNotif();
+      unsubCli();
+      unsubTransfer();
+    };
+  }, [mode]);
 
   // Auto-collapse notification after delay if not actively hovered
   useEffect(() => {
@@ -55,37 +109,40 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     }
   }, [mode, isHovered, activeNotification]);
 
-  // Close notification when clicking anywhere outside on screen or pressing Escape
+  // Close notification / connection popover when clicking anywhere outside on screen or pressing Escape
   useEffect(() => {
-    if (mode === 'notification') {
-      const handleGlobalClick = (e: MouseEvent) => {
-        if (islandRef.current && !islandRef.current.contains(e.target as Node)) {
+    const handleGlobalClick = (e: MouseEvent) => {
+      if (islandRef.current && !islandRef.current.contains(e.target as Node)) {
+        if (mode === 'notification') {
           setMode('compact');
           setMood('idle');
           setIsBotClicked(false);
         }
-      };
+        setIsConnectionPopoverOpen(false);
+      }
+    };
 
-      const handleKeyDown = (e: KeyboardEvent) => {
-        if (e.key === 'Escape') {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (mode === 'notification') {
           setMode('compact');
           setMood('idle');
           setIsBotClicked(false);
         }
-      };
+        setIsConnectionPopoverOpen(false);
+      }
+    };
 
-      // Delay listener attachment to avoid immediately catching the opening click event
-      const timer = setTimeout(() => {
-        window.addEventListener('click', handleGlobalClick);
-        window.addEventListener('keydown', handleKeyDown);
-      }, 50);
+    const timer = setTimeout(() => {
+      window.addEventListener('click', handleGlobalClick);
+      window.addEventListener('keydown', handleKeyDown);
+    }, 50);
 
-      return () => {
-        clearTimeout(timer);
-        window.removeEventListener('click', handleGlobalClick);
-        window.removeEventListener('keydown', handleKeyDown);
-      };
-    }
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('click', handleGlobalClick);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
   }, [mode]);
 
   // Fluid spring physics transition config (calibrated for silky Apple-style motion)
@@ -401,15 +458,51 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                 className="flex items-center justify-between w-full select-none"
               >
                 <div className="flex items-center gap-1.5 text-xs text-linear-text-primary font-medium tracking-tight">
-                  <span className="w-1.5 h-1.5 rounded-full bg-linear-green" />
-                  <span className="text-[11px] text-linear-text-primary">Soko Ready</span>
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      connectionStatus === 'connected'
+                        ? 'bg-linear-green'
+                        : connectionStatus === 'scanning' || connectionStatus === 'connecting'
+                        ? 'bg-linear-amber animate-ping'
+                        : 'bg-linear-red'
+                    }`}
+                  />
+                  <span className="text-[11px] text-linear-text-primary">
+                    {connectionStatus === 'connected'
+                      ? 'Soko Ready'
+                      : connectionStatus === 'scanning' || connectionStatus === 'connecting'
+                      ? 'Connecting...'
+                      : 'No Device'}
+                  </span>
                 </div>
 
                 <div
-                  className="flex items-center gap-2 text-linear-text-tertiary"
+                  className="flex items-center gap-1 text-linear-text-tertiary"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <Bluetooth size={13} className={isConnected ? 'text-linear-brand' : 'text-linear-text-tertiary'} />
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsConnectionPopoverOpen((prev) => !prev);
+                    }}
+                    title={
+                      connectionStatus === 'connected'
+                        ? `Connected to ${pairedDevice?.name || 'Mobile Phone'}`
+                        : connectionStatus === 'scanning' || connectionStatus === 'connecting'
+                        ? 'Scanning for companion link...'
+                        : 'Disconnected (Click to manage connection)'
+                    }
+                    className={`p-1 rounded-md hover:bg-white/5 transition-colors ${
+                      connectionStatus === 'connected'
+                        ? 'text-linear-brand'
+                        : connectionStatus === 'scanning' || connectionStatus === 'connecting'
+                        ? 'text-linear-amber animate-pulse'
+                        : 'text-linear-text-tertiary opacity-70'
+                    }`}
+                  >
+                    <Bluetooth size={13} />
+                  </button>
+
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -456,6 +549,25 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
           </AnimatePresence>
         </div>
       </motion.div>
+
+      {/* Floating Connection Popover */}
+      <AnimatePresence>
+        {isConnectionPopoverOpen && (
+          <ConnectionPopover
+            status={connectionStatus}
+            device={pairedDevice}
+            sasPin={sasPin}
+            onScanAndConnect={() => connectionService.scanAndConnect()}
+            onDisconnect={() => connectionService.disconnectDevice()}
+            onRegeneratePin={() => setSasPin(connectionService.regeneratePin())}
+            onOpenSettings={() => {
+              setIsConnectionPopoverOpen(false);
+              onOpenSettings();
+            }}
+            onClose={() => setIsConnectionPopoverOpen(false)}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Floating Demo Toolbar (Linear minimalist badge) */}
       <div

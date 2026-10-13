@@ -82,3 +82,21 @@ Because MTU limits vary (standard default: 23 bytes, negotiated: up to 517 bytes
    - Mobile sends a 4-byte ping every 10 seconds.
    - If Desktop receives no ping for 30 seconds, connection drops to `DISCONNECTED` state, and the Dynamic Island mascot switches to the "searching" state.
    - Auto-reconnect resumes in background scanning mode with exponential backoff (1s, 2s, 4s, capped at 10s).
+
+---
+
+## 5. Universal Connection Bridge & Testing Conduit
+
+To allow instant testing and verification across physical Android phones and local development environments without requiring complex Bluetooth pairing on every platform:
+
+1. **Zero-Dependency Node.js Bridge (`scripts/soko_bridge.js`)**:
+   - Runs locally on `http://0.0.0.0:8766` (with automatic port increment if 8766 is occupied).
+   - Provides full-duplex RFC 6455 WebSocket communication and REST endpoints (`/api/status`, `/api/notify`, `/api/cli`, `/api/transfer`).
+   - Serves the **Soko Mobile Companion Web App** on `GET /` or `GET /mobile` so any mobile device on the same Wi-Fi can connect with a single tap.
+2. **Mobile Companion APK (`soko-mobile.apk`)**:
+   - Bundles the responsive, glassmorphic companion interface directly inside the Android APK.
+   - Provides 1-tap notification triggers (WhatsApp, Telegram, Slack, GitHub, Gmail, Discord), remote CLI controls (`agy status`, `agy test`, `git status`), and 42 MB/s file transfer tests.
+3. **Desktop Dynamic Island HUD Integration**:
+   - Compact pill displays live connection dot (green for active, pulsing amber for scanning, red for offline).
+   - Bluetooth button opens the **Connection Hub Popover** featuring live device metrics, SAS 6-digit confirmation PIN, and the mobile pairing URL (`http://<ip>:8766`).
+

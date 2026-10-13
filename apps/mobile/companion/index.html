@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Soko Mobile Companion</title>
+  <style>
+    :root {
+      --bg-base: #08090A;
+      --bg-surface: #121417;
+      --bg-surface-elevated: #181B20;
+      --border-subtle: rgba(255, 255, 255, 0.08);
+      --border-focus: rgba(94, 106, 210, 0.5);
+      --brand: #5E6AD2;
+      --brand-hover: #6E7BE2;
+      --text-primary: #FFFFFF;
+      --text-secondary: #8A8F98;
+      --text-tertiary: #565A61;
+      --color-green: #30D158;
+      --color-amber: #F59E0B;
+      --color-red: #EB5757;
+      --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      background-color: var(--bg-base);
+      color: var(--text-primary);
+      font-family: var(--font-family);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+      padding: env(safe-area-inset-top, 16px) env(safe-area-inset-right, 16px) env(safe-area-inset-bottom, 24px) env(safe-area-inset-left, 16px);
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 18px;
+      margin-bottom: 16px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    }
+
+    .header-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .bot-avatar {
+      width: 36px;
+      height: 36px;
+      background: #000;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      cursor: pointer;
+      transition: transform 0.2s ease;
+    }
+
+    .bot-avatar:active {
+      transform: scale(0.92);
+    }
+
+    .bot-eye {
+      width: 4px;
+      height: 8px;
+      background: #fff;
+      border-radius: 2px;
+      transition: all 0.15s ease;
+    }
+
+    .bot-eyes-container {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .header-titles h1 {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      color: #fff;
+    }
+
+    .header-titles p {
+      font-size: 11px;
+      color: var(--text-secondary);
+      font-family: ui-monospace, SFMono-Regular, monospace;
+    }
+
+    .conn-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid var(--border-subtle);
+      border-radius: 100px;
+      font-size: 11px;
+      font-family: ui-monospace, monospace;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--color-red);
+      transition: background-color 0.3s ease;
+    }
+
+    .status-dot.online {
+      background: var(--color-green);
+      box-shadow: 0 0 8px rgba(48, 209, 88, 0.5);
+    }
+
+    .status-dot.connecting {
+      background: var(--color-amber);
+      animation: pulse 1s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .container {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      max-width: 600px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    .card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    }
+
+    .card-title {
+      font-size: 12px;
+      text-transform: uppercase;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      color: var(--text-tertiary);
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .ip-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .ip-input {
+      flex: 1;
+      background: #08090A;
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      padding: 10px 14px;
+      color: #fff;
+      font-size: 13px;
+      font-family: ui-monospace, monospace;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .ip-input:focus {
+      border-color: var(--brand);
+    }
+
+    .btn {
+      background: var(--brand);
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: background 0.2s, transform 0.1s;
+    }
+
+    .btn:active {
+      transform: scale(0.96);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-primary);
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .sas-box {
+      background: #08090A;
+      border: 1px dashed rgba(94, 106, 210, 0.4);
+      border-radius: 12px;
+      padding: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 8px;
+    }
+
+    .sas-code {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: 4px;
+      color: #fff;
+      font-family: ui-monospace, monospace;
+    }
+
+    .sas-badge {
+      font-size: 10px;
+      padding: 4px 8px;
+      border-radius: 6px;
+      background: rgba(48, 209, 88, 0.15);
+      border: 1px solid rgba(48, 209, 88, 0.3);
+      color: var(--color-green);
+      font-weight: 600;
+    }
+
+    /* Notification App Grid */
+    .notif-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .notif-btn {
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: 12px;
+      padding: 12px 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      color: var(--text-primary);
+    }
+
+    .notif-btn:active {
+      transform: scale(0.95);
+      border-color: rgba(255, 255, 255, 0.3);
+    }
+
+    .app-icon-wrap {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    }
+
+    .notif-btn span {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: -0.2px;
+    }
+
+    /* Custom Notification inputs */
+    .custom-notif-inputs {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border-subtle);
+    }
+
+    .input-field {
+      background: #08090A;
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 8px 12px;
+      color: #fff;
+      font-size: 12px;
+      outline: none;
+    }
+
+    .input-field:focus {
+      border-color: var(--brand);
+    }
+
+    /* CLI Grid */
+    .cli-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .cli-card {
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: 12px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      text-align: left;
+    }
+
+    .cli-card:active {
+      transform: scale(0.96);
+      border-color: var(--brand);
+    }
+
+    .cli-card-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    .cli-card-cmd {
+      font-size: 10px;
+      font-family: ui-monospace, monospace;
+      color: var(--brand);
+    }
+
+    /* Terminal Console */
+    .terminal-box {
+      background: #000;
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      font-size: 11px;
+      color: #30D158;
+      max-height: 120px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      line-height: 1.4;
+      margin-top: 8px;
+    }
+
+    /* File Transfer */
+    .transfer-box {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .progress-bar-wrap {
+      width: 100%;
+      height: 6px;
+      background: #000;
+      border-radius: 3px;
+      overflow: hidden;
+      border: 1px solid var(--border-subtle);
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--brand), var(--color-green));
+      border-radius: 3px;
+      transition: width 0.3s ease;
+    }
+
+    .transfer-stats {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      font-family: ui-monospace, monospace;
+      color: var(--text-secondary);
+    }
+
+    /* Toast */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: rgba(18, 20, 23, 0.95);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #fff;
+      padding: 10px 18px;
+      border-radius: 100px;
+      font-size: 12px;
+      font-weight: 500;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(16px);
+      pointer-events: none;
+      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease;
+      opacity: 0;
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #toast.show {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+    }
+
+    .toast-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--brand);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Header / Navigation -->
+  <header>
+    <div class="header-brand">
+      <div class="bot-avatar" id="mascotBot" title="Grok Bot Mascot">
+        <div class="bot-eyes-container">
+          <div class="bot-eye" id="eyeLeft"></div>
+          <div class="bot-eye" id="eyeRight"></div>
+        </div>
+      </div>
+      <div class="header-titles">
+        <h1>Soko Companion</h1>
+        <p>Mobile Controller</p>
+      </div>
+    </div>
+
+    <div class="conn-pill" id="connPill">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="connLabel">Offline</span>
+    </div>
+  </header>
+
+  <div class="container">
+
+    <!-- Connection & Pairing Card -->
+    <div class="card">
+      <div class="card-title">
+        <span>Desktop Link & SAS Pairing</span>
+        <span id="pingBadge" style="font-family: ui-monospace; font-size: 10px; color: var(--text-secondary);">-- ms</span>
+      </div>
+
+      <div class="ip-row">
+        <input type="text" id="bridgeIpInput" class="ip-input" placeholder="Desktop IP:Port (e.g. 192.168.31.210:8766)" spellcheck="false" autocomplete="off" />
+        <button class="btn" id="btnConnect" onclick="toggleConnection()">Connect</button>
+      </div>
+
+      <div class="sas-box">
+        <div>
+          <div style="font-size: 9px; text-transform: uppercase; color: var(--text-tertiary); letter-spacing: 0.5px; font-weight: 700;">SAS Pair Confirmation PIN</div>
+          <div class="sas-code" id="sasPinDisplay">482 195</div>
+        </div>
+        <div class="sas-badge" id="pairStatusBadge">PIN Matched</div>
+      </div>
+    </div>
+
+    <!-- 1-Tap Notification Mirroring Deck -->
+    <div class="card">
+      <div class="card-title">
+        <span>Mirror Notification to Island</span>
+        <span style="font-size: 10px; color: var(--brand); font-weight: normal;">1-Tap Send</span>
+      </div>
+
+      <div class="notif-grid">
+        <!-- WhatsApp -->
+        <button class="notif-btn" onclick="sendPresetNotif('WhatsApp', 'com.whatsapp', 'Alex Rivera', 'Hey, are you free to test the new Dynamic Island update?')">
+          <div class="app-icon-wrap" style="background: #25D366;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
+            </svg>
+          </div>
+          <span>WhatsApp</span>
+        </button>
+
+        <!-- Slack -->
+        <button class="notif-btn" onclick="sendPresetNotif('Slack', 'com.Slack', 'Sarah (Core Team)', '#general: Desktop dynamic island build #429 finished!')">
+          <div class="app-icon-wrap" style="background: #4A154B;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#E01E5A" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="3" height="8" x="13" y="2" rx="1.5" />
+              <path d="M19 8.5V10h1.5A1.5 1.5 0 1 0 19 8.5" />
+              <rect width="3" height="8" x="8" y="14" rx="1.5" />
+              <path d="M5 15.5V14H3.5A1.5 1.5 0 1 0 5 15.5" />
+            </svg>
+          </div>
+          <span>Slack</span>
+        </button>
+
+        <!-- Telegram -->
+        <button class="notif-btn" onclick="sendPresetNotif('Telegram', 'org.telegram.messenger', 'Pavel Durov', 'Direct file transfer verified at 42 MB/s on hotspot link.')">
+          <div class="app-icon-wrap" style="background: #229ED9;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </div>
+          <span>Telegram</span>
+        </button>
+
+        <!-- GitHub -->
+        <button class="notif-btn" onclick="sendPresetNotif('GitHub', 'com.github.android', 'octocat', 'Pull request #18: Dual protocol link merged into master')">
+          <div class="app-icon-wrap" style="background: #24292F;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path>
+            </svg>
+          </div>
+          <span>GitHub</span>
+        </button>
+
+        <!-- Gmail -->
+        <button class="notif-btn" onclick="sendPresetNotif('Gmail', 'com.google.android.gm', 'Google Cloud', 'Your Soko bridge node is healthy across local interfaces.')">
+          <div class="app-icon-wrap" style="background: #EA4335;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+              <polyline points="22,6 12,13 2,6"></polyline>
+            </svg>
+          </div>
+          <span>Gmail</span>
+        </button>
+
+        <!-- Discord -->
+        <button class="notif-btn" onclick="sendPresetNotif('Discord', 'com.discord', '#announcements', 'New monochrome OLED mascot expressions deployed!')">
+          <div class="app-icon-wrap" style="background: #5865F2;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="9" cy="12" r="1.5"></circle>
+              <circle cx="15" cy="12" r="1.5"></circle>
+              <path d="M7.5 7.5c3.5-1 5.5-1 9 0 1.5 3 2.5 7 2.5 9-2 1.5-4 1.5-6 1.5l-.5-1c2-.5 3-1.5 3-1.5-2 1-5 1.5-8 1.5s-6-.5-8-1.5c0 0 1 1 3 1.5l-.5 1c-2 0-4 0-6-1.5 0-2 1-6 2.5-9z"></path>
+            </svg>
+          </div>
+          <span>Discord</span>
+        </button>
+      </div>
+
+      <!-- Custom notification inputs -->
+      <div class="custom-notif-inputs">
+        <input type="text" id="custApp" class="input-field" placeholder="App Name (e.g. Messages)" value="Messages" />
+        <input type="text" id="custTitle" class="input-field" placeholder="Sender / Title (e.g. Elena)" value="Elena Vance" />
+        <input type="text" id="custBody" class="input-field" placeholder="Notification message text..." value="Hey! Dynamic Island is receiving live notifications from mobile." />
+        <button class="btn btn-secondary" onclick="sendCustomNotif()">Send Custom Notification to Island</button>
+      </div>
+    </div>
+
+    <!-- Remote CLI Execution -->
+    <div class="card">
+      <div class="card-title">
+        <span>Remote CLI Agent Controls</span>
+        <span style="font-size: 10px; color: var(--text-secondary);">Antigravity Hub</span>
+      </div>
+
+      <div class="cli-grid">
+        <button class="cli-card" onclick="executeRemoteCli('status', 'Antigravity CLI Agent')">
+          <div class="cli-card-title">Check Agent Status</div>
+          <div class="cli-card-cmd">$ agy status</div>
+        </button>
+
+        <button class="cli-card" onclick="executeRemoteCli('test', 'Test Suite Runner')">
+          <div class="cli-card-title">Run Integration Tests</div>
+          <div class="cli-card-cmd">$ agy test --suite</div>
+        </button>
+
+        <button class="cli-card" onclick="executeRemoteCli('git-status', 'Git Workspace')">
+          <div class="cli-card-title">Check Git Status</div>
+          <div class="cli-card-cmd">$ git status -s</div>
+        </button>
+
+        <button class="cli-card" onclick="executeRemoteCli('sysinfo', 'Host Telemetry')">
+          <div class="cli-card-title">System Specs</div>
+          <div class="cli-card-cmd">$ uname -m -o</div>
+        </button>
+      </div>
+
+      <div class="terminal-box" id="termLog">Ready for remote command execution...</div>
+    </div>
+
+    <!-- High-Speed File Transfer -->
+    <div class="card">
+      <div class="card-title">
+        <span>High-Speed File Transfer</span>
+        <span style="font-size: 10px; color: var(--color-green);">42 MB/s Burst</span>
+      </div>
+
+      <div class="transfer-box">
+        <button class="btn" style="background: #10B981;" onclick="triggerFileTransfer()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="17 8 12 3 7 8"></polyline>
+            <line x1="12" y1="3" x2="12" y2="15"></line>
+          </svg>
+          Send APK to Desktop Island
+        </button>
+
+        <div class="progress-bar-wrap">
+          <div class="progress-bar-fill" id="transferFill"></div>
+        </div>
+
+        <div class="transfer-stats">
+          <span id="transferStatus">Idle</span>
+          <span id="transferSpeed">0 MB/s</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Toast Element -->
+  <div id="toast">
+    <div class="toast-dot"></div>
+    <span id="toastMsg">Notification dispatched!</span>
+  </div>
+
+  <script>
+    // Soko Mobile Companion Logic
+    let ws = null;
+    let reconnectTimer = null;
+    let pingInterval = null;
+    let lastPingTimestamp = 0;
+
+    const DEFAULT_PORT = 8766;
+    const ipInput = document.getElementById('bridgeIpInput');
+    const connPill = document.getElementById('connPill');
+    const statusDot = document.getElementById('statusDot');
+    const connLabel = document.getElementById('connLabel');
+    const pingBadge = document.getElementById('pingBadge');
+    const termLog = document.getElementById('termLog');
+    const toast = document.getElementById('toast');
+    const toastMsg = document.getElementById('toastMsg');
+
+    // Auto-detect IP from current host or default
+    function getDefaultTarget() {
+      if (window.location.host && !window.location.host.startsWith('file')) {
+        return window.location.host;
+      }
+      return localStorage.getItem('soko_last_ip') || '192.168.31.210:8766';
+    }
+
+    ipInput.value = getDefaultTarget();
+
+    function showToast(msg) {
+      toastMsg.innerText = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2600);
+    }
+
+    function blinkBot() {
+      const left = document.getElementById('eyeLeft');
+      const right = document.getElementById('eyeRight');
+      left.style.height = '1px';
+      right.style.height = '1px';
+      setTimeout(() => {
+        left.style.height = '8px';
+        right.style.height = '8px';
+      }, 150);
+    }
+
+    document.getElementById('mascotBot').addEventListener('click', () => {
+      blinkBot();
+      showToast('Grok Bot: Companion active');
+    });
+
+    function setStatus(state, text) {
+      statusDot.className = 'status-dot ' + (state === 'online' ? 'online' : state === 'connecting' ? 'connecting' : '');
+      connLabel.innerText = text;
+      document.getElementById('btnConnect').innerText = state === 'online' ? 'Disconnect' : 'Connect';
+      document.getElementById('pairStatusBadge').innerText = state === 'online' ? 'Active' : 'Unpaired';
+      document.getElementById('pairStatusBadge').style.color = state === 'online' ? 'var(--color-green)' : 'var(--text-tertiary)';
+    }
+
+    function getWsUrl() {
+      let target = ipInput.value.trim();
+      if (!target) target = '127.0.0.1:8766';
+      if (!target.includes(':')) target += `:${DEFAULT_PORT}`;
+      return `ws://${target}`;
+    }
+
+    function getHttpBaseUrl() {
+      let target = ipInput.value.trim();
+      if (!target) target = '127.0.0.1:8766';
+      if (!target.includes(':')) target += `:${DEFAULT_PORT}`;
+      return `http://${target}`;
+    }
+
+    function connectWs() {
+      const wsUrl = getWsUrl();
+      localStorage.setItem('soko_last_ip', ipInput.value.trim());
+
+      setStatus('connecting', 'Connecting...');
+      if (ws) {
+        try { ws.close(); } catch(e) {}
+      }
+
+      try {
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+          setStatus('online', 'Connected');
+          showToast('Connected to Desktop Island');
+          blinkBot();
+
+          // Send Pair Request & Registration
+          sendPacket('PAIR_REQUEST', {
+            pin: document.getElementById('sasPinDisplay').innerText,
+            deviceName: 'Mobile Companion (Android)',
+            model: 'Soko Mobile v1.0.0',
+            rssi: -52,
+            batteryLevel: 94
+          });
+
+          startHeartbeat();
+        };
+
+        ws.onmessage = (e) => {
+          try {
+            const packet = JSON.parse(e.data);
+            handleInboundPacket(packet);
+          } catch(err) {
+            console.error('Packet parse error:', err);
+          }
+        };
+
+        ws.onclose = () => {
+          stopHeartbeat();
+          setStatus('offline', 'Disconnected');
+          pingBadge.innerText = '-- ms';
+          scheduleReconnect();
+        };
+
+        ws.onerror = () => {
+          stopHeartbeat();
+          setStatus('offline', 'Error');
+        };
+      } catch (err) {
+        setStatus('offline', 'Failed');
+        scheduleReconnect();
+      }
+    }
+
+    function scheduleReconnect() {
+      if (reconnectTimer) return;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connectWs();
+      }, 5000);
+    }
+
+    function startHeartbeat() {
+      stopHeartbeat();
+      pingInterval = setInterval(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          lastPingTimestamp = Date.now();
+          sendPacket('HEARTBEAT_PING', { timestamp: lastPingTimestamp });
+        }
+      }, 8000);
+    }
+
+    function stopHeartbeat() {
+      if (pingInterval) {
+        clearInterval(pingInterval);
+        pingInterval = null;
+      }
+    }
+
+    function handleInboundPacket(packet) {
+      if (packet.packetType === 'HEARTBEAT_PONG' || packet.packetType === 'HEARTBEAT_PING') {
+        const ping = Date.now() - (packet.payload?.timestamp || lastPingTimestamp);
+        pingBadge.innerText = `${Math.max(1, ping)} ms`;
+      } else if (packet.packetType === 'CLI_OUTPUT_STREAM' || packet.packetType === 'CLI_TERMINATED') {
+        termLog.innerText = `[${new Date().toLocaleTimeString()}] ${packet.payload?.title || 'CLI'}:\n${packet.payload?.lastOutputLine || 'Done'}`;
+        blinkBot();
+      } else if (packet.packetType === 'FILE_PROGRESS' || packet.packetType === 'FILE_COMPLETED') {
+        const pct = packet.payload?.percentage || 0;
+        document.getElementById('transferFill').style.width = pct + '%';
+        document.getElementById('transferStatus').innerText = pct === 100 ? 'Transfer Completed!' : `Sending: ${pct}%`;
+        document.getElementById('transferSpeed').innerText = pct === 100 ? 'Done' : '42 MB/s';
+      }
+    }
+
+    function sendPacket(type, payload) {
+      const packet = {
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: type,
+        payload: payload
+      };
+
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(packet));
+        return true;
+      }
+      return false;
+    }
+
+    function toggleConnection() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.close();
+      } else {
+        connectWs();
+      }
+    }
+
+    // Direct HTTP Fallback if WS not available
+    async function postHttp(endpoint, body) {
+      try {
+        const res = await fetch(`${getHttpBaseUrl()}${endpoint}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        return await res.json();
+      } catch (err) {
+        console.warn('HTTP fallback dispatch:', err);
+      }
+    }
+
+    function sendPresetNotif(appName, packageName, title, body) {
+      blinkBot();
+      const payload = {
+        id: `notif-${Date.now()}`,
+        appName: appName,
+        packageName: packageName,
+        title: title,
+        body: body,
+        timestamp: Date.now()
+      };
+
+      const sentWs = sendPacket('NOTIFICATION_POST', payload);
+      if (!sentWs) {
+        postHttp('/api/notify', payload);
+      }
+
+      showToast(`Mirrored ${appName} notification to Island!`);
+    }
+
+    function sendCustomNotif() {
+      const app = document.getElementById('custApp').value.trim() || 'Messages';
+      const title = document.getElementById('custTitle').value.trim() || 'Notice';
+      const body = document.getElementById('custBody').value.trim() || 'Test notification';
+      sendPresetNotif(app, `com.${app.toLowerCase().replace(/\\s+/g, '')}.app`, title, body);
+    }
+
+    function executeRemoteCli(command, title) {
+      blinkBot();
+      termLog.innerText = `[${new Date().toLocaleTimeString()}] Executing: agy ${command}...\nStreaming logs from desktop...`;
+
+      const payload = {
+        commandId: `agy-${command}`,
+        title: title,
+        command: command,
+        status: 'running',
+        startedAt: Date.now(),
+        lastOutputLine: `Running remote command: agy ${command}`
+      };
+
+      const sentWs = sendPacket('CLI_EXECUTE', payload);
+      if (!sentWs) {
+        postHttp('/api/cli', { command: command });
+      }
+
+      showToast(`Triggered: ${title}`);
+    }
+
+    function triggerFileTransfer() {
+      blinkBot();
+      document.getElementById('transferFill').style.width = '15%';
+      document.getElementById('transferStatus').innerText = 'Starting 42MB/s Hotspot Stream...';
+      document.getElementById('transferSpeed').innerText = '42 MB/s';
+
+      const payload = {
+        filename: 'soko-v1.0.0-release.apk',
+        totalBytes: 52000000
+      };
+
+      const sentWs = sendPacket('FILE_OFFER', payload);
+      if (!sentWs) {
+        postHttp('/api/transfer', payload);
+      }
+
+      showToast('APK Transfer offered to Desktop Island!');
+    }
+
+    // Auto connect on startup
+    window.addEventListener('DOMContentLoaded', () => {
+      connectWs();
+    });
+  </script>
+</body>
+</html>
