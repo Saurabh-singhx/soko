@@ -3,27 +3,99 @@
 @tailwind utilities;
 
 @layer base {
+  html {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: #F7F8F8;
+    background-color: transparent;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
   body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    color: #FFFFFF;
     margin: 0;
     padding: 0;
     user-select: none;
     -webkit-user-select: none;
+    overflow: hidden;
+  }
+
+  /* Linear custom slim scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.24);
   }
 }
 
-/* Glassmorphism utility classes */
-.glass-panel {
-  background: rgba(18, 18, 24, 0.75);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+/* Linear.app Signature Surface & Component Utilities */
+.linear-card {
+  background: #121417;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
-.glass-card {
+.linear-card-hover {
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.linear-card-hover:hover {
+  background: #1B1E24;
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.linear-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  color: #8A8F98;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  padding: 3px 5px;
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.3);
+}
+
+.linear-button-primary {
+  background: #5E6AD2;
+  color: #FFFFFF;
+  font-weight: 500;
+  font-size: 12px;
+  letter-spacing: -0.01em;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: all 0.12s ease;
+}
+.linear-button-primary:hover {
+  background: #6875E8;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 2px 6px rgba(94, 106, 210, 0.35);
+}
+
+.linear-button-secondary {
   background: rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  color: #F7F8F8;
+  font-weight: 500;
+  font-size: 12px;
+  letter-spacing: -0.01em;
+  border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: all 0.12s ease;
+}
+.linear-button-secondary:hover {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.16);
 }

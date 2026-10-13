@@ -10,6 +10,7 @@ import {
   Unlock,
   CheckCircle2,
   X,
+  Sliders,
 } from 'lucide-react';
 
 interface SettingsViewProps {
@@ -48,132 +49,158 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
   const [downloadDir, setDownloadDir] = useState('~/Downloads/SokoFiles');
 
   return (
-    <div className="flex h-screen w-screen bg-[#0D0D12] text-zinc-100 font-sans select-none overflow-hidden">
-      {/* Sidebar Navigation */}
-      <aside className="w-56 bg-[#12121A] border-r border-white/10 flex flex-col justify-between p-4">
+    <div className="flex h-screen w-screen bg-[#08090A] text-linear-text-primary font-sans select-none overflow-hidden antialiased">
+      {/* Linear.app Sidebar Navigation */}
+      <aside className="w-60 bg-[#0C0D0E] border-r border-white/5 flex flex-col justify-between p-3.5">
         <div>
-          {/* Logo & Header */}
-          <div className="flex items-center gap-2 mb-6 px-2">
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-cyan-500 to-indigo-500 flex items-center justify-center font-bold text-white text-sm shadow-md">
-              S
-            </div>
-            <div>
-              <h1 className="text-sm font-bold tracking-tight">SOKO</h1>
-              <span className="text-[10px] text-zinc-400 font-mono">v0.1.0 • Desktop</span>
+          {/* Header & Logo */}
+          <div className="flex items-center justify-between mb-5 px-2 pt-1">
+            <div className="flex items-center gap-2.5">
+              <div className="w-5 h-5 rounded-md bg-[#5E6AD2] flex items-center justify-center font-bold text-white text-[11px] shadow-sm">
+                S
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-semibold text-linear-text-primary tracking-tight">SOKO</span>
+                <span className="text-[10px] font-mono text-linear-text-tertiary">v0.1.0</span>
+              </div>
             </div>
           </div>
 
-          {/* Navigation Links */}
-          <nav className="flex flex-col gap-1">
+          {/* Nav Categories */}
+          <div className="px-2 mb-1.5 text-[10px] font-medium tracking-wider text-linear-text-tertiary uppercase">
+            Workspace
+          </div>
+
+          <nav className="flex flex-col gap-0.5">
             <button
               onClick={() => setActiveTab('pairing')}
-              className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+              className={`flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs font-medium tracking-tight transition-colors ${
                 activeTab === 'pairing'
-                  ? 'bg-white/10 text-cyan-400'
-                  : 'text-zinc-400 hover:bg-white/5 hover:text-white'
+                  ? 'bg-white/[0.08] text-white shadow-hairline'
+                  : 'text-linear-text-secondary hover:text-white hover:bg-white/[0.04]'
               }`}
             >
-              <Smartphone size={16} /> Device Pairing
+              <div className="flex items-center gap-2">
+                <Smartphone size={14} className={activeTab === 'pairing' ? 'text-[#5E6AD2]' : 'text-linear-text-tertiary'} />
+                <span>Device Pairing</span>
+              </div>
+              <span className="linear-kbd">1</span>
             </button>
 
             <button
               onClick={() => setActiveTab('cli')}
-              className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+              className={`flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs font-medium tracking-tight transition-colors ${
                 activeTab === 'cli'
-                  ? 'bg-white/10 text-cyan-400'
-                  : 'text-zinc-400 hover:bg-white/5 hover:text-white'
+                  ? 'bg-white/[0.08] text-white shadow-hairline'
+                  : 'text-linear-text-secondary hover:text-white hover:bg-white/[0.04]'
               }`}
             >
-              <Terminal size={16} /> CLI Whitelist
+              <div className="flex items-center gap-2">
+                <Terminal size={14} className={activeTab === 'cli' ? 'text-[#5E6AD2]' : 'text-linear-text-tertiary'} />
+                <span>CLI Whitelist</span>
+              </div>
+              <span className="linear-kbd">2</span>
             </button>
 
             <button
               onClick={() => setActiveTab('files')}
-              className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+              className={`flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs font-medium tracking-tight transition-colors ${
                 activeTab === 'files'
-                  ? 'bg-white/10 text-cyan-400'
-                  : 'text-zinc-400 hover:bg-white/5 hover:text-white'
+                  ? 'bg-white/[0.08] text-white shadow-hairline'
+                  : 'text-linear-text-secondary hover:text-white hover:bg-white/[0.04]'
               }`}
             >
-              <FolderDown size={16} /> File Storage
+              <div className="flex items-center gap-2">
+                <FolderDown size={14} className={activeTab === 'files' ? 'text-[#5E6AD2]' : 'text-linear-text-tertiary'} />
+                <span>File Storage</span>
+              </div>
+              <span className="linear-kbd">3</span>
             </button>
 
             <button
               onClick={() => setActiveTab('security')}
-              className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+              className={`flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs font-medium tracking-tight transition-colors ${
                 activeTab === 'security'
-                  ? 'bg-white/10 text-cyan-400'
-                  : 'text-zinc-400 hover:bg-white/5 hover:text-white'
+                  ? 'bg-white/[0.08] text-white shadow-hairline'
+                  : 'text-linear-text-secondary hover:text-white hover:bg-white/[0.04]'
               }`}
             >
-              <ShieldCheck size={16} /> Security & Tunnel
+              <div className="flex items-center gap-2">
+                <ShieldCheck size={14} className={activeTab === 'security' ? 'text-[#5E6AD2]' : 'text-linear-text-tertiary'} />
+                <span>Security & Tunnel</span>
+              </div>
+              <span className="linear-kbd">4</span>
             </button>
           </nav>
         </div>
 
-        {/* Status Pill */}
-        <div className="bg-black/40 border border-white/5 rounded-lg p-2.5 flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-          <div className="flex flex-col text-[10px]">
-            <span className="font-semibold text-zinc-300">Bluetooth Active</span>
-            <span className="text-zinc-500 font-mono">BLE 5.2 • Hotspot Ready</span>
+        {/* Footer Link / Hardware Status */}
+        <div className="bg-[#121417] border border-white/5 rounded-lg p-2.5 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-linear-green animate-pulse" />
+            <div className="flex flex-col text-[10px]">
+              <span className="font-medium text-linear-text-primary tracking-tight">BLE Connected</span>
+              <span className="text-linear-text-tertiary font-mono">192.168.43.1 Ready</span>
+            </div>
           </div>
+          <Sliders size={12} className="text-linear-text-tertiary" />
         </div>
       </aside>
 
-      {/* Main Content Area */}
-      <main className="flex-1 overflow-y-auto p-8 relative">
+      {/* Main Content View */}
+      <main className="flex-1 overflow-y-auto p-9 relative bg-[#08090A]">
         {onClose && (
           <button
             onClick={onClose}
-            className="absolute top-6 right-6 p-2 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-colors"
+            className="absolute top-6 right-6 p-1.5 rounded-md hover:bg-white/5 text-linear-text-secondary hover:text-white transition-colors"
             title="Close Settings"
           >
-            <X size={18} />
+            <X size={16} />
           </button>
         )}
+
         {/* Device Pairing Tab */}
         {activeTab === 'pairing' && (
           <div className="max-w-xl flex flex-col gap-6">
             <div>
-              <h2 className="text-lg font-bold text-white">Device Pairing & Link Status</h2>
-              <p className="text-xs text-zinc-400 mt-1">
-                Pair your mobile phone using Bluetooth Low Energy. Soko verifies connection integrity with a 6-digit confirmation code.
+              <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">Device Pairing</h2>
+              <p className="text-xs text-linear-text-secondary mt-1">
+                Pair your mobile phone using Bluetooth Low Energy. Verify connection authenticity via the 6-digit confirmation code.
               </p>
             </div>
 
             {/* Confirmation Code Card */}
-            <div className="bg-[#15151F] border border-white/10 rounded-xl p-5 flex flex-col items-center justify-center gap-3">
-              <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-widest">
-                Pairing Confirmation PIN (SAS)
+            <div className="linear-card rounded-lg p-6 flex flex-col items-center justify-center gap-3">
+              <span className="text-[10px] font-medium text-linear-text-tertiary uppercase tracking-wider font-mono">
+                Short Authentication String (SAS PIN)
               </span>
-              <div className="text-3xl font-mono font-bold tracking-widest text-cyan-400 bg-black/50 px-6 py-2.5 rounded-lg border border-cyan-500/20 shadow-mascot-glow">
+              <div className="text-2xl font-mono font-medium tracking-widest text-linear-text-primary bg-[#08090A] px-6 py-2.5 rounded-md border border-white/10 shadow-inner">
                 {pairingPin}
               </div>
-              <p className="text-[11px] text-zinc-400 text-center max-w-sm">
-                Verify that this 6-digit number matches the PIN shown on your mobile device's pairing screen.
+              <p className="text-[11px] text-linear-text-secondary text-center max-w-sm">
+                Confirm that this 6-digit number matches the PIN displayed in the Soko mobile companion app.
               </p>
             </div>
 
             {/* Paired Device Card */}
-            <div className="bg-[#15151F] border border-white/10 rounded-xl p-4 flex items-center justify-between">
+            <div className="linear-card rounded-lg p-4 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400">
-                  <Smartphone size={20} />
+                <div className="w-8 h-8 rounded-md bg-[#5E6AD2]/15 border border-[#5E6AD2]/30 flex items-center justify-center text-[#5E6AD2]">
+                  <Smartphone size={16} />
                 </div>
                 <div>
-                  <h3 className="text-sm font-semibold text-white">Pixel 8 Pro (Connected)</h3>
-                  <div className="flex items-center gap-2 text-[11px] text-zinc-400 mt-0.5">
-                    <span className="text-emerald-400 flex items-center gap-1">
-                      <CheckCircle2 size={12} /> Paired & Trusted
+                  <h3 className="text-xs font-semibold text-linear-text-primary tracking-tight">Pixel 8 Pro (Active)</h3>
+                  <div className="flex items-center gap-2 text-[11px] text-linear-text-secondary mt-0.5">
+                    <span className="text-linear-green flex items-center gap-1 font-medium">
+                      <CheckCircle2 size={11} /> Paired & Authenticated
                     </span>
-                    <span>•</span>
-                    <span className="font-mono">RSSI: -58 dBm</span>
+                    <span className="text-linear-text-tertiary">•</span>
+                    <span className="font-mono text-linear-text-tertiary">RSSI: -58 dBm</span>
                   </div>
                 </div>
               </div>
 
-              <button className="px-3 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs font-medium transition-colors">
+              <button className="px-2.5 py-1 rounded-md bg-linear-red/10 hover:bg-linear-red/20 text-linear-red text-xs font-medium border border-linear-red/20 transition-colors">
                 Unpair
               </button>
             </div>
@@ -185,42 +212,42 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
           <div className="max-w-2xl flex flex-col gap-6">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-lg font-bold text-white">Remote CLI Whitelist</h2>
-                <p className="text-xs text-zinc-400 mt-1">
-                  Control developer tools (like Antigravity CLI) from your phone. Only commands registered here can be executed.
+                <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">CLI Agent Whitelist</h2>
+                <p className="text-xs text-linear-text-secondary mt-1">
+                  Control developer tools (like Antigravity CLI) from mobile. Only explicitly authorized commands can be triggered.
                 </p>
               </div>
 
-              <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-semibold transition-colors">
-                <Plus size={14} /> Add Command
+              <button className="linear-button-primary px-3 py-1.5 flex items-center gap-1.5">
+                <Plus size={13} /> Add Command
               </button>
             </div>
 
             {/* Command List */}
-            <div className="flex flex-col gap-2.5">
+            <div className="flex flex-col gap-2">
               {commands.map((cmd) => (
                 <div
                   key={cmd.id}
-                  className="bg-[#15151F] border border-white/10 rounded-xl p-3.5 flex items-center justify-between"
+                  className="linear-card linear-card-hover rounded-lg p-3 flex items-center justify-between"
                 >
                   <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shrink-0">
-                      <Terminal size={16} />
+                    <div className="w-7 h-7 rounded-md bg-linear-brand/10 border border-linear-brand/20 flex items-center justify-center text-linear-brand shrink-0">
+                      <Terminal size={14} />
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <h3 className="text-xs font-semibold text-white truncate">{cmd.title}</h3>
-                        <span className="text-[10px] font-mono text-zinc-400 bg-black/40 px-1.5 py-0.5 rounded border border-white/5">
+                        <h3 className="text-xs font-medium text-linear-text-primary tracking-tight truncate">{cmd.title}</h3>
+                        <span className="text-[10px] font-mono text-linear-text-tertiary bg-white/[0.04] px-1.5 py-0.5 rounded border border-white/5">
                           {cmd.id}
                         </span>
                       </div>
-                      <div className="text-[11px] font-mono text-cyan-400 truncate mt-0.5">
+                      <div className="text-[11px] font-mono text-linear-text-secondary truncate mt-0.5">
                         $ {cmd.program} {cmd.args}
                       </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-3 shrink-0">
+                  <div className="flex items-center gap-2 shrink-0">
                     <button
                       onClick={() =>
                         setCommands((prev) =>
@@ -230,21 +257,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                         )
                       }
                       title="Toggle Biometric Requirement"
-                      className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium border transition-colors ${
+                      className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border transition-colors ${
                         cmd.requiresBiometrics
-                          ? 'bg-purple-500/10 border-purple-500/30 text-purple-300'
-                          : 'bg-zinc-800 border-zinc-700 text-zinc-400'
+                          ? 'bg-[#5E6AD2]/10 border-[#5E6AD2]/30 text-[#8B95EC]'
+                          : 'bg-white/[0.04] border-white/10 text-linear-text-tertiary hover:text-white'
                       }`}
                     >
-                      {cmd.requiresBiometrics ? <Lock size={11} /> : <Unlock size={11} />}
-                      {cmd.requiresBiometrics ? 'Biometrics Required' : 'Instant Run'}
+                      {cmd.requiresBiometrics ? <Lock size={10} /> : <Unlock size={10} />}
+                      {cmd.requiresBiometrics ? 'Biometric Protected' : 'Direct Run'}
                     </button>
 
                     <button
                       onClick={() => setCommands((prev) => prev.filter((c) => c.id !== cmd.id))}
-                      className="p-1.5 rounded hover:bg-red-500/10 text-zinc-500 hover:text-red-400 transition-colors"
+                      className="p-1 rounded hover:bg-linear-red/10 text-linear-text-tertiary hover:text-linear-red transition-colors"
                     >
-                      <Trash2 size={14} />
+                      <Trash2 size={13} />
                     </button>
                   </div>
                 </div>
@@ -257,27 +284,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
         {activeTab === 'files' && (
           <div className="max-w-xl flex flex-col gap-6">
             <div>
-              <h2 className="text-lg font-bold text-white">High-Speed File Transfer & Sandbox</h2>
-              <p className="text-xs text-zinc-400 mt-1">
-                Files transferred via Mobile Hotspot / LAN are automatically saved here with cryptographic verification.
+              <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">Hotspot File Conduit</h2>
+              <p className="text-xs text-linear-text-secondary mt-1">
+                Build APKs and assets transferred over Mobile Hotspot LAN are saved here with SHA-256 validation.
               </p>
             </div>
 
-            <div className="bg-[#15151F] border border-white/10 rounded-xl p-4 flex flex-col gap-3">
-              <label className="text-xs font-semibold text-zinc-300">Default Download Directory</label>
+            <div className="linear-card rounded-lg p-4 flex flex-col gap-3">
+              <label className="text-xs font-medium text-linear-text-primary tracking-tight">Default Download Directory</label>
               <div className="flex gap-2">
                 <input
                   type="text"
                   value={downloadDir}
                   onChange={(e) => setDownloadDir(e.target.value)}
-                  className="flex-1 bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono text-zinc-200 focus:outline-none focus:border-cyan-500"
+                  className="flex-1 bg-[#08090A] border border-white/10 rounded-md px-3 py-1.5 text-xs font-mono text-linear-text-primary focus:outline-none focus:border-[#5E6AD2]"
                 />
-                <button className="px-3 py-2 bg-white/10 hover:bg-white/20 text-xs font-medium rounded-lg transition-colors">
+                <button className="linear-button-secondary px-3 py-1.5">
                   Browse
                 </button>
               </div>
-              <p className="text-[11px] text-zinc-500">
-                All incoming files are scanned for path traversal attempts (`../`) and SHA-256 checksums are verified before final commit.
+              <p className="text-[11px] text-linear-text-tertiary">
+                Incoming files are strictly constrained to this directory with automatic path traversal defenses.
               </p>
             </div>
           </div>
@@ -287,24 +314,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
         {activeTab === 'security' && (
           <div className="max-w-xl flex flex-col gap-6">
             <div>
-              <h2 className="text-lg font-bold text-white">Zero-Trust Security & Encryption</h2>
-              <p className="text-xs text-zinc-400 mt-1">
+              <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">Security & Encryption</h2>
+              <p className="text-xs text-linear-text-secondary mt-1">
                 Cryptographic parameters protecting the Bluetooth link and local Hotspot conduit.
               </p>
             </div>
 
-            <div className="bg-[#15151F] border border-white/10 rounded-xl p-4 flex flex-col gap-3 text-xs">
-              <div className="flex justify-between py-1 border-b border-white/5">
-                <span className="text-zinc-400">Cipher Suite</span>
-                <span className="font-mono text-cyan-400">AES-256-GCM + X25519</span>
+            <div className="linear-card rounded-lg p-4 flex flex-col gap-2.5 text-xs">
+              <div className="flex justify-between py-1.5 border-b border-white/5">
+                <span className="text-linear-text-secondary">Cipher Suite</span>
+                <span className="font-mono text-linear-text-primary">AES-256-GCM + X25519</span>
               </div>
-              <div className="flex justify-between py-1 border-b border-white/5">
-                <span className="text-zinc-400">Replay Attack Protection</span>
-                <span className="font-mono text-emerald-400">Monotonic Nonces (Strict)</span>
+              <div className="flex justify-between py-1.5 border-b border-white/5">
+                <span className="text-linear-text-secondary">Replay Protection</span>
+                <span className="font-mono text-linear-green">Monotonic Nonces (Strict)</span>
               </div>
-              <div className="flex justify-between py-1 border-b border-white/5">
-                <span className="text-zinc-400">Firewall Evasion</span>
-                <span className="font-mono text-zinc-300">Outbound Client-Pull (No open PC ports)</span>
+              <div className="flex justify-between py-1.5 border-b border-white/5">
+                <span className="text-linear-text-secondary">Firewall Evasion</span>
+                <span className="font-mono text-linear-text-primary">Outbound Client-Pull (Zero PC ports opened)</span>
               </div>
             </div>
           </div>

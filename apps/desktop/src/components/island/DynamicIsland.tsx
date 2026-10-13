@@ -164,7 +164,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         layout
         transition={springTransition}
         style={{ width: dims.width, height: dims.height }}
-        className="relative bg-[#0A0A0C] border border-white/10 rounded-island shadow-island-glow flex items-center px-2.5 overflow-hidden backdrop-blur-3xl"
+        className="relative bg-[#08090A] border border-white/10 rounded-island shadow-linear-island flex items-center px-2.5 overflow-hidden backdrop-blur-3xl font-sans"
       >
         {/* Left Anchor: Mascot Character Avatar */}
         <div
@@ -188,23 +188,23 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
             {mode === 'compact' && (
               <motion.div
                 key="compact"
-                initial={{ opacity: 0, scale: 0.95 }}
+                initial={{ opacity: 0, scale: 0.96 }}
                 animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
+                exit={{ opacity: 0, scale: 0.96 }}
                 transition={{ duration: 0.15 }}
                 className="flex items-center justify-between w-full"
               >
-                <div className="flex items-center gap-1.5 text-xs text-zinc-300 font-medium">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  <span className="text-[11px] text-zinc-300">Soko Ready</span>
+                <div className="flex items-center gap-1.5 text-xs text-linear-text-primary font-medium tracking-tight">
+                  <span className="w-1.5 h-1.5 rounded-full bg-linear-green" />
+                  <span className="text-[11px] text-linear-text-primary">Soko Ready</span>
                 </div>
 
-                <div className="flex items-center gap-2 text-zinc-500">
-                  <Bluetooth size={13} className={isConnected ? 'text-cyan-400' : 'text-zinc-600'} />
+                <div className="flex items-center gap-2 text-linear-text-tertiary">
+                  <Bluetooth size={13} className={isConnected ? 'text-linear-brand' : 'text-linear-text-tertiary'} />
                   <button
                     onClick={onOpenSettings}
                     title="Open Settings"
-                    className="p-1 rounded-full hover:bg-white/10 text-zinc-400 hover:text-white transition-colors"
+                    className="p-1 rounded-md hover:bg-white/5 text-linear-text-secondary hover:text-linear-text-primary transition-colors"
                   >
                     <Settings size={13} />
                   </button>
@@ -244,17 +244,17 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         </div>
       </motion.div>
 
-      {/* Floating Demo Toolbar (visible when hovering near top for easy previewing) */}
-      <div className="flex items-center gap-2 mt-2 opacity-30 hover:opacity-100 transition-opacity text-[10px] text-zinc-400 bg-black/70 px-2 py-0.5 rounded-full border border-white/5">
-        <button onClick={simulateNotification} className="hover:text-cyan-300 px-1">
-          + Test Notif
+      {/* Floating Demo Toolbar (Linear minimalist badge) */}
+      <div className="flex items-center gap-2 mt-2 opacity-35 hover:opacity-100 transition-opacity text-[11px] font-sans text-linear-text-secondary bg-[#08090A]/90 px-2.5 py-1 rounded-full border border-white/10 shadow-lg">
+        <button onClick={simulateNotification} className="hover:text-linear-text-primary px-1 transition-colors">
+          + Notif
         </button>
-        <span>•</span>
-        <button onClick={simulateCli} className="hover:text-amber-300 px-1">
-          + Run agy
+        <span className="text-white/20">•</span>
+        <button onClick={simulateCli} className="hover:text-linear-brand px-1 transition-colors">
+          + agy CLI
         </button>
-        <span>•</span>
-        <button onClick={simulateTransfer} className="hover:text-emerald-300 px-1">
+        <span className="text-white/20">•</span>
+        <button onClick={simulateTransfer} className="hover:text-linear-green px-1 transition-colors">
           + Send APK
         </button>
       </div>
