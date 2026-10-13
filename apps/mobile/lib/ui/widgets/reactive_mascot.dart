@@ -118,9 +118,10 @@ class ReactiveMascotWidget extends StatelessWidget {
                     ),
                   ),
 
-                  // Grok Bot Geometric White Eye Capsules
+                  // Grok Bot Geometric White Eye Capsules (Aligned to bottom baseline)
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       _buildGrokEye(isConnected, isLeft: true),
                       const SizedBox(width: 10),

@@ -56,10 +56,12 @@ Standard animations use slow fades or simple line swaps. Grok Bot uses a rapid, 
 * **95ms**: High-velocity expansion with overshoot bounce (`scaleY: 1.15`).
 * **140ms**: Settles back to resting state (`scaleY: 1.0`).
 
-### D. The Asymmetric "Quirky Cocked" Expression
-Grok's signature witty personality comes from **asymmetry**:
-* During idle curiosity or processing, the left eye remains a tall vertical pill while the right eye squints slightly (`scaleY: 0.82`) with a subtle rotation tilt (`rotate: -6°`).
-* The left ear-fin perks up 15° higher than the right, conveying curious attention.
+### D. The Asymmetric "Quirky Cocked" Expression (Top-Down Lid Closing)
+Grok's signature witty personality comes from **asymmetry and realistic eyelid physics**:
+* **Grounded Baseline**: Both eyes share an identical bottom baseline anchor at `y + height = 29`.
+* **Top-Down Eyelid Closure**: When the right eye half-closes into an inquisitive squint, the bottom edge **never moves upward**. Instead, the top eyelid drops down from `y = 14` to `y = 20` (reducing height from `15` to `9`), with `originY: 29px` keeping the base locked in place.
+* **Curious Cock**: The left eye lifts slightly to `y = 13` (attentive and widened), while the right lid droops from above with a subtle `-4°` tilt.
+* The left ear-fin perks up 15° higher than the right, completing the quizzical cocked stance.
 
 ---
 

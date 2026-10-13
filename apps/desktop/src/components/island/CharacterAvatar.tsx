@@ -340,7 +340,7 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
           ) : (
             // Natural Grok Bot Eye Capsules with Asymmetric Inquisitive Cocking
             <>
-              {/* Left Eye Capsule */}
+              {/* Left Eye Capsule (Attentive & Slightly Lifted) */}
               <motion.rect
                 x="12.5"
                 y="14"
@@ -350,13 +350,14 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
                 fill="#FFFFFF"
                 animate={
                   gaze === 'inquisitive'
-                    ? { y: 13, height: 16.5, scaleY: 1.1 }
-                    : { y: 14, height: 15, scaleY: 1.0 }
+                    ? { y: 13, height: 16 }
+                    : { y: 14, height: 15 }
                 }
+                style={{ originX: '16px', originY: '29px' }}
                 transition={springTransition}
               />
 
-              {/* Right Eye Capsule (Slightly squints/tilts during inquisitive gaze) */}
+              {/* Right Eye Capsule (Half-Closed from the TOP down, bottom anchored at y=29) */}
               <motion.rect
                 x="24.5"
                 y="14"
@@ -366,10 +367,18 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
                 fill="#FFFFFF"
                 animate={
                   gaze === 'inquisitive'
-                    ? { y: 16.5, height: 11.5, rotate: -6, scaleY: 0.85 }
-                    : { y: 14, height: 15, rotate: 0, scaleY: 1.0 }
+                    ? {
+                        y: 20,       // Top eyelid drops down from y=14 to y=20
+                        height: 9,   // Height shrinks so bottom stays anchored at 20 + 9 = 29
+                        rotate: -4,  // Subtle quizzical lid tilt
+                      }
+                    : {
+                        y: 14,
+                        height: 15,
+                        rotate: 0,
+                      }
                 }
-                style={{ originX: '28px', originY: '21.5px' }}
+                style={{ originX: '28px', originY: '29px' }}
                 transition={springTransition}
               />
             </>
