@@ -10,7 +10,8 @@
   "scripts": {
     "dev:desktop": "npm --prefix apps/desktop run dev",
     "build:desktop": "npm --prefix apps/desktop run build",
-    "preview:desktop": "npm --prefix apps/desktop run preview"
+    "preview:desktop": "npm --prefix apps/desktop run preview",
+    "build:apk": "bash scripts/build_apks.sh"
   },
   "keywords": [
     "dynamic-island",

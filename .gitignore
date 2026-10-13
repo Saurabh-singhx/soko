@@ -25,3 +25,7 @@ build/
 *.sw?
 .idea/
 .vscode/
+
+# Android Build Artifacts
+*.idsig
+build_apk_tmp/
