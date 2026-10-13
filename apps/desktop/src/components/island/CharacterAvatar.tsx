@@ -224,15 +224,26 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
 
   return (
     <motion.div
-      className="relative flex items-center justify-center select-none cursor-pointer"
-      style={{ width: size, height: size }}
-      whileHover={{ scale: 1.12, rotate: -2 }}
-      whileTap={{ scale: 0.9, rotate: 3 }}
-      // Organic Idle Bob with Micro-Tilt
-      animate={
-        mood === 'alert'
-          ? {
-              y: [0, -5, 0, -2, 0],
+      layout
+      className="relative flex items-center justify-center select-none cursor-pointer shrink-0"
+      animate={{
+        width: size,
+        height: size,
+      }}
+      transition={{
+        width: { type: 'spring', stiffness: 450, damping: 32 },
+        height: { type: 'spring', stiffness: 450, damping: 32 },
+      }}
+    >
+      <motion.div
+        className="w-full h-full relative flex items-center justify-center"
+        whileHover={{ scale: 1.08, rotate: -2 }}
+        whileTap={{ scale: 0.92, rotate: 2 }}
+        // Organic Idle Bob with Micro-Tilt
+        animate={
+          mood === 'alert'
+            ? {
+                y: [0, -5, 0, -2, 0],
               scaleX: [1, 0.94, 1.06, 0.98, 1],
               scaleY: [1, 1.12, 0.95, 1.03, 1],
               rotate: [0, -4, 4, 0],
@@ -498,5 +509,6 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
         </motion.g>
       </svg>
     </motion.div>
-  );
+  </motion.div>
+);
 };

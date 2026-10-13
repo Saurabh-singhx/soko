@@ -33,12 +33,15 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
   const [activeCli, setActiveCli] = useState<CliProcessStatus | null>(null);
   const [activeTransfer, setActiveTransfer] = useState<FileTransferStatus | null>(null);
 
+  const [isBotClicked, setIsBotClicked] = useState(false);
+
   // Auto-collapse notification after 6 seconds if not interacted with
   useEffect(() => {
     if (mode === 'notification') {
       const timer = setTimeout(() => {
         setMode('compact');
         setMood('idle');
+        setIsBotClicked(false);
       }, 6500);
       return () => clearTimeout(timer);
     }
@@ -52,13 +55,27 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     mass: 0.85,
   };
 
-  // Dimensions based on mode
+  // Dynamic avatar size: significantly increased when notification is visible & when clicked
+  const getAvatarSize = () => {
+    if (mode === 'notification') {
+      // 48px when notification is visible, 56px when clicked on bot!
+      return isBotClicked ? 56 : 48;
+    }
+    if (isBotClicked) {
+      return 42;
+    }
+    return 32;
+  };
+
+  const avatarSize = getAvatarSize();
+
+  // Dimensions based on mode & bot enlargement
   const getIslandDimensions = () => {
     switch (mode) {
       case 'compact':
-        return { width: 196, height: 42 };
+        return { width: isBotClicked ? 212 : 196, height: isBotClicked ? 46 : 42 };
       case 'notification':
-        return { width: 388, height: 82 };
+        return { width: isBotClicked ? 420 : 396, height: isBotClicked ? 90 : 84 };
       case 'cli':
         return { width: 428, height: 102 };
       case 'transfer':
@@ -168,18 +185,27 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
       >
         {/* Left Anchor: Mascot Character Avatar */}
         <div
-          className="shrink-0 cursor-pointer pr-1.5"
+          className="shrink-0 cursor-pointer pr-1.5 flex items-center justify-center transition-all"
           onClick={() => {
             if (mode === 'compact') {
+              setIsBotClicked(true);
               simulateNotification();
+            } else if (mode === 'notification') {
+              // Clicked on bot while notification is visible: toggles enlarged bot size!
+              setIsBotClicked((prev) => !prev);
             } else {
               setMode('compact');
               setMood('idle');
+              setIsBotClicked(false);
             }
           }}
-          title="Click to toggle mascot mood / test demo"
+          title={
+            mode === 'notification'
+              ? (isBotClicked ? 'Click to normal size' : 'Click to enlarge bot')
+              : 'Click to expand'
+          }
         >
-          <CharacterAvatar mood={mood} size={32} />
+          <CharacterAvatar mood={mood} size={avatarSize} />
         </div>
 
         {/* Center / Body Section */}
@@ -219,6 +245,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                 onDismiss={() => {
                   setMode('compact');
                   setMood('idle');
+                  setIsBotClicked(false);
                 }}
               />
             )}
