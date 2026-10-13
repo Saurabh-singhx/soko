@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/icon.png" width="128" height="128" alt="Soko Logo" style="border-radius: 28px; box-shadow: 0 8px 24px rgba(0,0,0,0.3);" />
+<img src="docs/assets/soko-mascot.gif" width="140" height="140" alt="Soko Mascot HUD" />
 
 # Soko (そ小)
 

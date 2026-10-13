@@ -39,4 +39,4 @@ apks/*.idsig
 # Uploaded Files & Transfers
 transfers/*
 !transfers/.gitkeep
-
+screenshot_p

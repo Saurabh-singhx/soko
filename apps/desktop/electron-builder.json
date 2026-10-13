@@ -45,6 +45,9 @@
       }
     ],
     "category": "Utility",
+    "executableArgs": [
+      "--ozone-platform=x11"
+    ],
     "icon": "build/icon.png",
     "maintainer": "Soko Team <team@soko.local>",
     "synopsis": "Dynamic Island HUD & High-Speed Device Companion"

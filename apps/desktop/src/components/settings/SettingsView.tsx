@@ -37,7 +37,9 @@ interface SettingsViewProps {
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
-  const [activeTab, setActiveTab] = useState<'pairing' | 'cli' | 'files' | 'security' | 'mascot' | 'updates'>('pairing');
+  const [activeTab, setActiveTab] = useState<'general' | 'pairing' | 'cli' | 'files' | 'security' | 'mascot' | 'updates'>('pairing');
+  const [autoStartEnabled, setAutoStartEnabled] = useState<boolean>(true);
+  const [isSavingAutoStart, setIsSavingAutoStart] = useState<boolean>(false);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(autoUpdateService.getCachedUpdateInfo());
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [feedUrlInput, setFeedUrlInput] = useState(autoUpdateService.getFeedUrl());
@@ -99,6 +101,28 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
       unsubHistory();
     };
   }, []);
+
+  useEffect(() => {
+    if (window.electronAPI?.getAutoStart) {
+      window.electronAPI.getAutoStart().then((enabled) => {
+        setAutoStartEnabled(enabled);
+      }).catch(() => {});
+    }
+  }, []);
+
+  const handleToggleAutoStart = async () => {
+    if (!window.electronAPI?.setAutoStart) return;
+    setIsSavingAutoStart(true);
+    try {
+      const nextVal = !autoStartEnabled;
+      const result = await window.electronAPI.setAutoStart(nextVal);
+      setAutoStartEnabled(result);
+    } catch {
+      // Keep previous state on failure
+    } finally {
+      setIsSavingAutoStart(false);
+    }
+  };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -170,6 +194,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
 
           <nav className="flex flex-col gap-0.5">
             <button
+              onClick={() => setActiveTab('general')}
+              className={`flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs font-medium tracking-tight transition-colors ${
+                activeTab === 'general'
+                  ? 'bg-white/[0.08] text-white shadow-hairline'
+                  : 'text-linear-text-secondary hover:text-white hover:bg-white/[0.04]'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Sliders size={14} className={activeTab === 'general' ? 'text-[#5E6AD2]' : 'text-linear-text-tertiary'} />
+                <span>General & Startup</span>
+              </div>
+              <span className="linear-kbd">1</span>
+            </button>
+
+            <button
               onClick={() => setActiveTab('pairing')}
               className={`flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs font-medium tracking-tight transition-colors ${
                 activeTab === 'pairing'
@@ -181,7 +220,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 <Smartphone size={14} className={activeTab === 'pairing' ? 'text-[#5E6AD2]' : 'text-linear-text-tertiary'} />
                 <span>Device Pairing</span>
               </div>
-              <span className="linear-kbd">1</span>
+              <span className="linear-kbd">2</span>
             </button>
 
             <button
@@ -196,7 +235,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 <Terminal size={14} className={activeTab === 'cli' ? 'text-[#5E6AD2]' : 'text-linear-text-tertiary'} />
                 <span>CLI Whitelist</span>
               </div>
-              <span className="linear-kbd">2</span>
+              <span className="linear-kbd">3</span>
             </button>
 
             <button
@@ -211,7 +250,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 <FolderDown size={14} className={activeTab === 'files' ? 'text-[#5E6AD2]' : 'text-linear-text-tertiary'} />
                 <span>File Storage</span>
               </div>
-              <span className="linear-kbd">3</span>
+              <span className="linear-kbd">4</span>
             </button>
 
             <button
@@ -226,7 +265,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 <ShieldCheck size={14} className={activeTab === 'security' ? 'text-[#5E6AD2]' : 'text-linear-text-tertiary'} />
                 <span>Security & Tunnel</span>
               </div>
-              <span className="linear-kbd">4</span>
+              <span className="linear-kbd">5</span>
             </button>
 
             <button
@@ -241,7 +280,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 <Sparkles size={14} className={activeTab === 'mascot' ? 'text-[#5E6AD2]' : 'text-linear-text-tertiary'} />
                 <span>Mascot & Island</span>
               </div>
-              <span className="linear-kbd">5</span>
+              <span className="linear-kbd">6</span>
             </button>
 
             <button
@@ -265,7 +304,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 <RefreshCw size={14} className={activeTab === 'updates' ? 'text-[#5E6AD2]' : 'text-linear-text-tertiary'} />
                 <span>Auto-Updates & Feed</span>
               </div>
-              <span className="linear-kbd">6</span>
+              <span className="linear-kbd">7</span>
             </button>
           </nav>
         </div>
@@ -293,6 +332,98 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
           >
             <X size={16} />
           </button>
+        )}
+
+        {/* General & Startup Tab */}
+        {activeTab === 'general' && (
+          <div className="max-w-xl flex flex-col gap-6">
+            <div>
+              <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">System & Startup</h2>
+              <p className="text-xs text-linear-text-secondary mt-1">
+                Configure how Soko starts, its desktop integration, and system lifecycle behavior.
+              </p>
+            </div>
+
+            {/* Launch on Startup Card */}
+            <div className="linear-card rounded-lg p-5 flex flex-col gap-4">
+              <div className="flex items-start justify-between">
+                <div className="flex items-start gap-3">
+                  <div className="p-2.5 rounded-md bg-[#5E6AD2]/10 text-[#5E6AD2] mt-0.5">
+                    <Power size={18} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-medium text-linear-text-primary tracking-tight">Launch on System Startup</h3>
+                    <p className="text-xs text-linear-text-secondary mt-1 max-w-sm">
+                      Automatically start Soko Dynamic Island in the background when your PC powers on and you log in.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Modern Toggle Switch */}
+                <button
+                  type="button"
+                  onClick={handleToggleAutoStart}
+                  disabled={isSavingAutoStart}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    autoStartEnabled ? 'bg-[#5E6AD2]' : 'bg-white/10'
+                  }`}
+                  role="switch"
+                  aria-checked={autoStartEnabled}
+                >
+                  <span
+                    aria-hidden="true"
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                      autoStartEnabled ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <div className="pt-3 border-t border-white/5 flex items-center justify-between text-xs">
+                <span className="text-linear-text-tertiary">Startup Status:</span>
+                <span className="flex items-center gap-1.5 font-medium">
+                  <span className={`w-1.5 h-1.5 rounded-full ${autoStartEnabled ? 'bg-linear-green animate-pulse' : 'bg-linear-text-tertiary'}`} />
+                  <span className={autoStartEnabled ? 'text-linear-green' : 'text-linear-text-tertiary'}>
+                    {autoStartEnabled ? 'Enabled (Starts with PC)' : 'Disabled (Manual Start Only)'}
+                  </span>
+                </span>
+              </div>
+            </div>
+
+            {/* Display & Position Controls */}
+            <div className="linear-card rounded-lg p-5 flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-medium text-linear-text-primary tracking-tight">Dynamic Island HUD Positioning</h3>
+                  <p className="text-xs text-linear-text-secondary mt-1 max-w-sm">
+                    Re-center the floating Dynamic Island capsule to the top-center of your display.
+                  </p>
+                </div>
+                <button
+                  onClick={() => window.electronAPI?.resetPosition()}
+                  className="px-3 py-1.5 rounded-md bg-white/5 hover:bg-white/10 text-white text-xs font-medium border border-white/10 transition-colors"
+                >
+                  Reset Position
+                </button>
+              </div>
+            </div>
+
+            {/* Architecture Card */}
+            <div className="linear-card rounded-lg p-4 flex flex-col gap-2.5 text-xs">
+              <div className="flex justify-between py-1.5 border-b border-white/5">
+                <span className="text-linear-text-secondary">Autostart Mechanism</span>
+                <span className="font-mono text-linear-text-primary">XDG Desktop Autostart & Electron LoginItem</span>
+              </div>
+              <div className="flex justify-between py-1.5 border-b border-white/5">
+                <span className="text-linear-text-secondary">Execution Target</span>
+                <span className="font-mono text-linear-text-primary">/opt/Soko/soko --ozone-platform=x11</span>
+              </div>
+              <div className="flex justify-between py-1.5">
+                <span className="text-linear-text-secondary">Bridge Daemon</span>
+                <span className="font-mono text-linear-green">Auto-managed on :8766</span>
+              </div>
+            </div>
+          </div>
         )}
 
         {/* Device Pairing Tab */}

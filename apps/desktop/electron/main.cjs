@@ -1,15 +1,113 @@
+// Linux window and rendering stability:
+// On Linux (especially Ubuntu Wayland sessions), Electron 38+ defaults to native Wayland.
+// Native Wayland xdg-shell strictly restricts client-side window positioning (causing getPosition
+// to report [0, 0] and setPosition / DataDevice DnD to segfault) and breaks transparent frameless windows.
+// Calling app.commandLine.appendSwitch('ozone-platform', 'x11') is too late for the main browser process
+// because Ozone is initialized in C++ before JavaScript loads.
+// If launched without --ozone-platform=x11, we immediately respawn with it before acquiring locks or creating windows.
+if (process.platform === 'linux' && !process.argv.some((arg) => arg.startsWith('--ozone-platform='))) {
+  const { spawn } = require('child_process');
+  const args = ['--ozone-platform=x11', ...process.argv.slice(1)];
+  const child = spawn(process.execPath, args, {
+    stdio: 'inherit',
+    env: process.env,
+  });
+  child.on('exit', (code) => {
+    process.exit(code !== null ? code : 0);
+  });
+  return;
+}
+
 const { app, BrowserWindow, ipcMain, Tray, Menu, screen, shell } = require('electron');
 const path = require('path');
 const http = require('http');
 const { spawn, fork } = require('child_process');
 const fs = require('fs');
+const os = require('os');
+
+// Linux & Windows Auto-Start Manager
+const AUTOSTART_DIR = path.join(os.homedir(), '.config', 'autostart');
+const AUTOSTART_FILE = path.join(AUTOSTART_DIR, 'soko.desktop');
+
+function getAutoStart() {
+  if (process.platform === 'linux') {
+    try {
+      if (fs.existsSync(AUTOSTART_FILE)) {
+        const content = fs.readFileSync(AUTOSTART_FILE, 'utf8');
+        return !content.includes('X-GNOME-Autostart-enabled=false');
+      }
+    } catch {}
+    return false;
+  }
+  try {
+    return app.getLoginItemSettings().openAtLogin;
+  } catch {
+    return false;
+  }
+}
+
+function setAutoStart(enable) {
+  // 1. Electron Native Login Item Settings (Windows & macOS)
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: Boolean(enable),
+      path: process.execPath,
+      args: ['--ozone-platform=x11'],
+    });
+  } catch (err) {
+    console.warn('[AutoStart] setLoginItemSettings error:', err.message);
+  }
+
+  // 2. Linux XDG Standard Autostart (~/.config/autostart/soko.desktop)
+  if (process.platform === 'linux') {
+    try {
+      if (enable) {
+        if (!fs.existsSync(AUTOSTART_DIR)) {
+          fs.mkdirSync(AUTOSTART_DIR, { recursive: true });
+        }
+        const execCmd = (app.isPackaged || fs.existsSync('/opt/Soko/soko'))
+          ? '/opt/Soko/soko --ozone-platform=x11'
+          : `${process.execPath} --ozone-platform=x11`;
+
+        const desktopContent = [
+          '[Desktop Entry]',
+          'Type=Application',
+          'Name=Soko',
+          `Exec=${execCmd}`,
+          'Hidden=false',
+          'NoDisplay=false',
+          'X-GNOME-Autostart-enabled=true',
+          'Comment=Soko Dynamic Island HUD & Android Device Companion',
+          'Icon=/usr/share/icons/hicolor/512x512/apps/soko.png',
+          'Categories=Utility;',
+        ].join('\n') + '\n';
+
+        fs.writeFileSync(AUTOSTART_FILE, desktopContent, 'utf8');
+        console.log('[AutoStart] Registered XDG autostart entry at', AUTOSTART_FILE);
+      } else {
+        if (fs.existsSync(AUTOSTART_FILE)) {
+          fs.unlinkSync(AUTOSTART_FILE);
+          console.log('[AutoStart] Removed XDG autostart entry');
+        }
+      }
+    } catch (err) {
+      console.warn('[AutoStart] Linux XDG autostart write error:', err.message);
+    }
+  }
+
+  // Persist preference to userData
+  try {
+    const prefPath = path.join(app.getPath('userData'), 'autostart.json');
+    fs.writeFileSync(prefPath, JSON.stringify({ enabled: Boolean(enable) }), 'utf8');
+  } catch {}
+
+  return getAutoStart();
+}
 
 // Linux window and rendering stability
 if (process.platform === 'linux') {
-  // Use X11/XWayland backend for stable frameless transparent window positioning and drag-and-drop.
-  // Wayland native xdg-shell strictly restricts client-side window positioning (causing getPosition
-  // to report [0, 0] and setPosition / DataDevice DnD to segfault).
   app.commandLine.appendSwitch('ozone-platform', 'x11');
+  app.commandLine.appendSwitch('enable-transparent-visuals');
   app.disableHardwareAcceleration();
 }
 
@@ -138,12 +236,24 @@ function createIslandWindow() {
 
   islandWindow.loadFile(DIST_PATH, { hash: 'island' });
 
-  islandWindow.once('ready-to-show', () => {
+  let hasShown = false;
+  const showWindow = () => {
+    if (hasShown || !islandWindow || islandWindow.isDestroyed()) return;
+    hasShown = true;
     try {
       islandWindow.setPosition(islandX, islandY, false);
     } catch {}
+    if (islandWindow.isMinimized()) islandWindow.restore();
     islandWindow.show();
-  });
+    islandWindow.focus();
+    try {
+      islandWindow.setAlwaysOnTop(true);
+    } catch {}
+  };
+
+  islandWindow.once('ready-to-show', showWindow);
+  // Fallback timer in case ready-to-show is delayed or missed on Linux X11 compositors
+  setTimeout(showWindow, 600);
 
   islandWindow.on('blur', () => {
     try {
@@ -160,6 +270,7 @@ function createIslandWindow() {
 
 function openSettingsWindow() {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
+    if (settingsWindow.isMinimized()) settingsWindow.restore();
     settingsWindow.show();
     settingsWindow.focus();
     return;
@@ -186,9 +297,17 @@ function openSettingsWindow() {
 
   settingsWindow.loadFile(DIST_PATH, { hash: 'settings' });
 
-  settingsWindow.once('ready-to-show', () => {
+  let settingsShown = false;
+  const showSettings = () => {
+    if (settingsShown || !settingsWindow || settingsWindow.isDestroyed()) return;
+    settingsShown = true;
+    if (settingsWindow.isMinimized()) settingsWindow.restore();
     settingsWindow.show();
-  });
+    settingsWindow.focus();
+  };
+
+  settingsWindow.once('ready-to-show', showSettings);
+  setTimeout(showSettings, 600);
 
   settingsWindow.on('closed', () => {
     settingsWindow = null;
@@ -207,9 +326,16 @@ function createTray() {
       {
         label: 'Show Dynamic Island',
         click: () => {
-          if (islandWindow) {
+          if (islandWindow && !islandWindow.isDestroyed()) {
+            if (islandWindow.isMinimized()) islandWindow.restore();
+            try {
+              islandWindow.setPosition(islandX, islandY, false);
+            } catch {}
             islandWindow.show();
             islandWindow.focus();
+            try {
+              islandWindow.setAlwaysOnTop(true);
+            } catch {}
           } else {
             createIslandWindow();
           }
@@ -227,6 +353,14 @@ function createTray() {
           }
         },
       },
+      {
+        label: 'Start on System Boot',
+        type: 'checkbox',
+        checked: getAutoStart(),
+        click: (menuItem) => {
+          setAutoStart(menuItem.checked);
+        },
+      },
       { type: 'separator' },
       {
         label: 'Quit Soko',
@@ -236,12 +370,16 @@ function createTray() {
 
     tray.setContextMenu(contextMenu);
     tray.on('click', () => {
-      if (islandWindow) {
+      if (islandWindow && !islandWindow.isDestroyed()) {
+        if (islandWindow.isMinimized()) islandWindow.restore();
         if (islandWindow.isVisible()) {
           islandWindow.focus();
         } else {
           islandWindow.show();
+          islandWindow.focus();
         }
+      } else {
+        createIslandWindow();
       }
     });
   } catch (err) {
@@ -255,10 +393,18 @@ if (!gotTheLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    if (islandWindow) {
+    if (islandWindow && !islandWindow.isDestroyed()) {
       if (islandWindow.isMinimized()) islandWindow.restore();
+      try {
+        islandWindow.setPosition(islandX, islandY, false);
+      } catch {}
       islandWindow.show();
       islandWindow.focus();
+      try {
+        islandWindow.setAlwaysOnTop(true);
+      } catch {}
+    } else {
+      createIslandWindow();
     }
   });
 
@@ -266,6 +412,21 @@ if (!gotTheLock) {
     await ensureBridgeServer();
     createIslandWindow();
     createTray();
+
+    // Auto-register startup if not previously disabled (defaults to true for background HUD)
+    try {
+      const prefPath = path.join(app.getPath('userData'), 'autostart.json');
+      let autoStartVal = true;
+      if (fs.existsSync(prefPath)) {
+        const pref = JSON.parse(fs.readFileSync(prefPath, 'utf8'));
+        if (typeof pref.enabled === 'boolean') {
+          autoStartVal = pref.enabled;
+        }
+      }
+      setAutoStart(autoStartVal);
+    } catch (e) {
+      console.warn('[AutoStart] Initialization error:', e.message);
+    }
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
@@ -276,6 +437,13 @@ if (!gotTheLock) {
 }
 
 // IPC Handlers
+ipcMain.handle('soko:get-autostart', () => {
+  return getAutoStart();
+});
+
+ipcMain.handle('soko:set-autostart', (_event, enable) => {
+  return setAutoStart(Boolean(enable));
+});
 ipcMain.on('soko:open-settings', () => {
   openSettingsWindow();
 });

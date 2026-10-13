@@ -135,6 +135,10 @@ declare global {
       closeSettings: () => void;
       openTransfersFolder: () => void;
       openFile: (filename: string) => void;
+      openExternal: (url: string) => void;
+      getVersion: () => Promise<string>;
+      getAutoStart: () => Promise<boolean>;
+      setAutoStart: (enable: boolean) => Promise<boolean>;
       moveWindow: (deltaX: number, deltaY: number) => void;
       resetPosition: () => void;
       setWindowSize: (width: number, height: number) => void;
