@@ -8,13 +8,14 @@ interface CharacterAvatarProps {
 }
 
 /**
- * High-precision Gaze and Ocular Target State.
+ * High-precision Gaze and Ocular Target State for Grok Bot.
  *
  * Implements Grok Bot's signature kinematics:
- * 1. Base bottom anchoring (y = 27.5) so that eyelids close strictly from the top down.
+ * 1. Base bottom anchoring (BASE_BOTTOM = 28.0) so that eyelids close strictly from the top down.
  * 2. Ballistic saccades (fast jumps, held fixations).
  * 3. 3D Visor curvature perspective (X-scale compression near edges).
- * 4. Intentional head poses (subtle stable tilt when puzzled, NO looping bobbing/bouncing).
+ * 4. Grounded hardware poise (deliberate micro-tilt on curious poses, NO whole-head bobbing/bouncing).
+ * 5. Direct SVG presentation attributes (y, height, rx) paired with attrY for 100% reliable rendering.
  */
 interface GazeTarget {
   name: string;
@@ -23,8 +24,8 @@ interface GazeTarget {
   gazeY: number;
 
   // Left Eye Morph Parameters
-  leftTopY: number;      // 16.5 = open, 21.2 = squint, 26.2 = blink
-  leftHeight: number;    // Anchored at BASE_BOTTOM (27.5)
+  leftTopY: number;      // 16.0 = neutral open, 21.5 = squint, 26.8 = blink
+  leftHeight: number;    // Anchored at BASE_BOTTOM (28.0)
   leftScaleX: number;    // 3D perspective distortion (0.90 to 1.04)
   leftTilt: number;      // Rotation in degrees around eye base
 
@@ -39,11 +40,13 @@ interface GazeTarget {
 }
 
 // Global geometric constants for SVG (viewBox 0 0 44 44)
-const BASE_BOTTOM = 27.5; // Bottom anchor of the eyes in neutral position
-const LEFT_EYE_X = 13.0;  // Center at 16.25
-const RIGHT_EYE_X = 24.5; // Center at 27.75
-const EYE_WIDTH = 6.5;
-const EYE_RX = 3.25;      // Full capsule radius
+// Visor center is (22, 22). With BASE_BOTTOM = 28.0 and neutral top = 16.0,
+// the eye center is (16 + 28)/2 = 22.0, aligning dead-center in the visor dome.
+const BASE_BOTTOM = 28.0;
+const LEFT_EYE_X = 12.5;   // Width 7.0 -> spans 12.5 to 19.5, center at 16.0
+const RIGHT_EYE_X = 24.5;  // Width 7.0 -> spans 24.5 to 31.5, center at 28.0
+const EYE_WIDTH = 7.0;
+const EYE_RX = 3.5;        // Full pill capsule radius
 
 /**
  * Neutral baseline gaze state.
@@ -52,12 +55,12 @@ const NEUTRAL_TARGET: GazeTarget = {
   name: 'forward_focus',
   gazeX: 0,
   gazeY: 0,
-  leftTopY: 16.5,
-  leftHeight: 11.0,
+  leftTopY: 16.0,
+  leftHeight: 12.0,
   leftScaleX: 1.0,
   leftTilt: 0,
-  rightTopY: 16.5,
-  rightHeight: 11.0,
+  rightTopY: 16.0,
+  rightHeight: 12.0,
   rightScaleX: 1.0,
   rightTilt: 0,
   headTilt: 0,
@@ -72,12 +75,12 @@ const GAZE_VARIETIES: GazeTarget[] = [
     name: 'forward_focus',
     gazeX: 0,
     gazeY: 0,
-    leftTopY: 16.5,
-    leftHeight: 11.0,
+    leftTopY: 16.0,
+    leftHeight: 12.0,
     leftScaleX: 1.0,
     leftTilt: 0,
-    rightTopY: 16.5,
-    rightHeight: 11.0,
+    rightTopY: 16.0,
+    rightHeight: 12.0,
     rightScaleX: 1.0,
     rightTilt: 0,
     headTilt: 0,
@@ -85,14 +88,14 @@ const GAZE_VARIETIES: GazeTarget[] = [
   // 2. Glance Left (Eyes shift left, 3D visor curvature compresses left eye)
   {
     name: 'glance_left',
-    gazeX: -2.6,
+    gazeX: -2.4,
     gazeY: -0.2,
-    leftTopY: 16.5,
-    leftHeight: 11.0,
+    leftTopY: 16.0,
+    leftHeight: 12.0,
     leftScaleX: 0.90,
     leftTilt: 0,
-    rightTopY: 16.5,
-    rightHeight: 11.0,
+    rightTopY: 16.0,
+    rightHeight: 12.0,
     rightScaleX: 1.03,
     rightTilt: 0,
     headTilt: 0,
@@ -100,14 +103,14 @@ const GAZE_VARIETIES: GazeTarget[] = [
   // 3. Glance Right (Eyes shift right, 3D visor curvature compresses right eye)
   {
     name: 'glance_right',
-    gazeX: 2.6,
+    gazeX: 2.4,
     gazeY: -0.2,
-    leftTopY: 16.5,
-    leftHeight: 11.0,
+    leftTopY: 16.0,
+    leftHeight: 12.0,
     leftScaleX: 1.03,
     leftTilt: 0,
-    rightTopY: 16.5,
-    rightHeight: 11.0,
+    rightTopY: 16.0,
+    rightHeight: 12.0,
     rightScaleX: 0.90,
     rightTilt: 0,
     headTilt: 0,
@@ -115,15 +118,15 @@ const GAZE_VARIETIES: GazeTarget[] = [
   // 4. Inquisitive Smirk (Right eye half-closed strictly from TOP down, curious tilt)
   {
     name: 'inquisitive_right',
-    gazeX: 1.3,
+    gazeX: 1.2,
     gazeY: -0.3,
-    leftTopY: 16.2,
-    leftHeight: 11.3,
+    leftTopY: 15.6,
+    leftHeight: 12.4,
     leftScaleX: 1.02,
     leftTilt: 0,
-    // Right eyelid lowers from top: top drops from 16.5 to 21.2, bottom stays at 27.5!
-    rightTopY: 21.2,
-    rightHeight: 6.3,
+    // Right eyelid lowers from top: top drops from 16.0 to 21.5, bottom stays at 28.0!
+    rightTopY: 21.5,
+    rightHeight: 6.5,
     rightScaleX: 0.96,
     rightTilt: -5.5,
     headTilt: 2.4, // Thoughtful head cock (settles solidly, does not bounce)
@@ -131,14 +134,14 @@ const GAZE_VARIETIES: GazeTarget[] = [
   // 5. Inquisitive Left (Left eye half-closed strictly from TOP down)
   {
     name: 'inquisitive_left',
-    gazeX: -1.3,
+    gazeX: -1.2,
     gazeY: -0.3,
-    leftTopY: 21.2,
-    leftHeight: 6.3,
+    leftTopY: 21.5,
+    leftHeight: 6.5,
     leftScaleX: 0.96,
     leftTilt: 5.5,
-    rightTopY: 16.2,
-    rightHeight: 11.3,
+    rightTopY: 15.6,
+    rightHeight: 12.4,
     rightScaleX: 1.02,
     rightTilt: 0,
     headTilt: -2.4,
@@ -147,13 +150,13 @@ const GAZE_VARIETIES: GazeTarget[] = [
   {
     name: 'thinking_up',
     gazeX: -0.8,
-    gazeY: -1.5,
-    leftTopY: 15.6,
-    leftHeight: 11.9,
+    gazeY: -1.2,
+    leftTopY: 15.0,
+    leftHeight: 13.0,
     leftScaleX: 1.0,
     leftTilt: 0,
-    rightTopY: 15.6,
-    rightHeight: 11.9,
+    rightTopY: 15.0,
+    rightHeight: 13.0,
     rightScaleX: 1.0,
     rightTilt: 0,
     headTilt: -0.8,
@@ -163,12 +166,12 @@ const GAZE_VARIETIES: GazeTarget[] = [
     name: 'concentrated_squint',
     gazeX: 0,
     gazeY: 0.2,
-    leftTopY: 19.2,
-    leftHeight: 8.3,
+    leftTopY: 19.5,
+    leftHeight: 8.5,
     leftScaleX: 1.0,
     leftTilt: 0,
-    rightTopY: 19.2,
-    rightHeight: 8.3,
+    rightTopY: 19.5,
+    rightHeight: 8.5,
     rightScaleX: 1.0,
     rightTilt: 0,
     headTilt: 0,
@@ -177,13 +180,13 @@ const GAZE_VARIETIES: GazeTarget[] = [
   {
     name: 'wide_perk',
     gazeX: 0,
-    gazeY: -0.5,
-    leftTopY: 15.3,
-    leftHeight: 12.2,
+    gazeY: -0.4,
+    leftTopY: 14.8,
+    leftHeight: 13.2,
     leftScaleX: 1.05,
     leftTilt: 0,
-    rightTopY: 15.3,
-    rightHeight: 12.2,
+    rightTopY: 14.8,
+    rightHeight: 13.2,
     rightScaleX: 1.05,
     rightTilt: 0,
     headTilt: 0,
@@ -192,13 +195,13 @@ const GAZE_VARIETIES: GazeTarget[] = [
   {
     name: 'relaxed_chill',
     gazeX: 0,
-    gazeY: 0.5,
-    leftTopY: 18.5,
-    leftHeight: 9.0,
+    gazeY: 0.4,
+    leftTopY: 18.2,
+    leftHeight: 9.8,
     leftScaleX: 1.0,
     leftTilt: 0,
-    rightTopY: 18.5,
-    rightHeight: 9.0,
+    rightTopY: 18.2,
+    rightHeight: 9.8,
     rightScaleX: 1.0,
     rightTilt: 0,
     headTilt: 0,
@@ -209,11 +212,12 @@ const GAZE_VARIETIES: GazeTarget[] = [
  * Realistic Ocular Engine for Grok-Bot.
  *
  * Core Features:
- * 1. Hard Screen Clipping: SVG clipPath (#grok-visor-screen) guarantees 100% containment inside the visor dome.
- * 2. Grounded Physical Stance: All whole-head bouncing/bobbing effects are removed.
- * 3. Top-Down Eyelid Closure: Base bottom anchor remains fixed at y=27.5 while the upper lid drops downward.
- * 4. Ballistic Saccades & Rich Varieties: Instantaneous gaze shifts, horizontal scanning sweeps, and asymmetric curiosities.
- * 5. Autonomous Ear-Fin Kinematics: Fast micro-twitches that don't shake the head.
+ * 1. Hard Screen Clipping: SVG clipPath (#grok-visor-screen) strictly bounds the visor screen.
+ * 2. Optical Center Alignment: Baseline at (22, 22) with direct SVG attributes to avoid 0y misplacement.
+ * 3. Grounded Physical Stance: All whole-head bouncing/bobbing effects removed.
+ * 4. Top-Down Eyelid Closure: Base bottom anchor remains fixed at BASE_BOTTOM (28.0) while the upper lid drops down.
+ * 5. Ballistic Saccades & Rich Varieties: Instantaneous gaze shifts, horizontal scanning sweeps, and asymmetric curiosities.
+ * 6. Autonomous Ear-Fin Kinematics: Fast micro-twitches that don't shake the head.
  */
 export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
   mood,
@@ -243,14 +247,14 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
         setIsScanning(true);
         setCurrentTarget({
           name: 'scan_sweep',
-          gazeX: -2.8,
+          gazeX: -2.5,
           gazeY: 0,
-          leftTopY: 17.5,
-          leftHeight: 10.0,
+          leftTopY: 17.0,
+          leftHeight: 11.0,
           leftScaleX: 0.95,
           leftTilt: 0,
-          rightTopY: 17.5,
-          rightHeight: 10.0,
+          rightTopY: 17.0,
+          rightHeight: 11.0,
           rightScaleX: 0.95,
           rightTilt: 0,
           headTilt: 0,
@@ -260,15 +264,15 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
         setTimeout(() => {
           setCurrentTarget((prev) => ({
             ...prev,
-            gazeX: 2.8,
+            gazeX: 2.5,
           }));
-        }, 600);
+        }, 550);
 
-        // End scan sweep after 1600ms
+        // End scan sweep after 1500ms
         setTimeout(() => {
           setIsScanning(false);
           setCurrentTarget(NEUTRAL_TARGET);
-        }, 1600);
+        }, 1500);
 
         saccadeTimerRef.current = setTimeout(performSaccade, 2400);
         return;
@@ -322,7 +326,7 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
   const triggerBlink = () => {
     setIsBlinking(true);
 
-    // Fast eyelid close (45ms), then reopen (100ms)
+    // Fast eyelid close (45ms), then reopen (90ms)
     setTimeout(() => {
       setIsBlinking(false);
 
@@ -330,10 +334,10 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
       if (Math.random() < 0.14) {
         setTimeout(() => {
           setIsBlinking(true);
-          setTimeout(() => setIsBlinking(false), 60);
-        }, 110);
+          setTimeout(() => setIsBlinking(false), 55);
+        }, 100);
       }
-    }, 90);
+    }, 85);
   };
 
   useEffect(() => {
@@ -411,6 +415,13 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
     damping: 28,
   };
 
+  // Compute live animated parameters
+  const currentLeftTopY = isBlinking ? 26.8 : currentTarget.leftTopY;
+  const currentLeftHeight = isBlinking ? 1.2 : currentTarget.leftHeight;
+  const currentRightTopY = isBlinking ? 26.8 : currentTarget.rightTopY;
+  const currentRightHeight = isBlinking ? 1.2 : currentTarget.rightHeight;
+  const currentRightRx = currentTarget.name === 'inquisitive_right' ? 3.0 : EYE_RX;
+
   return (
     <motion.div
       layout
@@ -451,10 +462,10 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
             {/* 
               HARD SCREEN CLIP:
               Guarantees 100% mathematically that NO pixel of the eyes 
-              can ever bleed or render outside the circular black visor dome.
+              can ever bleed outside the circular black visor dome.
             */}
             <clipPath id="grok-visor-screen">
-              <circle cx="22" cy="22" r="14.5" />
+              <circle cx="22" cy="22" r="15" />
             </clipPath>
 
             {/* Deep OLED Black Gradient */}
@@ -562,9 +573,13 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
           <g clipPath="url(#grok-visor-screen)">
             <motion.g
               filter="url(#eye-bloom)"
+              transform={`translate(${currentTarget.gazeX}, ${currentTarget.gazeY})`}
               animate={{
                 x: currentTarget.gazeX,
                 y: currentTarget.gazeY,
+              }}
+              style={{
+                transition: isScanning ? 'transform 0.55s ease-in-out' : 'transform 0.12s cubic-bezier(0.16, 1, 0.3, 1)',
               }}
               transition={isScanning ? scanSpring : saccadeSpring}
             >
@@ -572,13 +587,13 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
                 // Joyful Upward Curved Arcs (^^)
                 <>
                   <path
-                    d="M13.5 22.5C13.5 19 16.5 18 19 21"
+                    d="M13 22C13 18.5 16 17.5 19 21"
                     stroke="#FFFFFF"
                     strokeWidth="2.6"
                     strokeLinecap="round"
                   />
                   <path
-                    d="M25 21C27.5 18 30.5 19 30.5 22.5"
+                    d="M25 21C28 17.5 31 18.5 31 22"
                     stroke="#FFFFFF"
                     strokeWidth="2.6"
                     strokeLinecap="round"
@@ -617,17 +632,17 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
                 // Wide Luminous Circular Orbs (Incoming notification alert)
                 <>
                   <motion.circle
-                    cx="16.25"
+                    cx="16"
                     cy="22"
-                    r="4.8"
+                    r="5.0"
                     fill="#FFFFFF"
                     animate={{ scale: [1, 1.12, 1] }}
                     transition={{ repeat: Infinity, duration: 0.8 }}
                   />
                   <motion.circle
-                    cx="27.75"
+                    cx="28"
                     cy="22"
-                    r="4.8"
+                    r="5.0"
                     fill="#FFFFFF"
                     animate={{ scale: [1, 1.12, 1] }}
                     transition={{ repeat: Infinity, duration: 0.8 }}
@@ -644,18 +659,24 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
                 <>
                   {/* Left Eye Capsule */}
                   <motion.g
-                    style={{ transformOrigin: `16.25px ${BASE_BOTTOM}px` }}
+                    transform={`rotate(${currentTarget.leftTilt}, 16, 28)`}
+                    style={{
+                      transformOrigin: `16px ${BASE_BOTTOM}px`,
+                      transition: 'transform 0.14s ease-out',
+                    }}
                     animate={{ rotate: currentTarget.leftTilt }}
                     transition={lidSpring}
                   >
                     <motion.rect
                       x={LEFT_EYE_X}
+                      y={currentLeftTopY}
                       rx={EYE_RX}
                       width={EYE_WIDTH}
+                      height={currentLeftHeight}
                       fill="#FFFFFF"
                       animate={{
-                        y: isBlinking ? 26.2 : currentTarget.leftTopY,
-                        height: isBlinking ? 1.3 : currentTarget.leftHeight,
+                        attrY: currentLeftTopY,
+                        height: currentLeftHeight,
                         scaleX: currentTarget.leftScaleX,
                       }}
                       transition={isBlinking ? blinkSpring : lidSpring}
@@ -664,18 +685,24 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
 
                   {/* Right Eye Capsule (Closes strictly from TOP down during inquisitive smirk) */}
                   <motion.g
-                    style={{ transformOrigin: `27.75px ${BASE_BOTTOM}px` }}
+                    transform={`rotate(${currentTarget.rightTilt}, 28, 28)`}
+                    style={{
+                      transformOrigin: `28px ${BASE_BOTTOM}px`,
+                      transition: 'transform 0.14s ease-out',
+                    }}
                     animate={{ rotate: currentTarget.rightTilt }}
                     transition={lidSpring}
                   >
                     <motion.rect
                       x={RIGHT_EYE_X}
-                      rx={currentTarget.name === 'inquisitive_right' ? 2.8 : EYE_RX}
+                      y={currentRightTopY}
+                      rx={currentRightRx}
                       width={EYE_WIDTH}
+                      height={currentRightHeight}
                       fill="#FFFFFF"
                       animate={{
-                        y: isBlinking ? 26.2 : currentTarget.rightTopY,
-                        height: isBlinking ? 1.3 : currentTarget.rightHeight,
+                        attrY: currentRightTopY,
+                        height: currentRightHeight,
                         scaleX: currentTarget.rightScaleX,
                       }}
                       transition={isBlinking ? blinkSpring : lidSpring}
