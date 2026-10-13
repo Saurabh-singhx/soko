@@ -35,26 +35,24 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
 
   const [isBotClicked, setIsBotClicked] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
-  const [isNotificationExpanded, setIsNotificationExpanded] = useState(false);
 
-  // Auto-collapse notification after delay if not actively hovered or expanded
+  // Auto-collapse notification after delay if not actively hovered
   useEffect(() => {
     if (mode === 'notification') {
-      if (isHovered || isNotificationExpanded) {
+      if (isHovered) {
         return; // Pause auto-collapse so user can comfortably read large messages!
       }
       const bodyLen = activeNotification?.body?.length || 0;
-      // Generous reading duration: 7.5s for short, 11s for medium, 15s for long messages
-      const readDelay = bodyLen > 180 ? 15000 : bodyLen > 90 ? 11000 : 7500;
+      // Generous reading duration: 8s for short, 12s for medium, 18s for long messages
+      const readDelay = bodyLen > 180 ? 18000 : bodyLen > 80 ? 12000 : 8000;
       const timer = setTimeout(() => {
         setMode('compact');
         setMood('idle');
         setIsBotClicked(false);
-        setIsNotificationExpanded(false);
       }, readDelay);
       return () => clearTimeout(timer);
     }
-  }, [mode, isHovered, isNotificationExpanded, activeNotification]);
+  }, [mode, isHovered, activeNotification]);
 
   // Spring physics transition config
   const springTransition = {
@@ -78,41 +76,29 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
 
   const avatarSize = getAvatarSize();
 
-  // Dimensions based on mode & bot enlargement & notification message scale
-  const getIslandDimensions = () => {
+  // Dimensions based on mode:
+  // Compact has fixed 42px height.
+  // In notification mode, width stretches a bit for bigger notifications,
+  // and height is dynamic/auto (undefined) to stretch vertically to fit message content naturally.
+  const getIslandDimensions = (): { width: number; height?: number } => {
     switch (mode) {
       case 'compact':
         return { width: isBotClicked ? 212 : 196, height: isBotClicked ? 46 : 42 };
       case 'notification': {
         const bodyLen = activeNotification?.body?.length || 0;
-        const isLong = bodyLen > 100;
-        const isVeryLong = bodyLen > 200;
+        const isBig = bodyLen > 160;
+        const isMedium = bodyLen > 70;
 
-        if (isNotificationExpanded) {
-          return {
-            width: 530,
-            height: isVeryLong ? 168 : 148,
-          };
-        }
+        // Stretches a little horizontally when notification is big (420px -> 470px -> 530px)
+        const width = isBig
+          ? (isBotClicked ? 560 : 530)
+          : isMedium
+          ? (isBotClicked ? 490 : 470)
+          : (isBotClicked ? 440 : 420);
 
-        if (isVeryLong) {
-          return {
-            width: isBotClicked ? 520 : 490,
-            height: isBotClicked ? 134 : 122,
-          };
-        }
-
-        if (isLong) {
-          return {
-            width: isBotClicked ? 476 : 450,
-            height: isBotClicked ? 116 : 106,
-          };
-        }
-
-        return {
-          width: isBotClicked ? 440 : 410,
-          height: isBotClicked ? 100 : 90,
-        };
+        // Height is undefined so container stretches vertically to fit content naturally,
+        // up to screen limit max-h-[min(75vh,520px)] where scroll takes over.
+        return { width, height: undefined };
       }
       case 'cli':
         return { width: 428, height: 102 };
@@ -129,7 +115,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
       appName: 'WhatsApp',
       packageName: 'com.whatsapp',
       title: 'Alex Developer',
-      body: 'Hey Saurabh, I tested the new APK build on Pixel 8 Pro and Galaxy S24. The Bluetooth LE sync latency is under 18ms and notification mirroring handles long messages without any clipping. Great job on the ocular tracking!',
+      body: 'Hey Saurabh! I tested the new APK build on Pixel 8 Pro and Galaxy S24 Ultra. The Bluetooth LE sync latency is under 18ms and notification mirroring handles long messages without any clipping. Great job on the ocular tracking!',
       timestamp: Date.now(),
     },
     {
@@ -158,6 +144,20 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     },
     {
       id: 'demo-5',
+      appName: 'Linear',
+      packageName: 'app.linear',
+      title: 'SOKO-112: Comprehensive System Audit',
+      body: `Full sprint changelog and release notes:
+• Dynamic Island: Automatically stretches vertically to fit message content without scrolling.
+• Horizontal scaling: Stretches smoothly from 420px to 530px for rich notifications.
+• Kinetic Tracking: Mascot eye coordination responds realistically to notification events with zero jitter.
+• Screen Limit Boundary: If a notification exceeds the screen limit, smooth vertical scrolling activates seamlessly.
+• Bluetooth LE: Sub-18ms transmission latency verified across Pixel 8 Pro and Galaxy S24 Ultra.
+• APK Deployment: Production signed APKs available in root apks/ directory.`,
+      timestamp: Date.now(),
+    },
+    {
+      id: 'demo-6',
       appName: 'Gmail',
       packageName: 'com.google.android.gm',
       title: 'Google Deepmind Dev Digest',
@@ -165,19 +165,11 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
       timestamp: Date.now(),
     },
     {
-      id: 'demo-6',
+      id: 'demo-7',
       appName: 'Discord',
       packageName: 'com.discord',
       title: '#announcements',
       body: 'Grok Bot face expressions are now fully live with 360° spin barrel rolls, left/right eye scanning, and OLED contrast styling!',
-      timestamp: Date.now(),
-    },
-    {
-      id: 'demo-7',
-      appName: 'Linear',
-      packageName: 'app.linear',
-      title: 'SOKO-110 Completed',
-      body: 'Dynamic Island interaction update: Click anywhere on compact pill to open full notification with adaptive height scaling and expansion controls.',
       timestamp: Date.now(),
     },
     {
@@ -294,20 +286,27 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
       <motion.div
         layout
         transition={springTransition}
-        style={{ width: dims.width, height: dims.height }}
+        style={{
+          width: dims.width,
+          ...(dims.height !== undefined ? { height: dims.height } : {}),
+        }}
         onClick={handlePillClick}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
-        className={`relative bg-[#08090A] border rounded-[26px] shadow-linear-island flex items-center px-2.5 overflow-hidden backdrop-blur-3xl font-sans transition-all ${
+        className={`relative bg-[#08090A] border rounded-[26px] shadow-linear-island flex px-2.5 overflow-hidden backdrop-blur-3xl font-sans transition-all ${
           mode === 'compact'
-            ? 'cursor-pointer border-white/10 hover:border-white/20 active:scale-[0.99]'
-            : 'border-white/10'
+            ? 'cursor-pointer border-white/10 hover:border-white/20 active:scale-[0.99] items-center'
+            : mode === 'notification'
+            ? 'border-white/10 min-h-[88px] max-h-[min(75vh,520px)] items-start py-2.5'
+            : 'border-white/10 items-center'
         }`}
         title={mode === 'compact' ? 'Click anywhere to view notification' : undefined}
       >
         {/* Left Anchor: Mascot Character Avatar */}
         <div
-          className="shrink-0 cursor-pointer pr-1.5 flex items-center justify-center transition-all self-center"
+          className={`shrink-0 cursor-pointer pr-1.5 flex items-center justify-center transition-all ${
+            mode === 'notification' ? 'self-start mt-1' : 'self-center'
+          }`}
           onClick={(e) => {
             if (mode === 'compact') {
               // Click anywhere on pill or mascot triggers notification
@@ -322,7 +321,6 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
               setMode('compact');
               setMood('idle');
               setIsBotClicked(false);
-              setIsNotificationExpanded(false);
             }
           }}
           title={
@@ -339,7 +337,13 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         </div>
 
         {/* Center / Body Section */}
-        <div className="flex-1 flex items-center min-w-0 h-full overflow-hidden">
+        <div
+          className={`flex-1 min-w-0 ${
+            mode === 'notification'
+              ? 'pt-0.5'
+              : 'flex items-center h-full overflow-hidden'
+          }`}
+        >
           <AnimatePresence mode="wait">
             {mode === 'compact' && (
               <motion.div
@@ -378,13 +382,10 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
               <NotificationBanner
                 key="notification"
                 notification={activeNotification}
-                isExpanded={isNotificationExpanded}
-                onToggleExpand={() => setIsNotificationExpanded((prev) => !prev)}
                 onDismiss={() => {
                   setMode('compact');
                   setMood('idle');
                   setIsBotClicked(false);
-                  setIsNotificationExpanded(false);
                 }}
               />
             )}

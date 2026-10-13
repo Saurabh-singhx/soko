@@ -136,10 +136,11 @@ To preserve authentic brand identity while maintaining Linear's strict `#08090A`
 - In compact idle mode (`mode === 'compact'`), clicking **anywhere** on the Dynamic Island pill triggers the full notification preview, eliminating the micro-target friction of having to click solely on the mascot's small head.
 - Internal control elements (`Settings`, `Bluetooth`) utilize event isolation (`e.stopPropagation()`) so configuration dialogs open without accidental notification expansion.
 
-### Responsive Reader Layout for Large Notifications
-- **Adaptive Container Dimensions**: The Dynamic Island smoothly expands from 410px width up to 530px width and up to 134px height based on notification payload length (`body.length > 100` / `body.length > 200`).
-- **Unrestricted Multi-Line Wrapping**: Text truncation (`truncate`) is removed from notification body text; multi-sentence messages wrap naturally with `break-words whitespace-pre-wrap select-text` and custom Linear slim scrollbars for long content.
-- **Dedicated Expand/Reader Mode**: For long emails or extensive chat messages, a Maximize/Minimize toggle button (`Maximize2` / `Minimize2`) expands the card to an expansive 540x168px reading canvas.
-- **Hover-Aware Auto-Dismiss**: Mouse hover (`onMouseEnter`/`onMouseLeave`) pauses the auto-collapse timer indefinitely, ensuring users are never interrupted or rushed while reading long notifications.
+### Responsive Layout for Large Notifications (Dynamic Stretching & Screen-Limit Boundary)
+- **Automatic Vertical Stretching (No Scroll by Default)**: The Dynamic Island expands vertically to fit the entire notification message without artificial height caps or scrollbars. All paragraphs, sentences, and bullet points display completely.
+- **Subtle Horizontal Expansion**: For bigger notifications, the pill stretches a little horizontally (from 420px to 470px up to 530px–560px), giving lines comfortable breathing room.
+- **Screen-Limit Boundary Scrolling**: If an extraordinarily large notification (e.g. 50+ lines) reaches the physical screen limit (`min(65vh, 440px)`), smooth vertical scrolling automatically activates with Linear's custom slim scrollbar so the island remains bounded on screen.
+- **Hover-Aware Auto-Dismiss**: Mouse hover (`onMouseEnter`/`onMouseLeave`) pauses the auto-collapse timer indefinitely, ensuring users can read extensive notifications at their own pace without interruption.
+
 
 

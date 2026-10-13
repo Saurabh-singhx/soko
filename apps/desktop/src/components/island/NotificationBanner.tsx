@@ -1,31 +1,26 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { X, Copy, Check, Maximize2, Minimize2 } from 'lucide-react';
+import { X, Copy, Check } from 'lucide-react';
 import { MirroredNotification } from '../../types/index.ts';
 import { AppIcon, getAppBrandInfo } from './AppIcon.tsx';
 
 interface NotificationBannerProps {
   notification: MirroredNotification;
   onDismiss: () => void;
-  isExpanded?: boolean;
-  onToggleExpand?: () => void;
 }
 
 /**
  * Linear-styled Notification Card inside the Dynamic Island.
  * Features authentic app icons in their original brand colors,
  * set inside subtle glassmorphic squircle badges fitting the Linear dark canvas.
- * Accommodates large, multi-line notifications with scrolling and optional expand mode.
+ * Stretches vertically to display full content naturally; scrolls only if screen limit is reached.
  */
 export const NotificationBanner: React.FC<NotificationBannerProps> = ({
   notification,
   onDismiss,
-  isExpanded = false,
-  onToggleExpand,
 }) => {
   const [copied, setCopied] = React.useState(false);
   const brand = getAppBrandInfo(notification.appName, notification.packageName);
-  const isLargeText = (notification.body?.length || 0) > 85;
 
   const handleCopy = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -40,7 +35,7 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -4 }}
       transition={{ duration: 0.18 }}
-      className="flex items-start justify-between w-full gap-2 px-1 py-1 font-sans"
+      className="flex items-start justify-between w-full gap-2 px-1 py-0.5 font-sans"
     >
       {/* Brand Icon Badge + Details Block */}
       <div className="flex items-start gap-2.5 min-w-0 flex-1">
@@ -78,16 +73,10 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
             </span>
           </div>
 
-          {/* Full Readable Body Text */}
-          <div
-            className={`text-xs text-linear-text-secondary mt-1 tracking-normal leading-relaxed break-words whitespace-pre-wrap select-text overflow-y-auto pr-1 transition-all ${
-              isExpanded
-                ? 'max-h-[115px]'
-                : isLargeText
-                ? 'max-h-[74px]'
-                : 'max-h-[58px]'
-            }`}
-          >
+          {/* Full Readable Body Text:
+              Stretches vertically without scroll.
+              Scroll activates ONLY if content reaches screen limit (min(65vh, 440px)). */}
+          <div className="text-xs text-linear-text-secondary mt-1 tracking-normal leading-relaxed break-words whitespace-pre-wrap select-text max-h-[min(65vh,440px)] overflow-y-auto pr-1">
             {notification.body}
           </div>
         </div>
@@ -95,19 +84,6 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
 
       {/* Action Buttons */}
       <div className="flex items-center gap-1 shrink-0 self-start mt-0.5">
-        {isLargeText && onToggleExpand && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleExpand();
-            }}
-            title={isExpanded ? 'Collapse reader view' : 'Expand full reading view'}
-            className="p-1.5 rounded-md hover:bg-white/5 active:scale-95 text-linear-text-secondary hover:text-linear-text-primary border border-transparent hover:border-white/10 transition-colors"
-          >
-            {isExpanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-          </button>
-        )}
-
         <button
           onClick={handleCopy}
           title="Copy message text"
