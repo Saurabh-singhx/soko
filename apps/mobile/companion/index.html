@@ -485,6 +485,24 @@
       </div>
     </div>
 
+    <!-- Real Android System Notifications Access Card -->
+    <div class="card" id="realNotifCard">
+      <div class="card-title">
+        <span>Real Android Notification Interceptor</span>
+        <span class="sas-badge" id="notifAccessBadge">Checking...</span>
+      </div>
+      <p style="font-size: 11px; color: var(--text-secondary); margin-bottom: 10px; line-height: 1.5;">
+        Intercepts incoming notifications from WhatsApp, Gmail, Slack, Telegram, SMS, and other phone apps in real time and mirrors them to desktop.
+      </p>
+      <button class="btn" id="btnGrantNotifAccess" onclick="requestRealNotificationAccess()" style="width: 100%; background: #5E6AD2;">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+          <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+        </svg>
+        <span id="btnGrantNotifText">Grant Notification Access in Android Settings</span>
+      </button>
+    </div>
+
     <!-- 1-Tap Notification Mirroring Deck -->
     <div class="card">
       <div class="card-title">
@@ -741,7 +759,11 @@
 
     function connectWs() {
       const wsUrl = getWsUrl();
-      localStorage.setItem('soko_last_ip', ipInput.value.trim());
+      const rawTarget = ipInput.value.trim();
+      localStorage.setItem('soko_last_ip', rawTarget);
+      if (window.SokoNative && typeof window.SokoNative.saveBridgeIp === 'function') {
+        window.SokoNative.saveBridgeIp(rawTarget);
+      }
 
       setStatus('connecting', 'Connecting...');
       if (ws) {
@@ -1071,8 +1093,53 @@
       showToast('Transfer failed • Temporary file deleted');
     }
 
+    function checkRealNotificationAccess() {
+      const badge = document.getElementById('notifAccessBadge');
+      const btnText = document.getElementById('btnGrantNotifText');
+      const btn = document.getElementById('btnGrantNotifAccess');
+      if (!badge || !btnText || !btn) return;
+
+      if (window.SokoNative && typeof window.SokoNative.isNotificationAccessGranted === 'function') {
+        const granted = window.SokoNative.isNotificationAccessGranted();
+        if (granted) {
+          badge.innerText = 'Active & Intercepting';
+          badge.style.background = 'rgba(48, 209, 88, 0.15)';
+          badge.style.color = 'var(--color-green)';
+          btnText.innerText = 'Notification Access Enabled ✓';
+          btn.style.background = 'rgba(255, 255, 255, 0.08)';
+        } else {
+          badge.innerText = 'Permission Required';
+          badge.style.background = 'rgba(255, 159, 10, 0.15)';
+          badge.style.color = '#FF9F0A';
+          btnText.innerText = 'Grant Notification Access in Android Settings';
+          btn.style.background = '#5E6AD2';
+        }
+      } else {
+        badge.innerText = 'Mobile APK Feature';
+        badge.style.background = 'rgba(255, 255, 255, 0.05)';
+        badge.style.color = 'var(--text-tertiary)';
+        btnText.innerText = 'Run in Soko Mobile APK to Intercept System Alerts';
+      }
+    }
+
+    function requestRealNotificationAccess() {
+      if (window.SokoNative && typeof window.SokoNative.openNotificationAccess === 'function') {
+        window.SokoNative.openNotificationAccess();
+      } else {
+        showToast('Install Soko Mobile APK on your phone to grant notification access.');
+      }
+    }
+
     // Auto connect on startup
     window.addEventListener('DOMContentLoaded', () => {
+      if (window.SokoNative && typeof window.SokoNative.getSavedBridgeIp === 'function') {
+        const saved = window.SokoNative.getSavedBridgeIp();
+        if (saved && saved.length > 0) {
+          ipInput.value = saved;
+        }
+      }
+      checkRealNotificationAccess();
+      window.addEventListener('focus', checkRealNotificationAccess);
       connectWs();
     });
   </script>

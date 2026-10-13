@@ -130,6 +130,24 @@ EOF
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+EOF
+
+  if [ "${APP_ID}" = "mobile" ]; then
+    cat <<EOF >> "${WORK}/AndroidManifest.xml"
+        <!-- Real Android System Notification Interceptor Service -->
+        <service
+            android:name="com.soko.mobile.SokoNotificationListener"
+            android:label="Soko Notification Mirror"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+EOF
+  fi
+
+  cat <<EOF >> "${WORK}/AndroidManifest.xml"
     </application>
 </manifest>
 EOF
@@ -146,14 +164,65 @@ import android.os.Bundle;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.JavascriptInterface;
 import android.view.Window;
 import android.view.WindowManager;
 import android.graphics.Color;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.provider.Settings;
+import android.util.Log;
 import java.io.InputStream;
 import java.io.ByteArrayOutputStream;
 
 public class MainActivity extends Activity {
     private WebView webView;
+
+    public class SokoNativeBridge {
+        @JavascriptInterface
+        public boolean isNotificationAccessGranted() {
+            try {
+                String pkg = getPackageName();
+                String listeners = Settings.Secure.getString(
+                    getContentResolver(), "enabled_notification_listeners"
+                );
+                return listeners != null && listeners.contains(pkg);
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+        @JavascriptInterface
+        public void openNotificationAccess() {
+            try {
+                Intent intent = new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS");
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(intent);
+            } catch (Exception e) {
+                Log.e("SokoApp", "Error opening notification settings", e);
+            }
+        }
+
+        @JavascriptInterface
+        public void saveBridgeIp(String ip) {
+            try {
+                SharedPreferences prefs = getSharedPreferences("soko_prefs", MODE_PRIVATE);
+                prefs.edit().putString("bridge_ip", ip).apply();
+            } catch (Exception e) {
+                Log.e("SokoApp", "Error saving bridge IP", e);
+            }
+        }
+
+        @JavascriptInterface
+        public String getSavedBridgeIp() {
+            try {
+                SharedPreferences prefs = getSharedPreferences("soko_prefs", MODE_PRIVATE);
+                return prefs.getString("bridge_ip", "");
+            } catch (Exception e) {
+                return "";
+            }
+        }
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -176,10 +245,12 @@ public class MainActivity extends Activity {
         settings.setLoadWithOverviewMode(true);
         settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
 
+        webView.addJavascriptInterface(new SokoNativeBridge(), "SokoNative");
+
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
-                android.util.Log.e("SokoApp", "Resource error on " + failingUrl + ": " + description);
+                Log.e("SokoApp", "Resource error on " + failingUrl + ": " + description);
             }
         });
 
@@ -270,6 +341,128 @@ public class MainActivity extends Activity {
 EOF
   fi
 
+  if [ "${APP_ID}" = "mobile" ]; then
+    cat <<EOF > "${WORK}/src/com/soko/mobile/SokoNotificationListener.java"
+package com.soko.mobile;
+
+import android.service.notification.NotificationListenerService;
+import android.service.notification.StatusBarNotification;
+import android.app.Notification;
+import android.os.Bundle;
+import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.content.pm.ApplicationInfo;
+import android.util.Log;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+
+public class SokoNotificationListener extends NotificationListenerService {
+    private static final String TAG = "SokoNotifListener";
+
+    @Override
+    public void onListenerConnected() {
+        super.onListenerConnected();
+        Log.i(TAG, "Soko Notification Listener connected and active!");
+    }
+
+    @Override
+    public void onNotificationPosted(StatusBarNotification sbn) {
+        if (sbn == null) return;
+
+        // Skip ongoing system notifications (e.g. music playback, active calls)
+        if (sbn.isOngoing()) return;
+
+        String packageName = sbn.getPackageName();
+        if (packageName == null || packageName.equals(getPackageName())) {
+            return;
+        }
+
+        Notification notification = sbn.getNotification();
+        if (notification == null) return;
+
+        Bundle extras = notification.extras;
+        if (extras == null) return;
+
+        CharSequence titleCs = extras.getCharSequence(Notification.EXTRA_TITLE);
+        CharSequence textCs = extras.getCharSequence(Notification.EXTRA_TEXT);
+        CharSequence bigTextCs = extras.getCharSequence(Notification.EXTRA_BIG_TEXT);
+
+        String title = titleCs != null ? titleCs.toString() : "";
+        String body = bigTextCs != null ? bigTextCs.toString() : (textCs != null ? textCs.toString() : "");
+
+        if (title.isEmpty() && body.isEmpty()) {
+            return;
+        }
+
+        PackageManager pm = getPackageManager();
+        String appName = packageName;
+        try {
+            ApplicationInfo ai = pm.getApplicationInfo(packageName, 0);
+            appName = pm.getApplicationLabel(ai).toString();
+        } catch (Exception ignored) {}
+
+        SharedPreferences prefs = getSharedPreferences("soko_prefs", MODE_PRIVATE);
+        String bridgeIp = prefs.getString("bridge_ip", "192.168.31.210:8766");
+        if (bridgeIp == null || bridgeIp.trim().isEmpty()) {
+            bridgeIp = "192.168.31.210:8766";
+        }
+        if (!bridgeIp.startsWith("http://") && !bridgeIp.startsWith("https://")) {
+            bridgeIp = "http://" + bridgeIp;
+        }
+
+        final String endpoint = bridgeIp + "/api/notify";
+        final String jsonPayload = "{"
+            + "\"id\":\"" + escapeJson(sbn.getKey() != null ? sbn.getKey() : packageName + "_" + System.currentTimeMillis()) + "\","
+            + "\"appName\":\"" + escapeJson(appName) + "\","
+            + "\"packageName\":\"" + escapeJson(packageName) + "\","
+            + "\"title\":\"" + escapeJson(title) + "\","
+            + "\"body\":\"" + escapeJson(body) + "\""
+            + "}";
+
+        final String finalAppName = appName;
+        final String finalTitle = title;
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    URL url = new URL(endpoint);
+                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                    conn.setRequestMethod("POST");
+                    conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+                    conn.setConnectTimeout(3000);
+                    conn.setReadTimeout(3000);
+                    conn.setDoOutput(true);
+
+                    byte[] bytes = jsonPayload.getBytes("UTF-8");
+                    OutputStream os = conn.getOutputStream();
+                    os.write(bytes);
+                    os.flush();
+                    os.close();
+
+                    int code = conn.getResponseCode();
+                    Log.i(TAG, "Mirrored notification to desktop [" + code + "]: " + finalAppName + " - " + finalTitle);
+                    conn.disconnect();
+                } catch (Exception e) {
+                    Log.w(TAG, "Failed sending notification to " + endpoint + ": " + e.getMessage());
+                }
+            }
+        }).start();
+    }
+
+    private String escapeJson(String s) {
+        if (s == null) return "";
+        return s.replace("\\\\", "\\\\\\\\")
+                .replace("\"", "\\\\\"")
+                .replace("\n", "\\\\n")
+                .replace("\r", "\\\\r")
+                .replace("\t", "\\\\t");
+    }
+}
+EOF
+  fi
+
   # 4. Compile Resources with AAPT2
   local AAPT_ASSETS=""
   if [ -d "${WORK}/assets" ] && [ "$(ls -A "${WORK}/assets")" ]; then
@@ -289,7 +482,7 @@ EOF
   javac -source 8 -target 8 -d "${WORK}/obj" \
     -cp "${PLATFORM_JAR}" \
     "${WORK}/gen/com/soko/${APP_ID}/R.java" \
-    "${WORK}/src/com/soko/${APP_ID}/MainActivity.java"
+    $(find "${WORK}/src" -name "*.java")
 
   # 6. Convert Classes to DEX with D8
   "${D8}" --min-api 26 \
