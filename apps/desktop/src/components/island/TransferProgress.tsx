@@ -62,26 +62,28 @@ export const TransferProgress: React.FC<TransferProgressProps> = ({
         {/* Right: State / Actions */}
         <div className="flex items-center gap-1.5 shrink-0">
           {isCompleted && (
-            <div className="flex items-center gap-1.5">
-              <span className="flex items-center gap-1 text-[10px] text-linear-green font-medium">
+            <div className="flex items-center gap-1.5" data-no-drag="true">
+              <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-medium">
                 <CheckCircle2 size={11} /> Saved
               </span>
               <button
+                data-no-drag="true"
                 onClick={(e) => {
                   e.stopPropagation();
                   connectionService.openTransferredFile(transfer.filename);
                 }}
-                className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-linear-brand/20 hover:bg-linear-brand/35 text-linear-brand text-[9px] font-medium transition-colors"
+                className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#5E6AD2]/20 hover:bg-[#5E6AD2]/35 text-[#7C88E8] hover:text-white text-[9.5px] font-medium border border-[#5E6AD2]/30 active:scale-95 transition-all duration-150"
                 title="Open transferred file in default app"
               >
                 <ExternalLink size={9} /> Open
               </button>
               <button
+                data-no-drag="true"
                 onClick={(e) => {
                   e.stopPropagation();
                   connectionService.openTransfersFolder();
                 }}
-                className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-white text-[9px] font-medium transition-colors"
+                className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[9.5px] font-medium border border-white/10 active:scale-95 transition-all duration-150"
                 title="Show transfers folder"
               >
                 <Folder size={9} /> Folder
@@ -96,12 +98,13 @@ export const TransferProgress: React.FC<TransferProgressProps> = ({
               </span>
               {onCancel && (
                 <button
+                  data-no-drag="true"
                   onClick={(e) => {
                     e.stopPropagation();
                     onCancel();
                   }}
                   title="Cancel file transfer"
-                  className="p-1 rounded hover:bg-white/10 text-linear-text-tertiary hover:text-linear-red transition-colors"
+                  className="p-1 rounded-lg hover:bg-white/10 text-linear-text-tertiary hover:text-rose-400 active:scale-90 transition-all duration-150"
                 >
                   <X size={11} />
                 </button>
@@ -110,12 +113,12 @@ export const TransferProgress: React.FC<TransferProgressProps> = ({
           )}
 
           {(isCancelled || isFailed) && (
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1" data-no-drag="true">
               <span
-                className={`flex items-center gap-1 text-[10px] font-medium font-mono px-1.5 py-0.5 rounded ${
+                className={`flex items-center gap-1 text-[10px] font-medium font-mono px-1.5 py-0.5 rounded-md ${
                   isCancelled
-                    ? 'text-linear-amber bg-linear-amber/10 border border-linear-amber/20'
-                    : 'text-linear-red bg-linear-red/10 border border-linear-red/20'
+                    ? 'text-amber-400 bg-amber-500/10 border border-amber-500/20'
+                    : 'text-rose-400 bg-rose-500/10 border border-rose-500/20'
                 }`}
               >
                 {isCancelled ? <Ban size={10} /> : <AlertCircle size={10} />}
@@ -124,12 +127,13 @@ export const TransferProgress: React.FC<TransferProgressProps> = ({
 
               {onRetry && (
                 <button
+                  data-no-drag="true"
                   onClick={(e) => {
                     e.stopPropagation();
                     onRetry();
                   }}
                   title="Retry file transfer"
-                  className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-[10px] text-white font-medium transition-colors"
+                  className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-white/10 hover:bg-white/20 text-[10px] text-white font-medium border border-white/10 active:scale-95 transition-all duration-150"
                 >
                   <RotateCcw size={10} /> Retry
                 </button>
@@ -137,12 +141,13 @@ export const TransferProgress: React.FC<TransferProgressProps> = ({
 
               {onDismiss && (
                 <button
+                  data-no-drag="true"
                   onClick={(e) => {
                     e.stopPropagation();
                     onDismiss();
                   }}
                   title="Dismiss"
-                  className="p-1 rounded hover:bg-white/10 text-linear-text-tertiary hover:text-white transition-colors"
+                  className="p-1 rounded-lg hover:bg-white/10 text-linear-text-tertiary hover:text-white active:scale-90 transition-all duration-150"
                 >
                   <X size={11} />
                 </button>

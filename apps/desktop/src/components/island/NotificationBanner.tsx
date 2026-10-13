@@ -50,16 +50,16 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
         delay: 0.03,
         ease: [0.16, 1, 0.3, 1],
       }}
-      className="flex items-start justify-between w-full gap-2 px-1 py-0.5 font-sans select-none"
+      className="flex items-center justify-between w-full gap-2 px-1 font-sans select-none"
     >
       {/* Brand Icon Badge + Details Block */}
-      <div className="flex items-start gap-2.5 min-w-0 flex-1">
+      <div className="flex items-center gap-2.5 min-w-0 flex-1">
         {/* Authentic Brand Icon Container with Theme Integration */}
         <motion.div
           initial={{ scale: 0.84, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ duration: 0.24, delay: 0.05, ease: [0.16, 1, 0.3, 1] }}
-          className="shrink-0 w-7 h-7 rounded-[7px] flex items-center justify-center border shadow-sm relative overflow-hidden mt-0.5"
+          className="shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center border shadow-sm relative overflow-hidden self-center"
           style={{
             backgroundColor: brand.badgeBg,
             borderColor: 'rgba(255, 255, 255, 0.12)',
@@ -69,14 +69,14 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
           <AppIcon
             appName={notification.appName}
             packageName={notification.packageName}
-            size={16}
+            size={18}
           />
         </motion.div>
 
         {/* Interactive Text Block - Click to Copy */}
         <div
           onClick={handleCopyText}
-          className="flex flex-col min-w-0 flex-1 cursor-pointer group/text"
+          className="flex flex-col justify-center min-w-0 flex-1 cursor-pointer group/text self-center"
           title="Click to copy message"
         >
           <motion.div
@@ -138,17 +138,18 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
         initial={{ opacity: 0, scale: 0.85 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.22, delay: 0.08, ease: [0.16, 1, 0.3, 1] }}
-        className="flex items-center gap-1 shrink-0 self-start mt-0.5"
+        className="flex items-center gap-1 shrink-0 self-center my-auto"
       >
         <button
+          data-no-drag="true"
           onClick={(e) => {
             e.stopPropagation();
             onDismiss();
           }}
           title="Dismiss"
-          className="p-1.5 rounded-md hover:bg-white/5 active:scale-95 text-linear-text-secondary hover:text-linear-text-primary border border-transparent hover:border-white/10 transition-colors"
+          className="p-1.5 rounded-lg hover:bg-white/10 active:scale-90 text-linear-text-secondary hover:text-white border border-transparent hover:border-white/10 transition-all duration-150"
         >
-          <X size={13} />
+          <X size={14} />
         </button>
       </motion.div>
     </motion.div>

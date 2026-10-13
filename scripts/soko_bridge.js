@@ -27,7 +27,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
-const { spawn, exec } = require('child_process');
+const { spawn, exec, execSync } = require('child_process');
 
 let PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8766;
 
@@ -59,8 +59,20 @@ let pairedDevice = {
 };
 
 // Path to mobile companion web application and transfer directory
-const COMPANION_INDEX = path.resolve(__dirname, '../apps/mobile/companion/index.html');
-const TRANSFERS_DIR = path.resolve(__dirname, '../transfers');
+const COMPANION_INDEX_CANDIDATES = [
+  path.resolve(__dirname, '../apps/mobile/companion/index.html'),
+  path.resolve(__dirname, '../../apps/mobile/companion/index.html'),
+  path.resolve(__dirname, 'apps/mobile/companion/index.html'),
+  path.resolve(__dirname, '../resources/apps/mobile/companion/index.html'),
+  path.resolve(process.resourcesPath || '', 'apps/mobile/companion/index.html'),
+  path.resolve(process.cwd(), 'apps/mobile/companion/index.html'),
+];
+const COMPANION_INDEX = COMPANION_INDEX_CANDIDATES.find((p) => fs.existsSync(p)) || COMPANION_INDEX_CANDIDATES[0];
+const TRANSFERS_DIR = process.env.SOKO_TRANSFERS_DIR || (
+  fs.existsSync(path.resolve(process.cwd(), 'transfers'))
+    ? path.resolve(process.cwd(), 'transfers')
+    : path.resolve(__dirname, '../transfers')
+);
 if (!fs.existsSync(TRANSFERS_DIR)) {
   try { fs.mkdirSync(TRANSFERS_DIR, { recursive: true }); } catch {}
 }
@@ -70,7 +82,152 @@ if (!fs.existsSync(TRANSFERS_DIR)) {
 // ------------------------------------------------------------------------------
 let highestSeenPacketId = 0;
 const MAX_TIMESTAMP_DRIFT_MS = 60000; // ±60s clock drift window
-const SAS_PAIRING_PIN = '482 195';
+
+function generateRandomPin() {
+  const p1 = Math.floor(100 + Math.random() * 900);
+  const p2 = Math.floor(100 + Math.random() * 900);
+  return `${p1} ${p2}`;
+}
+
+let activeSasPin = generateRandomPin();
+console.log(`[Security] Active SAS Pairing PIN initialized: ${activeSasPin}`);
+
+// Persistent Trust Store for authorized devices (docs/features/06-security-and-pairing.md)
+const TRUST_STORE_PATH = path.resolve(TRANSFERS_DIR, '.trust_store.json');
+function loadTrustStore() {
+  try {
+    if (fs.existsSync(TRUST_STORE_PATH)) {
+      const raw = fs.readFileSync(TRUST_STORE_PATH, 'utf8');
+      const data = JSON.parse(raw);
+      return new Map(Object.entries(data));
+    }
+  } catch {}
+  return new Map();
+}
+
+function saveTrustStore(store) {
+  try {
+    const obj = Object.fromEntries(store);
+    fs.writeFileSync(TRUST_STORE_PATH, JSON.stringify(obj, null, 2), 'utf8');
+  } catch (e) {
+    console.warn('[Security] Failed to save trust store:', e.message);
+  }
+}
+
+const trustedDevices = loadTrustStore();
+const pendingPairRequests = new Map();
+
+// ------------------------------------------------------------------------------
+// REAL-TIME DESKTOP AUDIO STREAMING ENGINE & PIPEWIRE MONITORING
+// ------------------------------------------------------------------------------
+const activeAudioStreams = new Set();
+let audioFfmpegProc = null;
+let lastAudioPlayingState = false;
+
+function getDefaultMonitorSource() {
+  try {
+    const wpctlOut = execSync('wpctl status', { encoding: 'utf8', timeout: 1000 });
+    const sinkMatch = wpctlOut.match(/Sinks:[\s\S]*?\*\s+(\d+)\./);
+    if (sinkMatch && sinkMatch[1]) {
+      const sinkId = sinkMatch[1];
+      const inspectOut = execSync(`wpctl inspect ${sinkId}`, { encoding: 'utf8', timeout: 1000 });
+      const nameMatch = inspectOut.match(/node\.name\s*=\s*"([^"]+)"/);
+      if (nameMatch && nameMatch[1]) {
+        return `${nameMatch[1]}.monitor`;
+      }
+    }
+  } catch (err) {}
+  return 'default';
+}
+
+function checkIsAudioPlaying() {
+  try {
+    const wpctlOut = execSync('wpctl status', { encoding: 'utf8', timeout: 800 });
+    const streamsMatch = wpctlOut.match(/Streams:([\s\S]*?)(?:Video|Settings|$)/);
+    if (streamsMatch && streamsMatch[1]) {
+      const streamsText = streamsMatch[1].trim();
+      if (/\d+\.\s+/.test(streamsText)) {
+        return true;
+      }
+    }
+  } catch (err) {}
+  return false;
+}
+
+function broadcastAudioStatus() {
+  const isPlaying = checkIsAudioPlaying() || activeAudioStreams.size > 0;
+  lastAudioPlayingState = isPlaying;
+  broadcastPacket({
+    magic: 'SK',
+    version: 1,
+    packetId: Date.now(),
+    timestamp: Date.now(),
+    packetType: 'AUDIO_STATUS',
+    payload: {
+      isPlaying,
+      isStreamingToMobile: activeAudioStreams.size > 0,
+      activeListeners: activeAudioStreams.size,
+      bitrate: '192 kbps',
+      format: 'MP3 (48 kHz Stereo)',
+      source: 'Desktop PipeWire Output',
+    },
+  });
+}
+
+function startAudioBroadcaster() {
+  if (audioFfmpegProc) return;
+  const monitor = getDefaultMonitorSource();
+  console.log(`[Bridge Audio] Starting real-time audio capture from: ${monitor}`);
+
+  audioFfmpegProc = spawn('ffmpeg', [
+    '-f', 'pulse',
+    '-i', monitor,
+    '-c:a', 'libmp3lame',
+    '-b:a', '192k',
+    '-flush_packets', '1',
+    '-f', 'mp3',
+    '-',
+  ], {
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+
+  audioFfmpegProc.stdout.on('data', (chunk) => {
+    for (const client of activeAudioStreams) {
+      try {
+        client.write(chunk);
+      } catch (e) {
+        activeAudioStreams.delete(client);
+      }
+    }
+  });
+
+  audioFfmpegProc.on('close', () => {
+    audioFfmpegProc = null;
+  });
+
+  audioFfmpegProc.on('error', (err) => {
+    console.warn('[Bridge Audio] ffmpeg error:', err.message);
+    audioFfmpegProc = null;
+  });
+}
+
+function stopAudioBroadcasterIfNoClients() {
+  if (activeAudioStreams.size === 0 && audioFfmpegProc) {
+    console.log('[Bridge Audio] No active listeners. Stopping audio capture.');
+    try {
+      audioFfmpegProc.kill('SIGTERM');
+    } catch {}
+    audioFfmpegProc = null;
+  }
+}
+
+// Background audio monitor timer (every 2.5s)
+setInterval(() => {
+  const isPlaying = checkIsAudioPlaying() || activeAudioStreams.size > 0;
+  if (isPlaying !== lastAudioPlayingState) {
+    broadcastAudioStatus();
+  }
+}, 2500);
 
 // Strict CLI execution whitelist to prevent Remote Code Execution (RCE)
 const CLI_WHITELIST = {
@@ -447,8 +604,13 @@ function createWebSocketServer(server) {
 
     socket.write(responseHeaders.join('\r\n') + '\r\n\r\n');
 
+    socket.isLocalDesktop = (socket.remoteAddress === '127.0.0.1' || socket.remoteAddress === '::1' || socket.remoteAddress === '::ffff:127.0.0.1');
+    socket.isAuthorized = socket.isLocalDesktop;
+    socket.deviceId = null;
+    socket.deviceName = null;
+
     activeClients.add(socket);
-    console.log(`[Bridge WS] Client connected. Total active: ${activeClients.size}`);
+    console.log(`[Bridge WS] Client connected from ${socket.remoteAddress} (local: ${socket.isLocalDesktop}). Total active: ${activeClients.size}`);
 
     // Send Welcome / Handshake packet
     sendWsPacket(socket, {
@@ -464,7 +626,9 @@ function createWebSocketServer(server) {
         activeClients: activeClients.size,
         localIps: getLocalIps(),
         port: PORT,
-        pairedDevice,
+        sasPin: socket.isLocalDesktop ? activeSasPin : undefined,
+        requiresPairing: !socket.isAuthorized,
+        pairedDevice: socket.isAuthorized ? pairedDevice : null,
       },
     });
 
@@ -551,37 +715,213 @@ function handleWsFrame(socket, buffer) {
 
     // Pair request from phone (SAS PIN authorization check)
     if (packet.packetType === 'PAIR_REQUEST') {
-      const enteredPin = packet.payload?.pin;
-      if (enteredPin && enteredPin.replace(/\s+/g, '') !== SAS_PAIRING_PIN.replace(/\s+/g, '')) {
-        console.warn(`[Security Alert] Unauthorized pair attempt: PIN mismatch (${enteredPin} != ${SAS_PAIRING_PIN})`);
+      const deviceId = packet.payload?.deviceId || `dev-${Date.now()}`;
+      const token = packet.payload?.token;
+
+      // Check if already in persistent trusted devices
+      if (token && trustedDevices.has(deviceId)) {
+        const trusted = trustedDevices.get(deviceId);
+        if (trusted.token === token) {
+          socket.isAuthorized = true;
+          socket.deviceId = deviceId;
+          socket.deviceName = trusted.name || packet.payload?.deviceName;
+          if (packet.payload?.deviceName) pairedDevice.name = packet.payload.deviceName;
+          if (packet.payload?.model) pairedDevice.model = packet.payload.model;
+          if (packet.payload?.batteryLevel) pairedDevice.batteryLevel = packet.payload.batteryLevel;
+          if (packet.payload?.rssi) pairedDevice.rssi = packet.payload.rssi;
+          pairedDevice.lastSeen = Date.now();
+          pairedDevice.isAuthorized = true;
+
+          console.log(`[Security] Recognized trusted companion: ${pairedDevice.name} (${deviceId})`);
+          sendWsPacket(socket, {
+            magic: 'SK',
+            version: 1,
+            packetId: Date.now(),
+            timestamp: Date.now(),
+            packetType: 'PAIR_CONFIRM',
+            payload: { status: 'authorized', paired: true, token, deviceId },
+          });
+
+          broadcastPacket({
+            magic: 'SK',
+            version: 1,
+            packetId: Date.now(),
+            timestamp: Date.now(),
+            packetType: 'BRIDGE_STATUS',
+            payload: { status: 'online', pairedDevice },
+          });
+          return;
+        }
+      }
+
+      // New device: must provide matching active PIN
+      const enteredPin = (packet.payload?.pin || '').replace(/\s+/g, '');
+      const expectedPin = activeSasPin.replace(/\s+/g, '');
+
+      if (!enteredPin || enteredPin !== expectedPin) {
+        console.warn(`[Security Alert] Unauthorized pair attempt from ${socket.remoteAddress}. Entered: "${enteredPin}", Expected: "${expectedPin}"`);
         sendWsPacket(socket, {
           magic: 'SK',
           version: 1,
           packetId: Date.now(),
           timestamp: Date.now(),
           packetType: 'PAIR_REJECT',
-          payload: { status: 'rejected', error: 'Cryptographic SAS PIN verification failed.' },
+          payload: { status: 'rejected', error: 'PIN mismatch. Please enter the 6-digit PIN displayed on your Desktop Dynamic Island.' },
         });
         return;
       }
 
-      if (packet.payload?.deviceName) pairedDevice.name = packet.payload.deviceName;
-      if (packet.payload?.model) pairedDevice.model = packet.payload.model;
-      if (packet.payload?.batteryLevel) pairedDevice.batteryLevel = packet.payload.batteryLevel;
-      if (packet.payload?.rssi) pairedDevice.rssi = packet.payload.rssi;
-      pairedDevice.lastSeen = Date.now();
+      // Valid PIN matches! Create pending pair request & notify desktop HUD for approval
+      const newToken = crypto.randomBytes(16).toString('hex');
+      const pendingInfo = {
+        socket,
+        deviceId,
+        deviceName: packet.payload?.deviceName || 'Mobile Companion (Android)',
+        model: packet.payload?.model || 'Android Phone',
+        pin: packet.payload?.pin || activeSasPin,
+        token: newToken,
+        timestamp: Date.now(),
+      };
 
-      // Broadcast to desktop HUD
-      broadcastPacket(packet, socket);
+      pendingPairRequests.set(deviceId, pendingInfo);
+      console.log(`[Security] PIN verified for ${pendingInfo.deviceName}. Awaiting human approval on desktop HUD...`);
 
-      // Confirm to phone
+      // Dispatch approval card to desktop Dynamic Island
+      broadcastPacket({
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'PAIR_REQUEST_PENDING',
+        payload: {
+          deviceId,
+          deviceName: pendingInfo.deviceName,
+          model: pendingInfo.model,
+          pin: pendingInfo.pin,
+          ip: socket.remoteAddress,
+        },
+      });
+      return;
+    }
+
+    // Desktop approval decision
+    if (packet.packetType === 'PAIR_DECISION') {
+      const { deviceId, approved } = packet.payload || {};
+      const pending = pendingPairRequests.get(deviceId);
+      if (pending) {
+        pendingPairRequests.delete(deviceId);
+        if (approved) {
+          if (pending.socket) {
+            pending.socket.isAuthorized = true;
+            pending.socket.deviceId = deviceId;
+            pending.socket.deviceName = pending.deviceName;
+          }
+
+          trustedDevices.set(deviceId, {
+            name: pending.deviceName,
+            model: pending.model,
+            token: pending.token,
+            pairedAt: Date.now(),
+          });
+          saveTrustStore(trustedDevices);
+
+          pairedDevice.id = deviceId;
+          pairedDevice.name = pending.deviceName;
+          pairedDevice.model = pending.model;
+          pairedDevice.isAuthorized = true;
+          pairedDevice.lastSeen = Date.now();
+
+          console.log(`[Security] Device APPROVED by desktop user: ${pending.deviceName} (${deviceId})`);
+
+          // Confirm to mobile phone
+          if (pending.socket) {
+            sendWsPacket(pending.socket, {
+              magic: 'SK',
+              version: 1,
+              packetId: Date.now(),
+              timestamp: Date.now(),
+              packetType: 'PAIR_CONFIRM',
+              payload: {
+                status: 'authorized',
+                paired: true,
+                token: pending.token,
+                deviceId,
+              },
+            });
+          }
+
+          // Broadcast updated status
+          broadcastPacket({
+            magic: 'SK',
+            version: 1,
+            packetId: Date.now(),
+            timestamp: Date.now(),
+            packetType: 'BRIDGE_STATUS',
+            payload: { status: 'online', pairedDevice },
+          });
+        } else {
+          console.log(`[Security] Device DENIED by desktop user: ${pending.deviceName} (${deviceId})`);
+          if (pending.socket) {
+            sendWsPacket(pending.socket, {
+              magic: 'SK',
+              version: 1,
+              packetId: Date.now(),
+              timestamp: Date.now(),
+              packetType: 'PAIR_REJECT',
+              payload: { status: 'rejected', error: 'Connection was declined on the desktop.' },
+            });
+          }
+        }
+      }
+      return;
+    }
+
+    // Unpair request from phone or desktop
+    if (packet.packetType === 'UNPAIR_REQUEST') {
+      const deviceId = packet.payload?.deviceId || socket.deviceId;
+      if (deviceId && trustedDevices.has(deviceId)) {
+        trustedDevices.delete(deviceId);
+        saveTrustStore(trustedDevices);
+        console.log(`[Security] Unpaired device: ${deviceId}`);
+      }
+      socket.isAuthorized = socket.isLocalDesktop;
       sendWsPacket(socket, {
         magic: 'SK',
         version: 1,
         packetId: Date.now(),
         timestamp: Date.now(),
-        packetType: 'PAIR_CONFIRM',
-        payload: { status: 'authorized', paired: true, sasVerified: true },
+        packetType: 'UNPAIR_CONFIRM',
+        payload: { success: true },
+      });
+      return;
+    }
+
+    // Regenerate PIN packet from desktop
+    if (packet.packetType === 'REGENERATE_PIN') {
+      activeSasPin = generateRandomPin();
+      console.log(`[Security] New SAS PIN generated by desktop: ${activeSasPin}`);
+      sendWsPacket(socket, {
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'PIN_UPDATED',
+        payload: { pin: activeSasPin },
+      });
+      return;
+    }
+
+    // Guard privileged packets against unauthorized sockets (CLI & file storage operations)
+    const PRIVILEGED_PACKETS = ['CLI_EXECUTE', 'FILE_OFFER', 'FILE_START'];
+    if (PRIVILEGED_PACKETS.includes(packet.packetType) && !socket.isAuthorized) {
+      console.warn(`[Security Alert] Blocked privileged packet ${packet.packetType} from unauthorized socket.`);
+      sendWsPacket(socket, {
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'SECURITY_ALERT',
+        payload: { error: 'Device is not authorized. Complete PIN pairing and desktop approval first.' },
       });
       return;
     }
@@ -740,6 +1080,51 @@ function executeWhitelistedCli(command, onFinished = null) {
   );
 }
 
+/**
+ * Verifies if an HTTP request is authorized.
+ * Requests from local desktop (127.0.0.1, ::1) are inherently authorized.
+ * Requests from remote network interfaces (LAN/Wi-Fi/Hotspot) MUST present
+ * a valid Bearer token matching a trusted paired device in trustedDevices.
+ */
+function isRequestAuthorized(req) {
+  const remoteIp = req.socket.remoteAddress;
+  const isLocal = remoteIp === '127.0.0.1' || remoteIp === '::1' || remoteIp === '::ffff:127.0.0.1';
+  if (isLocal) return true;
+
+  let token = null;
+  const authHeader = req.headers['authorization'] || '';
+  if (authHeader.startsWith('Bearer ')) {
+    token = authHeader.substring(7).trim();
+  } else if (authHeader.startsWith('Token ')) {
+    token = authHeader.substring(6).trim();
+  } else {
+    try {
+      const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
+      token = url.searchParams.get('token');
+    } catch {}
+  }
+
+  if (!token) return false;
+
+  for (const [deviceId, dev] of trustedDevices.entries()) {
+    if (dev && dev.token && dev.token === token) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function rejectUnauthorized(res) {
+  res.writeHead(401, { 'Content-Type': 'application/json' });
+  res.end(
+    JSON.stringify({
+      error: 'Unauthorized: Remote device is not paired or missing valid bearer token. Complete PIN pairing on Desktop Island first.',
+      code: 401,
+    })
+  );
+}
+
 // HTTP Server for Mobile UI and REST endpoints
 const server = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -757,8 +1142,16 @@ const server = http.createServer((req, res) => {
   // 1. Serve Mobile Companion Web App
   if (url.pathname === '/' || url.pathname === '/mobile' || url.pathname === '/companion') {
     if (fs.existsSync(COMPANION_INDEX)) {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      fs.createReadStream(COMPANION_INDEX).pipe(res);
+      try {
+        let html = fs.readFileSync(COMPANION_INDEX, 'utf8');
+        const defaultIp = `${getLocalIps()[0] || '192.168.31.210'}:${PORT}`;
+        html = html.replace('window.SOKO_BRIDGE_DEFAULT_IP = "";', `window.SOKO_BRIDGE_DEFAULT_IP = "${defaultIp}";`);
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(html);
+      } catch (e) {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        fs.createReadStream(COMPANION_INDEX).pipe(res);
+      }
       return;
     }
   }
@@ -777,6 +1170,124 @@ const server = http.createServer((req, res) => {
         pairedDevice,
       })
     );
+    return;
+  }
+
+  // Pair Request endpoint (Direct HTTP Pairing & Verification)
+  if (url.pathname === '/api/pair' && req.method === 'POST') {
+    let bodyStr = '';
+    req.on('data', (chunk) => (bodyStr += chunk));
+    req.on('end', () => {
+      try {
+        const body = JSON.parse(bodyStr || '{}');
+        const deviceId = body.deviceId || `dev-${Date.now()}`;
+        const enteredPin = (body.pin || '').replace(/\s+/g, '');
+        const expectedPin = activeSasPin.replace(/\s+/g, '');
+
+        if (!enteredPin || enteredPin !== expectedPin) {
+          console.warn(`[Security HTTP] Unauthorized pair attempt from ${req.socket.remoteAddress}. Entered: "${enteredPin}", Expected: "${expectedPin}"`);
+          res.writeHead(400, {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          });
+          res.end(
+            JSON.stringify({
+              status: 'rejected',
+              error: `PIN mismatch. Entered PIN "${enteredPin}" does not match active Desktop PIN.`,
+            })
+          );
+          return;
+        }
+
+        const newToken = crypto.randomBytes(16).toString('hex');
+        const pendingInfo = {
+          deviceId,
+          deviceName: body.deviceName || 'Mobile Companion (Android)',
+          model: body.model || 'Android Phone',
+          pin: body.pin || activeSasPin,
+          token: newToken,
+          timestamp: Date.now(),
+        };
+
+        pendingPairRequests.set(deviceId, pendingInfo);
+        console.log(`[Security HTTP] PIN verified for ${pendingInfo.deviceName}. Awaiting human approval on desktop HUD...`);
+
+        // Dispatch approval card to desktop Dynamic Island
+        broadcastPacket({
+          magic: 'SK',
+          version: 1,
+          packetId: Date.now(),
+          timestamp: Date.now(),
+          packetType: 'PAIR_REQUEST_PENDING',
+          payload: {
+            deviceId,
+            deviceName: pendingInfo.deviceName,
+            model: pendingInfo.model,
+            pin: pendingInfo.pin,
+            ip: req.socket.remoteAddress,
+          },
+        });
+
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        });
+        res.end(
+          JSON.stringify({
+            status: 'pending',
+            message: 'PIN verified. Waiting for approval on desktop Dynamic Island.',
+            deviceId,
+          })
+        );
+      } catch (err) {
+        res.writeHead(500, {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // Check Pair Status endpoint (Polled by mobile when pending)
+  if (url.pathname === '/api/pair/status' && req.method === 'GET') {
+    const deviceId = url.searchParams.get('deviceId');
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+    });
+    if (deviceId && trustedDevices.has(deviceId)) {
+      const record = trustedDevices.get(deviceId);
+      res.end(JSON.stringify({ status: 'paired', token: record.token }));
+    } else if (deviceId && pendingPairRequests.has(deviceId)) {
+      res.end(JSON.stringify({ status: 'pending' }));
+    } else {
+      res.end(JSON.stringify({ status: 'unpaired' }));
+    }
+    return;
+  }
+
+  // Unpair device endpoint
+  if (url.pathname === '/api/unpair' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (chunk) => (body += chunk));
+    req.on('end', () => {
+      try {
+        const data = body ? JSON.parse(body) : {};
+        const deviceId = data.deviceId;
+        if (deviceId && trustedDevices.has(deviceId)) {
+          trustedDevices.delete(deviceId);
+          saveTrustStore(trustedDevices);
+          console.log(`[Security] Device unpaired via HTTP: ${deviceId}`);
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, unpaired: deviceId }));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
     return;
   }
 
@@ -816,8 +1327,13 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // 4. Trigger remote CLI command from phone or desktop (Strict Whitelist Protected)
+  // 4. Trigger remote CLI command from phone or desktop (Strict Whitelist & Auth Protected)
   if (url.pathname === '/api/cli' && req.method === 'POST') {
+    if (!isRequestAuthorized(req)) {
+      rejectUnauthorized(res);
+      return;
+    }
+
     let body = '';
     req.on('data', (chunk) => (body += chunk));
     req.on('end', () => {
@@ -837,8 +1353,13 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // 5. Trigger high-speed file transfer
+  // 5. Trigger high-speed file transfer (Protected)
   if (url.pathname === '/api/transfer' && req.method === 'POST') {
+    if (!isRequestAuthorized(req)) {
+      rejectUnauthorized(res);
+      return;
+    }
+
     let body = '';
     req.on('data', (chunk) => (body += chunk));
     req.on('end', () => {
@@ -857,24 +1378,36 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // 6. Cancel file transfer endpoint
+  // 6. Cancel file transfer endpoint (Protected)
   if (url.pathname === '/api/transfer/cancel' && req.method === 'POST') {
+    if (!isRequestAuthorized(req)) {
+      rejectUnauthorized(res);
+      return;
+    }
     cancelActiveTransfer('Cancelled via REST API');
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: true, status: 'cancelled' }));
     return;
   }
 
-  // 7. Retry file transfer endpoint
+  // 7. Retry file transfer endpoint (Protected)
   if (url.pathname === '/api/transfer/retry' && req.method === 'POST') {
+    if (!isRequestAuthorized(req)) {
+      rejectUnauthorized(res);
+      return;
+    }
     startSimulatedTransfer('soko-v1.0.0-release.apk');
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: true, status: 'active' }));
     return;
   }
 
-  // 8. Real file binary upload (Sandbox path sanitization, SHA-256 verification, .part cleanup)
+  // 8. Real file binary upload (Protected: Sandbox path sanitization, SHA-256 verification, .part cleanup)
   if (url.pathname === '/api/upload' && (req.method === 'POST' || req.method === 'PUT')) {
+    if (!isRequestAuthorized(req)) {
+      rejectUnauthorized(res);
+      return;
+    }
     const rawFilename = url.searchParams.get('filename') || `transfer-${Date.now()}.bin`;
     const pathInfo = sanitizeAndResolveUploadPath(rawFilename);
 
@@ -1037,8 +1570,12 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // 9. List transferred files in storage
+  // 9. List transferred files in storage (Protected)
   if (url.pathname === '/api/transfers' && req.method === 'GET') {
+    if (!isRequestAuthorized(req)) {
+      rejectUnauthorized(res);
+      return;
+    }
     try {
       if (!fs.existsSync(TRANSFERS_DIR)) {
         fs.mkdirSync(TRANSFERS_DIR, { recursive: true });
@@ -1064,8 +1601,12 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // 10. Open file or transfers folder on desktop host system
+  // 10. Open file or transfers folder on desktop host system (Protected)
   if (url.pathname === '/api/transfers/open' && req.method === 'POST') {
+    if (!isRequestAuthorized(req)) {
+      rejectUnauthorized(res);
+      return;
+    }
     let body = '';
     req.on('data', (chunk) => (body += chunk));
     req.on('end', () => {
@@ -1096,8 +1637,12 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // 11. Download / Stream transferred file to client (mobile or desktop browser/viewer)
+  // 11. Download / Stream transferred file to client (Protected: mobile or desktop browser/viewer)
   if ((url.pathname.startsWith('/transfers/') || url.pathname === '/api/transfers/download') && (req.method === 'GET' || req.method === 'HEAD')) {
+    if (!isRequestAuthorized(req)) {
+      rejectUnauthorized(res);
+      return;
+    }
     let rawFilename = '';
     if (url.pathname === '/api/transfers/download') {
       rawFilename = url.searchParams.get('filename') || '';
@@ -1125,6 +1670,64 @@ const server = http.createServer((req, res) => {
     });
 
     fs.createReadStream(pathInfo.finalPath).pipe(res);
+    return;
+  }
+
+  // 12. Audio Status Endpoint
+  if (url.pathname === '/api/audio/status' && req.method === 'GET') {
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+    });
+    const isPlaying = checkIsAudioPlaying() || activeAudioStreams.size > 0;
+    res.end(
+      JSON.stringify({
+        isPlaying,
+        isStreamingToMobile: activeAudioStreams.size > 0,
+        activeListeners: activeAudioStreams.size,
+        format: 'MP3 (48 kHz Stereo)',
+        bitrate: '192 kbps',
+        source: 'Desktop PipeWire Output',
+      })
+    );
+    return;
+  }
+
+  // 13. Audio Stream Endpoint (Live desktop audio stream to mobile)
+  if (url.pathname === '/api/audio/stream' && (req.method === 'GET' || req.method === 'HEAD')) {
+    if (req.method === 'HEAD') {
+      res.writeHead(200, {
+        'Content-Type': 'audio/mpeg',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+      });
+      res.end();
+      return;
+    }
+
+    res.writeHead(200, {
+      'Content-Type': 'audio/mpeg',
+      'Transfer-Encoding': 'chunked',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+    });
+
+    activeAudioStreams.add(res);
+    startAudioBroadcaster();
+    broadcastAudioStatus();
+
+    const cleanup = () => {
+      activeAudioStreams.delete(res);
+      stopAudioBroadcasterIfNoClients();
+      broadcastAudioStatus();
+    };
+
+    req.on('close', cleanup);
+    req.on('end', cleanup);
+    res.on('error', cleanup);
     return;
   }
 

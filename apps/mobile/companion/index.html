@@ -3,30 +3,66 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <link rel="icon" type="image/png" href="icon.png">
+  <link rel="apple-touch-icon" href="icon.png">
   <title>Soko Mobile Companion</title>
   <style>
     :root {
-      --bg-base: #08090A;
-      --bg-surface: #121417;
-      --bg-surface-elevated: #181B20;
-      --border-subtle: rgba(255, 255, 255, 0.08);
-      --border-focus: rgba(94, 106, 210, 0.5);
-      --brand: #5E6AD2;
-      --brand-hover: #6E7BE2;
+      --bg-base: #090B10;
+      --bg-surface: #131722;
+      --bg-surface-elevated: #1A202C;
+      --bg-surface-glass: rgba(19, 23, 34, 0.88);
+      --border-subtle: rgba(255, 255, 255, 0.12);
+      --border-hover: rgba(255, 255, 255, 0.22);
+      --border-focus: rgba(99, 102, 241, 0.6);
+      --brand: #6366F1;
+      --brand-hover: #4F46E5;
+      --brand-glow: rgba(99, 102, 241, 0.35);
       --text-primary: #FFFFFF;
-      --text-secondary: #8A8F98;
-      --text-tertiary: #565A61;
-      --color-green: #30D158;
+      --text-secondary: #A0AEC0;
+      --text-tertiary: #718096;
+      --color-green: #10B981;
+      --color-green-glow: rgba(16, 185, 129, 0.3);
       --color-amber: #F59E0B;
-      --color-red: #EB5757;
+      --color-amber-glow: rgba(245, 158, 11, 0.3);
+      --color-red: #EF4444;
+      --color-red-glow: rgba(239, 68, 68, 0.3);
       --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+      --tab-height: 64px;
+      /* Safe Area View insets with fallback minimums */
+      --safe-top: max(env(safe-area-inset-top, 0px), 18px);
+      --safe-bottom: max(env(safe-area-inset-bottom, 0px), 20px);
+      --safe-left: max(env(safe-area-inset-left, 0px), 16px);
+      --safe-right: max(env(safe-area-inset-right, 0px), 16px);
     }
 
-    * {
+    /* Completely hide scrollbars across all browsers/devices while keeping smooth touch scrolling */
+    html, body, * {
       box-sizing: border-box;
       margin: 0;
       padding: 0;
       -webkit-tap-highlight-color: transparent;
+      user-select: none;
+      scrollbar-width: none !important;
+      -ms-overflow-style: none !important;
+    }
+
+    *::-webkit-scrollbar,
+    ::-webkit-scrollbar {
+      display: none !important;
+      width: 0 !important;
+      height: 0 !important;
+      background: transparent !important;
+    }
+
+    *::-webkit-scrollbar-thumb,
+    ::-webkit-scrollbar-thumb {
+      display: none !important;
+      background: transparent !important;
+    }
+
+    input, textarea {
+      user-select: auto;
     }
 
     body {
@@ -37,19 +73,33 @@
       display: flex;
       flex-direction: column;
       overflow-x: hidden;
-      padding: env(safe-area-inset-top, 16px) env(safe-area-inset-right, 16px) env(safe-area-inset-bottom, 24px) env(safe-area-inset-left, 16px);
+      /* Safe Area View Padding */
+      padding-top: var(--safe-top);
+      padding-bottom: calc(var(--tab-height) + var(--safe-bottom) + 24px);
+      padding-left: var(--safe-left);
+      padding-right: var(--safe-right);
+      background-image: 
+        radial-gradient(circle at 50% 0%, rgba(99, 102, 241, 0.08) 0%, transparent 60%),
+        radial-gradient(circle at 100% 100%, rgba(16, 185, 129, 0.05) 0%, transparent 40%);
+      background-attachment: fixed;
     }
 
+    /* Top App Bar */
     header {
       display: flex;
       align-items: center;
       justify-content: space-between;
       padding: 12px 16px;
-      background: var(--bg-surface);
+      background: var(--bg-surface-glass);
       border: 1px solid var(--border-subtle);
-      border-radius: 18px;
+      border-radius: 20px;
       margin-bottom: 16px;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+      position: sticky;
+      top: var(--safe-top);
+      z-index: 50;
     }
 
     .header-brand {
@@ -59,29 +109,31 @@
     }
 
     .bot-avatar {
-      width: 36px;
-      height: 36px;
+      width: 40px;
+      height: 40px;
       background: #000;
-      border: 1px solid rgba(255, 255, 255, 0.15);
-      border-radius: 10px;
+      border: 1.5px solid rgba(255, 255, 255, 0.2);
+      border-radius: 12px;
       display: flex;
       align-items: center;
       justify-content: center;
       position: relative;
       cursor: pointer;
-      transition: transform 0.2s ease;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+      transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
     }
 
     .bot-avatar:active {
-      transform: scale(0.92);
+      transform: scale(0.9);
     }
 
     .bot-eye {
-      width: 4px;
-      height: 8px;
+      width: 5px;
+      height: 10px;
       background: #fff;
-      border-radius: 2px;
+      border-radius: 2.5px;
       transition: all 0.15s ease;
+      box-shadow: 0 0 6px rgba(255, 255, 255, 0.8);
     }
 
     .bot-eyes-container {
@@ -91,177 +143,325 @@
     }
 
     .header-titles h1 {
-      font-size: 15px;
+      font-size: 16px;
       font-weight: 700;
       letter-spacing: -0.3px;
       color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
 
     .header-titles p {
       font-size: 11px;
       color: var(--text-secondary);
       font-family: ui-monospace, SFMono-Regular, monospace;
+      letter-spacing: 0.2px;
     }
 
     .conn-pill {
       display: flex;
       align-items: center;
-      gap: 6px;
-      padding: 6px 10px;
-      background: rgba(0, 0, 0, 0.4);
+      gap: 7px;
+      padding: 6px 12px;
+      background: rgba(0, 0, 0, 0.55);
       border: 1px solid var(--border-subtle);
       border-radius: 100px;
       font-size: 11px;
+      font-weight: 600;
       font-family: ui-monospace, monospace;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .conn-pill:active {
+      transform: scale(0.95);
+      background: rgba(255, 255, 255, 0.08);
     }
 
     .status-dot {
-      width: 7px;
-      height: 7px;
+      width: 8px;
+      height: 8px;
       border-radius: 50%;
       background: var(--color-red);
-      transition: background-color 0.3s ease;
+      box-shadow: 0 0 6px var(--color-red-glow);
+      transition: all 0.3s ease;
     }
 
     .status-dot.online {
       background: var(--color-green);
-      box-shadow: 0 0 8px rgba(48, 209, 88, 0.5);
+      box-shadow: 0 0 10px var(--color-green-glow);
     }
 
     .status-dot.connecting {
       background: var(--color-amber);
-      animation: pulse 1s infinite;
+      box-shadow: 0 0 10px var(--color-amber-glow);
+      animation: pulse-beacon 1.2s infinite;
     }
 
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.4; }
+    @keyframes pulse-beacon {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
     }
 
-    .container {
+    /* Container for Views */
+    .view-container {
+      max-width: 620px;
+      width: 100%;
+      margin: 0 auto;
       display: flex;
       flex-direction: column;
       gap: 16px;
-      max-width: 600px;
-      width: 100%;
-      margin: 0 auto;
     }
 
+    .tab-content {
+      display: none;
+      animation: tab-enter 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    .tab-content.active {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    @keyframes tab-enter {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    /* Glass Cards */
     .card {
       background: var(--bg-surface);
       border: 1px solid var(--border-subtle);
-      border-radius: 16px;
-      padding: 16px;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+      border-radius: 20px;
+      padding: 18px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      position: relative;
+      overflow: hidden;
     }
 
     .card-title {
-      font-size: 12px;
+      font-size: 13px;
       text-transform: uppercase;
       font-weight: 700;
       letter-spacing: 0.8px;
-      color: var(--text-tertiary);
-      margin-bottom: 12px;
+      color: var(--text-secondary);
+      margin-bottom: 14px;
       display: flex;
       align-items: center;
       justify-content: space-between;
     }
 
+    .card-title-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #fff;
+    }
+
+    /* Status Banners */
+    .info-banner {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      font-size: 12px;
+      line-height: 1.5;
+      margin-bottom: 12px;
+    }
+
+    .info-banner.offline {
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.25);
+      color: #FCA5A5;
+    }
+
+    .info-banner.online {
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.25);
+      color: #6EE7B7;
+    }
+
+    .info-banner.hint {
+      background: rgba(99, 102, 241, 0.1);
+      border: 1px solid rgba(99, 102, 241, 0.25);
+      color: #C7D2FE;
+    }
+
+    .info-banner-icon {
+      flex-shrink: 0;
+      width: 18px;
+      height: 18px;
+      margin-top: 1px;
+    }
+
+    /* Form Inputs */
+    .input-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+      display: block;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
     .ip-row {
       display: flex;
-      gap: 8px;
+      gap: 10px;
       margin-bottom: 12px;
     }
 
     .ip-input {
       flex: 1;
-      background: #08090A;
-      border: 1px solid var(--border-subtle);
-      border-radius: 10px;
-      padding: 10px 14px;
+      background: #0B0E14;
+      border: 1.5px solid var(--border-subtle);
+      border-radius: 12px;
+      padding: 12px 16px;
       color: #fff;
-      font-size: 13px;
-      font-family: ui-monospace, monospace;
+      font-size: 14px;
+      font-family: ui-monospace, SFMono-Regular, monospace;
       outline: none;
-      transition: border-color 0.2s;
+      transition: all 0.2s ease;
     }
 
     .ip-input:focus {
       border-color: var(--brand);
+      box-shadow: 0 0 12px var(--brand-glow);
     }
 
+    .input-field {
+      width: 100%;
+      background: #0B0E14;
+      border: 1.5px solid var(--border-subtle);
+      border-radius: 12px;
+      padding: 11px 14px;
+      color: #fff;
+      font-size: 13px;
+      outline: none;
+      transition: all 0.2s ease;
+    }
+
+    .input-field:focus {
+      border-color: var(--brand);
+      box-shadow: 0 0 12px var(--brand-glow);
+    }
+
+    /* Interactive Buttons */
     .btn {
       background: var(--brand);
       color: #fff;
       border: none;
-      border-radius: 10px;
-      padding: 10px 16px;
+      border-radius: 12px;
+      padding: 12px 18px;
       font-size: 13px;
       font-weight: 600;
       cursor: pointer;
-      display: flex;
+      display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 6px;
-      transition: background 0.2s, transform 0.1s;
+      gap: 8px;
+      transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: 0 4px 14px rgba(99, 102, 241, 0.3);
+      position: relative;
+      overflow: hidden;
     }
 
     .btn:active {
       transform: scale(0.96);
+      filter: brightness(1.15);
     }
 
     .btn-secondary {
-      background: rgba(255, 255, 255, 0.06);
+      background: rgba(255, 255, 255, 0.07);
       border: 1px solid var(--border-subtle);
       color: var(--text-primary);
+      box-shadow: none;
     }
 
-    .btn-secondary:hover {
-      background: rgba(255, 255, 255, 0.1);
+    .btn-secondary:hover, .btn-secondary:active {
+      background: rgba(255, 255, 255, 0.12);
+      border-color: var(--border-hover);
     }
 
-    .sas-box {
-      background: #08090A;
-      border: 1px dashed rgba(94, 106, 210, 0.4);
-      border-radius: 12px;
-      padding: 12px;
-      display: flex;
+    .btn-success {
+      background: var(--color-green);
+      box-shadow: 0 4px 14px var(--color-green-glow);
+    }
+
+    .btn-danger {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.35);
+      color: #F87171;
+      box-shadow: none;
+    }
+
+    /* Badges */
+    .badge {
+      font-size: 11px;
+      padding: 4px 10px;
+      border-radius: 100px;
+      font-weight: 600;
+      display: inline-flex;
       align-items: center;
-      justify-content: space-between;
-      margin-top: 8px;
-    }
-
-    .sas-code {
-      font-size: 22px;
-      font-weight: 700;
-      letter-spacing: 4px;
-      color: #fff;
+      gap: 5px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
       font-family: ui-monospace, monospace;
     }
 
-    .sas-badge {
-      font-size: 10px;
-      padding: 4px 8px;
-      border-radius: 6px;
-      background: rgba(48, 209, 88, 0.15);
-      border: 1px solid rgba(48, 209, 88, 0.3);
+    .badge.green {
+      background: rgba(16, 185, 129, 0.15);
+      border-color: rgba(16, 185, 129, 0.3);
       color: var(--color-green);
-      font-weight: 600;
     }
 
-    /* Notification App Grid */
+    .badge.amber {
+      background: rgba(245, 158, 11, 0.15);
+      border-color: rgba(245, 158, 11, 0.3);
+      color: var(--color-amber);
+    }
+
+    .badge.red {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: rgba(239, 68, 68, 0.3);
+      color: var(--color-red);
+    }
+
+    /* SAS PIN Box */
+    .sas-box {
+      background: #0B0E14;
+      border: 1.5px dashed rgba(99, 102, 241, 0.4);
+      border-radius: 16px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 8px;
+    }
+
+    /* App Grids */
     .notif-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 10px;
-      margin-bottom: 12px;
+      gap: 12px;
+      margin-bottom: 14px;
     }
 
     .notif-btn {
       background: var(--bg-surface-elevated);
       border: 1px solid var(--border-subtle);
-      border-radius: 12px;
-      padding: 12px 8px;
+      border-radius: 14px;
+      padding: 14px 10px;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -272,18 +472,19 @@
     }
 
     .notif-btn:active {
-      transform: scale(0.95);
+      transform: scale(0.94);
       border-color: rgba(255, 255, 255, 0.3);
+      background: rgba(255, 255, 255, 0.1);
     }
 
     .app-icon-wrap {
-      width: 32px;
-      height: 32px;
-      border-radius: 8px;
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
       display: flex;
       align-items: center;
       justify-content: center;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
     }
 
     .notif-btn span {
@@ -292,31 +493,7 @@
       letter-spacing: -0.2px;
     }
 
-    /* Custom Notification inputs */
-    .custom-notif-inputs {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      margin-top: 10px;
-      padding-top: 10px;
-      border-top: 1px solid var(--border-subtle);
-    }
-
-    .input-field {
-      background: #08090A;
-      border: 1px solid var(--border-subtle);
-      border-radius: 8px;
-      padding: 8px 12px;
-      color: #fff;
-      font-size: 12px;
-      outline: none;
-    }
-
-    .input-field:focus {
-      border-color: var(--brand);
-    }
-
-    /* CLI Grid */
+    /* Remote CLI Grid */
     .cli-grid {
       display: grid;
       grid-template-columns: repeat(2, 1fr);
@@ -327,8 +504,8 @@
     .cli-card {
       background: var(--bg-surface-elevated);
       border: 1px solid var(--border-subtle);
-      border-radius: 12px;
-      padding: 12px;
+      border-radius: 14px;
+      padding: 12px 14px;
       display: flex;
       flex-direction: column;
       gap: 4px;
@@ -340,6 +517,7 @@
     .cli-card:active {
       transform: scale(0.96);
       border-color: var(--brand);
+      background: rgba(99, 102, 241, 0.15);
     }
 
     .cli-card-title {
@@ -351,79 +529,169 @@
     .cli-card-cmd {
       font-size: 10px;
       font-family: ui-monospace, monospace;
-      color: var(--brand);
+      color: #818CF8;
     }
 
     /* Terminal Console */
     .terminal-box {
       background: #000;
       border: 1px solid var(--border-subtle);
-      border-radius: 10px;
-      padding: 10px 12px;
+      border-radius: 14px;
+      padding: 12px 14px;
       font-family: ui-monospace, SFMono-Regular, monospace;
       font-size: 11px;
-      color: #30D158;
-      max-height: 120px;
+      color: #34D399;
+      max-height: 160px;
       overflow-y: auto;
       white-space: pre-wrap;
-      line-height: 1.4;
+      line-height: 1.5;
       margin-top: 8px;
+      box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.8);
     }
 
-    /* File Transfer */
-    .transfer-box {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-
+    /* File Progress */
     .progress-bar-wrap {
       width: 100%;
-      height: 6px;
+      height: 8px;
       background: #000;
-      border-radius: 3px;
+      border-radius: 4px;
       overflow: hidden;
       border: 1px solid var(--border-subtle);
+      margin: 8px 0;
     }
 
     .progress-bar-fill {
       height: 100%;
       width: 0%;
-      background: linear-gradient(90deg, var(--brand), var(--color-green));
-      border-radius: 3px;
-      transition: width 0.3s ease;
+      background: linear-gradient(90deg, var(--brand), var(--color-green), var(--brand));
+      background-size: 200% 100%;
+      border-radius: 4px;
+      transition: width 0.25s ease;
+      animation: progress-shimmer 2s linear infinite;
+    }
+
+    @keyframes progress-shimmer {
+      0% { background-position: 0% 0%; }
+      100% { background-position: 200% 0%; }
     }
 
     .transfer-stats {
       display: flex;
       justify-content: space-between;
-      font-size: 10px;
+      font-size: 11px;
       font-family: ui-monospace, monospace;
       color: var(--text-secondary);
+      font-weight: 500;
     }
 
-    /* Toast */
+    /* Bottom Navigation Bar */
+    .bottom-nav {
+      position: fixed;
+      bottom: var(--safe-bottom);
+      left: 50%;
+      transform: translateX(-50%);
+      width: calc(100% - (var(--safe-left) + var(--safe-right)));
+      max-width: 500px;
+      height: var(--tab-height);
+      background: var(--bg-surface-glass);
+      border: 1.5px solid var(--border-subtle);
+      border-radius: 26px;
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      display: flex;
+      align-items: center;
+      justify-content: space-around;
+      padding: 6px 8px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+      z-index: 100;
+    }
+
+    .nav-item {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      padding: 6px 0;
+      border-radius: 18px;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      position: relative;
+    }
+
+    .nav-item:active {
+      transform: scale(0.92);
+    }
+
+    .nav-item.active {
+      color: #fff;
+    }
+
+    .nav-item.active .nav-icon {
+      color: var(--brand);
+      transform: translateY(-2px);
+    }
+
+    .nav-item.active .nav-label {
+      color: #fff;
+      font-weight: 600;
+    }
+
+    .nav-icon {
+      width: 20px;
+      height: 20px;
+      transition: transform 0.2s ease, color 0.2s ease;
+    }
+
+    .nav-label {
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.1px;
+      transition: color 0.2s ease;
+    }
+
+    .nav-indicator {
+      position: absolute;
+      top: 4px;
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--brand);
+      box-shadow: 0 0 8px var(--brand-glow);
+      display: none;
+    }
+
+    .nav-item.active .nav-indicator {
+      display: block;
+    }
+
+    /* Toast Notification */
     #toast {
       position: fixed;
-      bottom: 24px;
+      top: calc(var(--safe-top) + 72px);
       left: 50%;
-      transform: translateX(-50%) translateY(100px);
-      background: rgba(18, 20, 23, 0.95);
-      border: 1px solid rgba(255, 255, 255, 0.15);
+      transform: translateX(-50%) translateY(-20px);
+      background: rgba(22, 27, 38, 0.96);
+      border: 1.5px solid rgba(255, 255, 255, 0.18);
       color: #fff;
-      padding: 10px 18px;
+      padding: 12px 20px;
       border-radius: 100px;
-      font-size: 12px;
-      font-weight: 500;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
-      backdrop-filter: blur(16px);
+      font-size: 13px;
+      font-weight: 600;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
       pointer-events: none;
-      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease;
+      transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.25s ease;
       opacity: 0;
       z-index: 9999;
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 10px;
+      white-space: nowrap;
+      max-width: 90vw;
     }
 
     #toast.show {
@@ -432,265 +700,352 @@
     }
 
     .toast-dot {
-      width: 6px;
-      height: 6px;
+      width: 8px;
+      height: 8px;
       border-radius: 50%;
       background: var(--brand);
+      box-shadow: 0 0 8px var(--brand-glow);
     }
   </style>
 </head>
 <body>
 
-  <!-- Top Header / Navigation -->
+  <!-- Top App Header -->
   <header>
     <div class="header-brand">
-      <div class="bot-avatar" id="mascotBot" title="Grok Bot Mascot">
+      <div class="bot-avatar" id="mascotBot" title="Grok Bot Mascot — Tap to animate">
         <div class="bot-eyes-container">
           <div class="bot-eye" id="eyeLeft"></div>
           <div class="bot-eye" id="eyeRight"></div>
         </div>
       </div>
       <div class="header-titles">
-        <h1>Soko Companion</h1>
-        <p>Mobile Controller</p>
+        <h1>Soko Mobile</h1>
+        <p>Companion Controller</p>
       </div>
     </div>
 
-    <div class="conn-pill" id="connPill">
+    <div class="conn-pill" id="connPill" onclick="switchTab('tab-link')" title="Tap to open Connection Manager">
       <div class="status-dot" id="statusDot"></div>
       <span id="connLabel">Offline</span>
     </div>
   </header>
 
-  <div class="container">
+  <div class="view-container">
 
-    <!-- Connection & Pairing Card -->
-    <div class="card">
-      <div class="card-title">
-        <span>Desktop Link & SAS Pairing</span>
-        <span id="pingBadge" style="font-family: ui-monospace; font-size: 10px; color: var(--text-secondary);">-- ms</span>
-      </div>
+    <!-- ============================================================ -->
+    <!-- TAB 1: LINK & PAIRING -->
+    <!-- ============================================================ -->
+    <div id="tab-link" class="tab-content active">
 
-      <div class="ip-row">
-        <input type="text" id="bridgeIpInput" class="ip-input" placeholder="Desktop IP:Port (e.g. 192.168.31.210:8766)" spellcheck="false" autocomplete="off" />
-        <button class="btn" id="btnConnect" onclick="toggleConnection()">Connect</button>
-      </div>
-
-      <div class="sas-box">
-        <div>
-          <div style="font-size: 9px; text-transform: uppercase; color: var(--text-tertiary); letter-spacing: 0.5px; font-weight: 700;">SAS Pair Confirmation PIN</div>
-          <div class="sas-code" id="sasPinDisplay">482 195</div>
-        </div>
-        <div class="sas-badge" id="pairStatusBadge">PIN Matched</div>
-      </div>
-    </div>
-
-    <!-- Real Android System Notifications Access Card -->
-    <div class="card" id="realNotifCard">
-      <div class="card-title">
-        <span>Real Android Notification Interceptor</span>
-        <span class="sas-badge" id="notifAccessBadge">Checking...</span>
-      </div>
-      <p style="font-size: 11px; color: var(--text-secondary); margin-bottom: 10px; line-height: 1.5;">
-        Intercepts incoming notifications from WhatsApp, Gmail, Slack, Telegram, SMS, and other phone apps in real time and mirrors them to desktop.
-      </p>
-      <button class="btn" id="btnGrantNotifAccess" onclick="requestRealNotificationAccess()" style="width: 100%; background: #5E6AD2;">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
-          <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+      <!-- Dynamic Status Guidance Card -->
+      <div id="connectionGuideBanner" class="info-banner offline">
+        <svg class="info-banner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
         </svg>
-        <span id="btnGrantNotifText">Grant Notification Access in Android Settings</span>
-      </button>
+        <div id="connectionGuideText">
+          <strong>Desktop Not Connected</strong><br>
+          Ensure Soko is running on your PC and both devices are on the same Wi-Fi network (or your mobile hotspot).
+        </div>
+      </div>
+
+      <!-- Connection Manager Card -->
+      <div class="card">
+        <div class="card-title">
+          <div class="card-title-left">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
+              <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
+              <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+              <line x1="12" y1="20" x2="12.01" y2="20"></line>
+            </svg>
+            <span>Desktop Connection</span>
+          </div>
+          <span class="badge" id="pingBadge">-- ms</span>
+        </div>
+
+        <label class="input-label">Desktop IP & Port</label>
+        <div class="ip-row">
+          <input type="text" id="bridgeIpInput" class="ip-input" placeholder="e.g. 192.168.31.210:8766" spellcheck="false" autocomplete="off" />
+          <button class="btn" id="btnConnect" onclick="toggleConnection()">Connect</button>
+        </div>
+
+        <!-- Quick IP Presets -->
+        <div style="display: flex; gap: 8px; margin-bottom: 12px; overflow-x: auto; padding-bottom: 2px;">
+          <button class="badge" style="cursor: pointer;" onclick="setPresetIp('192.168.31.210:8766')">Wi-Fi IP</button>
+          <button class="badge" style="cursor: pointer;" onclick="setPresetIp('192.168.43.1:8766')">Hotspot IP</button>
+          <button class="badge" style="cursor: pointer;" onclick="setPresetIp('127.0.0.1:8766')">Localhost</button>
+        </div>
+
+        <!-- SAS 6-Digit PIN Pairing -->
+        <div class="sas-box">
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-secondary); letter-spacing: 0.5px;">
+              Pairing Security (6-Digit PIN)
+            </span>
+            <span class="badge" id="pairStatusBadge">Unpaired</span>
+          </div>
+
+          <div style="display: flex; gap: 10px; align-items: center;">
+            <input
+              type="text"
+              id="sasPinInput"
+              class="ip-input"
+              maxlength="7"
+              placeholder="000 000"
+              style="font-size: 20px; font-weight: 700; letter-spacing: 4px; text-align: center; max-width: 170px; padding: 10px 12px;"
+              autocomplete="off"
+              spellcheck="false"
+              oninput="handlePinInput(this)"
+              onkeydown="if(event.key === 'Enter') requestPairing()"
+            />
+            <button class="btn" id="btnPairDevice" onclick="requestPairing()" style="flex: 1; white-space: nowrap;">
+              Pair & Verify
+            </button>
+            <button class="btn btn-danger" id="btnUnpairDevice" onclick="unpairDevice()" style="display: none; padding: 10px 14px;">
+              Unlink
+            </button>
+          </div>
+
+          <div id="pairHint" style="font-size: 12px; color: var(--text-secondary); line-height: 1.5;">
+            Look at the top of your desktop screen for the 6-digit PIN to securely pair.
+          </div>
+        </div>
+      </div>
+
+      <!-- Android System Permissions Card -->
+      <div class="card" id="realNotifCard">
+        <div class="card-title">
+          <div class="card-title-left">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+              <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+            </svg>
+            <span>Android System Permissions</span>
+          </div>
+          <span class="badge" id="notifAccessBadge">Checking...</span>
+        </div>
+
+        <p style="font-size: 12px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 12px;">
+          Enable Soko's background listener to mirror phone calls, WhatsApp, Telegram, and system alerts to your PC Dynamic Island.
+        </p>
+
+        <button class="btn btn-secondary" id="btnGrantNotifAccess" onclick="requestRealNotificationAccess()" style="width: 100%; margin-bottom: 10px;">
+          <span id="btnGrantNotifText">Grant Notification Access in Settings</span>
+        </button>
+
+        <div style="border-top: 1px solid var(--border-subtle); padding-top: 12px; display: flex; flex-direction: column; gap: 8px;">
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <span style="font-size: 12px; font-weight: 600; color: #fff;">Background Keep-Alive</span>
+            <span class="badge" id="batterySaverBadge">Checking...</span>
+          </div>
+          <p style="font-size: 11px; color: var(--text-secondary); line-height: 1.4;">
+            Prevents Android from closing Soko when the phone is locked or on battery saver.
+          </p>
+          <button class="btn btn-secondary" id="btnBatteryWhitelist" onclick="requestBatteryWhitelist()" style="width: 100%;">
+            <span id="btnBatteryWhitelistText">Disable Battery Saver Limits</span>
+          </button>
+        </div>
+      </div>
+
     </div>
 
-    <!-- 1-Tap Notification Mirroring Deck -->
-    <div class="card">
-      <div class="card-title">
-        <span>Mirror Notification to Island</span>
-        <span style="font-size: 10px; color: var(--brand); font-weight: normal;">1-Tap Send</span>
-      </div>
-
-      <div class="notif-grid">
-        <!-- WhatsApp -->
-        <button class="notif-btn" onclick="sendPresetNotif('WhatsApp', 'com.whatsapp', 'Alex Rivera', 'Hey, are you free to test the new Dynamic Island update?')">
-          <div class="app-icon-wrap" style="background: #25D366;">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
+    <!-- ============================================================ -->
+    <!-- TAB 2: ALERTS & NOTIFICATIONS -->
+    <!-- ============================================================ -->
+    <div id="tab-alerts" class="tab-content">
+      <div class="card">
+        <div class="card-title">
+          <div class="card-title-left">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+              <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
             </svg>
+            <span>Live Alert Mirroring</span>
           </div>
-          <span>WhatsApp</span>
-        </button>
+          <span class="badge green">Ready</span>
+        </div>
 
-        <!-- Slack -->
-        <button class="notif-btn" onclick="sendPresetNotif('Slack', 'com.Slack', 'Sarah (Core Team)', '#general: Desktop dynamic island build #429 finished!')">
-          <div class="app-icon-wrap" style="background: #4A154B;">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#E01E5A" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <rect width="3" height="8" x="13" y="2" rx="1.5" />
-              <path d="M19 8.5V10h1.5A1.5 1.5 0 1 0 19 8.5" />
-              <rect width="3" height="8" x="8" y="14" rx="1.5" />
-              <path d="M5 15.5V14H3.5A1.5 1.5 0 1 0 5 15.5" />
-            </svg>
+        <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 14px; line-height: 1.5;">
+          Tap any app below to test mirroring directly to your desktop Dynamic Island with full brand styling and sound.
+        </p>
+
+        <!-- Notification App Grid -->
+        <div class="notif-grid">
+          <button class="notif-btn" onclick="sendPresetNotif('WhatsApp', 'com.whatsapp', 'Sarah Jenkins', 'Hey! Are we still reviewing the design mockups today?')">
+            <div class="app-icon-wrap" style="background: #25D366;">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 6.46 17.5 2 12.04 2Z"/></svg>
+            </div>
+            <span>WhatsApp</span>
+          </button>
+
+          <button class="notif-btn" onclick="sendPresetNotif('Telegram', 'org.telegram.messenger', 'Dev Channel', '🚀 Soko v1.0 released with pipewire audio streaming!')">
+            <div class="app-icon-wrap" style="background: #0088CC;">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.52 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/></svg>
+            </div>
+            <span>Telegram</span>
+          </button>
+
+          <button class="notif-btn" onclick="sendPresetNotif('Slack', 'com.slack', '#engineering', 'Antigravity CLI tests are passing on all branches.')">
+            <div class="app-icon-wrap" style="background: #4A154B;">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M5.04 15.65a2.52 2.52 0 1 1-2.52-2.52h2.52v2.52zm1.26 0a2.52 2.52 0 1 1 5.04 0v6.3a2.52 2.52 0 1 1-5.04 0v-6.3zm2.52-6.93a2.52 2.52 0 1 1 2.52-2.52v2.52H8.82zm0 1.26a2.52 2.52 0 1 1 0 5.04H2.52a2.52 2.52 0 1 1 0-5.04h6.3z"/></svg>
+            </div>
+            <span>Slack</span>
+          </button>
+
+          <button class="notif-btn" onclick="sendPresetNotif('Gmail', 'com.google.android.gm', 'GitHub Security', 'Your personal access token will expire in 3 days.')">
+            <div class="app-icon-wrap" style="background: #EA4335;">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg>
+            </div>
+            <span>Gmail</span>
+          </button>
+
+          <button class="notif-btn" onclick="sendPresetNotif('Instagram', 'com.instagram.android', 'alex_dev', 'shared a reel: Dynamic Island on Linux & Android!')">
+            <div class="app-icon-wrap" style="background: radial-gradient(circle at 30% 107%, #fdf497 0%, #fdf497 5%, #fd5949 45%, #d6249f 60%, #285AEB 90%);">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>
+            </div>
+            <span>Instagram</span>
+          </button>
+
+          <button class="notif-btn" onclick="sendPresetNotif('GitHub', 'com.github.android', 'soko-desktop', 'PR #42: Smooth Apple spring physics approved by team.')">
+            <div class="app-icon-wrap" style="background: #24292E;">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+            </div>
+            <span>GitHub</span>
+          </button>
+        </div>
+
+        <!-- Custom Notification Form -->
+        <div style="border-top: 1px solid var(--border-subtle); padding-top: 14px;">
+          <span class="input-label">Custom Message Composer</span>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <input type="text" id="custApp" class="input-field" placeholder="App Name (e.g. Messages, Bank, Calendar)" />
+            <input type="text" id="custTitle" class="input-field" placeholder="Notification Title (e.g. New Message, Alert)" />
+            <textarea id="custBody" class="input-field" rows="2" placeholder="Message Body text to display in Dynamic Island..."></textarea>
+            <button class="btn" onclick="sendCustomNotif()" style="width: 100%;">
+              Send Custom Alert to Island
+            </button>
           </div>
-          <span>Slack</span>
-        </button>
-
-        <!-- Telegram -->
-        <button class="notif-btn" onclick="sendPresetNotif('Telegram', 'org.telegram.messenger', 'Pavel Durov', 'Direct file transfer verified at 42 MB/s on hotspot link.')">
-          <div class="app-icon-wrap" style="background: #229ED9;">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="22" y1="2" x2="11" y2="13"></line>
-              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-            </svg>
-          </div>
-          <span>Telegram</span>
-        </button>
-
-        <!-- GitHub -->
-        <button class="notif-btn" onclick="sendPresetNotif('GitHub', 'com.github.android', 'octocat', 'Pull request #18: Dual protocol link merged into master')">
-          <div class="app-icon-wrap" style="background: #24292F;">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path>
-            </svg>
-          </div>
-          <span>GitHub</span>
-        </button>
-
-        <!-- Gmail -->
-        <button class="notif-btn" onclick="sendPresetNotif('Gmail', 'com.google.android.gm', 'Google Cloud', 'Your Soko bridge node is healthy across local interfaces.')">
-          <div class="app-icon-wrap" style="background: #EA4335;">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
-              <polyline points="22,6 12,13 2,6"></polyline>
-            </svg>
-          </div>
-          <span>Gmail</span>
-        </button>
-
-        <!-- Discord -->
-        <button class="notif-btn" onclick="sendPresetNotif('Discord', 'com.discord', '#announcements', 'New monochrome OLED mascot expressions deployed!')">
-          <div class="app-icon-wrap" style="background: #5865F2;">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="9" cy="12" r="1.5"></circle>
-              <circle cx="15" cy="12" r="1.5"></circle>
-              <path d="M7.5 7.5c3.5-1 5.5-1 9 0 1.5 3 2.5 7 2.5 9-2 1.5-4 1.5-6 1.5l-.5-1c2-.5 3-1.5 3-1.5-2 1-5 1.5-8 1.5s-6-.5-8-1.5c0 0 1 1 3 1.5l-.5 1c-2 0-4 0-6-1.5 0-2 1-6 2.5-9z"></path>
-            </svg>
-          </div>
-          <span>Discord</span>
-        </button>
-      </div>
-
-      <!-- Custom notification inputs -->
-      <div class="custom-notif-inputs">
-        <input type="text" id="custApp" class="input-field" placeholder="App Name (e.g. Messages)" value="Messages" />
-        <input type="text" id="custTitle" class="input-field" placeholder="Sender / Title (e.g. Elena)" value="Elena Vance" />
-        <input type="text" id="custBody" class="input-field" placeholder="Notification message text..." value="Hey! Dynamic Island is receiving live notifications from mobile." />
-        <button class="btn btn-secondary" onclick="sendCustomNotif()">Send Custom Notification to Island</button>
+        </div>
       </div>
     </div>
 
-    <!-- Remote CLI Execution -->
-    <div class="card">
-      <div class="card-title">
-        <span>Remote CLI Agent Controls</span>
-        <span style="font-size: 10px; color: var(--text-secondary);">Antigravity Hub</span>
+    <!-- ============================================================ -->
+    <!-- TAB 3: AUDIO STREAM -->
+    <!-- ============================================================ -->
+    <div id="tab-audio" class="tab-content">
+      <div class="card">
+        <div class="card-title">
+          <div class="card-title-left">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2">
+              <path d="M3 18v-6a9 9 0 0 1 18 0v6"></path>
+              <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path>
+            </svg>
+            <span>Wireless Desktop Audio</span>
+          </div>
+          <span class="badge green" id="audioStatusBadge">Idle</span>
+        </div>
+
+        <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 14px; line-height: 1.5;">
+          Listen to your computer's sound (YouTube, Spotify, games, movies) wirelessly through your phone's earbuds or speakers over Wi-Fi.
+        </p>
+
+        <!-- Visualizer & Sound Meta Box -->
+        <div style="background: #0B0E14; border: 1.5px solid var(--border-subtle); border-radius: 16px; padding: 16px; margin-bottom: 14px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <div id="audioVisualizerBars" style="display: flex; align-items: flex-end; gap: 3.5px; height: 24px;">
+                <span class="vbar" style="width: 3.5px; height: 6px; background: #10B981; border-radius: 2px; transition: height 0.08s ease;"></span>
+                <span class="vbar" style="width: 3.5px; height: 12px; background: #10B981; border-radius: 2px; transition: height 0.08s ease;"></span>
+                <span class="vbar" style="width: 3.5px; height: 18px; background: #10B981; border-radius: 2px; transition: height 0.08s ease;"></span>
+                <span class="vbar" style="width: 3.5px; height: 8px; background: #10B981; border-radius: 2px; transition: height 0.08s ease;"></span>
+                <span class="vbar" style="width: 3.5px; height: 16px; background: #10B981; border-radius: 2px; transition: height 0.08s ease;"></span>
+                <span class="vbar" style="width: 3.5px; height: 22px; background: #10B981; border-radius: 2px; transition: height 0.08s ease;"></span>
+                <span class="vbar" style="width: 3.5px; height: 14px; background: #10B981; border-radius: 2px; transition: height 0.08s ease;"></span>
+                <span class="vbar" style="width: 3.5px; height: 6px; background: #10B981; border-radius: 2px; transition: height 0.08s ease;"></span>
+              </div>
+              <span id="audioStreamMeta" style="font-size: 12px; font-family: ui-monospace, monospace; color: var(--text-primary); font-weight: 500;">
+                192 kbps • 48 kHz Stereo
+              </span>
+            </div>
+            <span class="badge green">~40ms Wi-Fi</span>
+          </div>
+
+          <!-- Volume Controls -->
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--text-secondary);">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+              <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+            </svg>
+            <input type="range" id="audioVolumeSlider" min="0" max="100" value="85" oninput="setStreamVolume(this.value)" style="flex: 1; accent-color: #10B981; cursor: pointer; height: 6px;" />
+            <span id="audioVolumeLabel" style="font-size: 11px; font-family: ui-monospace, monospace; color: var(--text-secondary); width: 36px; text-align: right;">85%</span>
+          </div>
+        </div>
+
+        <button class="btn btn-success" id="btnToggleAudio" onclick="toggleAudioStreaming()" style="width: 100%; font-size: 14px;">
+          <svg id="audioPlayIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+          <span id="btnAudioText">Start Listening to PC Sound</span>
+        </button>
+
+        <!-- Hidden Native HTML5 Audio Element -->
+        <audio id="desktopAudioPlayer" preload="none" playsinline></audio>
       </div>
-
-      <div class="cli-grid">
-        <button class="cli-card" onclick="executeRemoteCli('sysinfo', 'System Specs & Health')">
-          <div class="cli-card-title">System Specs</div>
-          <div class="cli-card-cmd">$ uname, uptime, RAM, disk</div>
-        </button>
-
-        <button class="cli-card" onclick="executeRemoteCli('mem', 'Memory & Swap Telemetry')">
-          <div class="cli-card-title">Memory & RAM</div>
-          <div class="cli-card-cmd">$ free -h</div>
-        </button>
-
-        <button class="cli-card" onclick="executeRemoteCli('disk', 'Storage & Filesystems')">
-          <div class="cli-card-title">Disk Storage</div>
-          <div class="cli-card-cmd">$ df -h (partitions)</div>
-        </button>
-
-        <button class="cli-card" onclick="executeRemoteCli('top-procs', 'Top CPU Processes')">
-          <div class="cli-card-title">Top Processes</div>
-          <div class="cli-card-cmd">$ ps top 6 CPU</div>
-        </button>
-
-        <button class="cli-card" onclick="executeRemoteCli('battery', 'Power & Battery')">
-          <div class="cli-card-title">Power / Battery</div>
-          <div class="cli-card-cmd">$ upower / battery</div>
-        </button>
-
-        <button class="cli-card" onclick="executeRemoteCli('net-stats', 'Network Interfaces')">
-          <div class="cli-card-title">Network & IPs</div>
-          <div class="cli-card-cmd">$ ip addr / route</div>
-        </button>
-
-        <button class="cli-card" onclick="executeRemoteCli('ports', 'Active Ports & Services')">
-          <div class="cli-card-title">Listening Ports</div>
-          <div class="cli-card-cmd">$ ss -tlpn (:8766)</div>
-        </button>
-
-        <button class="cli-card" onclick="executeRemoteCli('git-status', 'Git Workspace')">
-          <div class="cli-card-title">Git Status</div>
-          <div class="cli-card-cmd">$ git status & log</div>
-        </button>
-
-        <button class="cli-card" onclick="executeRemoteCli('status', 'Antigravity CLI Agent')">
-          <div class="cli-card-title">Agent Status</div>
-          <div class="cli-card-cmd">$ agy status</div>
-        </button>
-
-        <button class="cli-card" onclick="executeRemoteCli('test', 'Integration Test Suite')">
-          <div class="cli-card-title">Run Tests</div>
-          <div class="cli-card-cmd">$ agy test (30 suites)</div>
-        </button>
-      </div>
-
-      <div class="terminal-box" id="termLog">Ready for remote command execution...</div>
     </div>
 
-    <!-- High-Speed File Transfer -->
-    <div class="card">
-      <div class="card-title">
-        <span>High-Speed File Transfer</span>
-        <span style="font-size: 10px; color: var(--color-green);">42 MB/s Burst</span>
-      </div>
+    <!-- ============================================================ -->
+    <!-- TAB 4: FILE TRANSFER -->
+    <!-- ============================================================ -->
+    <div id="tab-files" class="tab-content">
+      <div class="card">
+        <div class="card-title">
+          <div class="card-title-left">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+            </svg>
+            <span>High-Speed File Transfer</span>
+          </div>
+          <span class="badge green">Direct LAN</span>
+        </div>
 
-      <div class="transfer-box">
-        <div style="display: flex; gap: 8px;">
-          <button class="btn" style="background: #10B981; flex: 1;" onclick="triggerFileTransfer()">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 14px; line-height: 1.5;">
+          Beam files (photos, videos, APKs, documents) directly to your desktop at maximum local Wi-Fi speeds without cloud limits.
+        </p>
+
+        <!-- Action Row -->
+        <div style="display: flex; gap: 10px; margin-bottom: 12px;">
+          <label class="btn btn-success" for="realFileInput" style="flex: 2; cursor: pointer;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
               <polyline points="17 8 12 3 7 8"></polyline>
               <line x1="12" y1="3" x2="12" y2="15"></line>
             </svg>
-            Send 52MB APK
-          </button>
-
-          <label class="btn btn-secondary" for="realFileInput" style="flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; text-align: center;">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-              <polyline points="14 2 14 8 20 8"></polyline>
-            </svg>
-            <span>Pick Any File</span>
+            <span>Choose Files to Send</span>
           </label>
+          <button class="btn btn-secondary" style="flex: 1;" onclick="triggerFileTransfer()">
+            Send APK
+          </button>
         </div>
         <input type="file" id="realFileInput" style="position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none;" onchange="uploadRealFile(this)" />
 
+        <!-- Live Progress Visualizer -->
         <div class="progress-bar-wrap">
           <div class="progress-bar-fill" id="transferFill"></div>
         </div>
 
         <div class="transfer-stats">
-          <span id="transferStatus">Idle</span>
+          <span id="transferStatus">Ready</span>
           <span id="transferSpeed">0 MB/s</span>
         </div>
 
-        <!-- Download / Save file prompt when transfer completes -->
-        <div id="transferActionWrap" style="display: none; margin-top: 8px;">
-          <button class="btn" id="btnDownloadFinished" style="width: 100%; background: #10B981; display: flex; align-items: center; justify-content: center; gap: 6px;" onclick="openOrDownloadLastFile()">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <!-- Download Finished Action -->
+        <div id="transferActionWrap" style="display: none; margin-top: 10px;">
+          <button class="btn btn-success" id="btnDownloadFinished" style="width: 100%;" onclick="openOrDownloadLastFile()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
               <polyline points="7 10 12 15 17 10"></polyline>
               <line x1="12" y1="15" x2="12" y2="3"></line>
@@ -699,74 +1054,188 @@
           </button>
         </div>
 
-        <!-- Cancel & Retry Control Row -->
-        <div style="display: flex; gap: 8px; margin-top: 4px;">
-          <button class="btn btn-secondary" id="btnCancelTransfer" style="display: none; flex: 1; border-color: rgba(235, 87, 87, 0.4); color: var(--color-red);" onclick="cancelFileTransfer()">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
-            </svg>
+        <!-- Cancel / Retry Buttons -->
+        <div style="display: flex; gap: 8px; margin-top: 6px;">
+          <button class="btn btn-danger" id="btnCancelTransfer" style="display: none; flex: 1;" onclick="cancelFileTransfer()">
             Cancel Transfer
           </button>
-
-          <button class="btn" id="btnRetryTransfer" style="display: none; flex: 1; background: var(--brand);" onclick="retryFileTransfer()">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="1 4 1 10 7 10"></polyline>
-              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
-            </svg>
+          <button class="btn" id="btnRetryTransfer" style="display: none; flex: 1;" onclick="retryFileTransfer()">
             Retry Transfer
           </button>
         </div>
 
         <!-- Transfer History Sub-Section -->
-        <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border-subtle);">
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
-            <div style="display: flex; align-items: center; gap: 6px;">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--brand)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="10"></circle>
-                <polyline points="12 6 12 12 16 14"></polyline>
-              </svg>
-              <span style="font-size: 11px; font-weight: 600; color: #fff;">Transfer History</span>
-              <span id="mobileHistoryCount" style="font-size: 9px; font-family: monospace; background: rgba(255, 255, 255, 0.06); padding: 1px 5px; border-radius: 4px; color: var(--text-secondary);">0</span>
+        <div style="margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border-subtle);">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 12px; font-weight: 700; color: #fff;">Transfer History</span>
+              <span class="badge" id="mobileHistoryCount">0</span>
             </div>
-
-            <button id="btnClearMobileHistory" onclick="clearMobileHistory()" style="background: none; border: none; font-size: 10px; color: var(--text-tertiary); cursor: pointer; display: flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 4px; transition: color 0.15s;">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="3 6 5 6 21 6"></polyline>
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-              </svg>
-              Clear History
+            <button onclick="clearMobileHistory()" style="background: none; border: none; font-size: 11px; color: var(--text-tertiary); cursor: pointer; display: flex; align-items: center; gap: 4px; padding: 2px 6px;">
+              Clear List
             </button>
           </div>
 
-          <div style="font-size: 9px; color: var(--text-tertiary); margin-bottom: 8px; line-height: 1.3;">
-            ℹ️ Deleting history only removes the log record. Files on your device remain saved.
+          <div style="font-size: 10px; color: var(--text-tertiary); margin-bottom: 8px;">
+            ℹ️ Clearing the list removes logs only. Saved files remain in your device storage.
           </div>
 
-          <!-- History list container -->
-          <div id="mobileHistoryList" style="display: flex; flex-direction: column; gap: 6px; max-height: 160px; overflow-y: auto;">
-            <!-- Dynamically populated -->
+          <div id="mobileHistoryList" style="display: flex; flex-direction: column; gap: 6px; max-height: 180px; overflow-y: auto;">
+            <!-- Rendered dynamically -->
           </div>
         </div>
       </div>
     </div>
 
+    <!-- ============================================================ -->
+    <!-- TAB 5: REMOTE CLI -->
+    <!-- ============================================================ -->
+    <div id="tab-cli" class="tab-content">
+      <div class="card">
+        <div class="card-title">
+          <div class="card-title-left">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="4 17 10 11 4 5"></polyline>
+              <line x1="12" y1="19" x2="20" y2="19"></line>
+            </svg>
+            <span>Remote PC Telemetry & Controls</span>
+          </div>
+          <span class="badge">Antigravity Hub</span>
+        </div>
+
+        <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.5;">
+          Execute safe, whitelisted diagnostic commands on your PC and view live output in real-time.
+        </p>
+
+        <div class="cli-grid">
+          <button class="cli-card" onclick="executeRemoteCli('sysinfo', 'System Specs & Health')">
+            <div class="cli-card-title">System Specs</div>
+            <div class="cli-card-cmd">$ uname, uptime, RAM</div>
+          </button>
+
+          <button class="cli-card" onclick="executeRemoteCli('mem', 'Memory & Swap Telemetry')">
+            <div class="cli-card-title">Memory & RAM</div>
+            <div class="cli-card-cmd">$ free -h</div>
+          </button>
+
+          <button class="cli-card" onclick="executeRemoteCli('disk', 'Storage & Filesystems')">
+            <div class="cli-card-title">Disk Storage</div>
+            <div class="cli-card-cmd">$ df -h (partitions)</div>
+          </button>
+
+          <button class="cli-card" onclick="executeRemoteCli('top-procs', 'Top CPU Processes')">
+            <div class="cli-card-title">Top Processes</div>
+            <div class="cli-card-cmd">$ ps top 6 CPU</div>
+          </button>
+
+          <button class="cli-card" onclick="executeRemoteCli('battery', 'Power & Battery')">
+            <div class="cli-card-title">Power / Battery</div>
+            <div class="cli-card-cmd">$ upower / battery</div>
+          </button>
+
+          <button class="cli-card" onclick="executeRemoteCli('net-stats', 'Network Interfaces')">
+            <div class="cli-card-title">Network & IPs</div>
+            <div class="cli-card-cmd">$ ip addr / route</div>
+          </button>
+
+          <button class="cli-card" onclick="executeRemoteCli('ports', 'Active Ports & Services')">
+            <div class="cli-card-title">Listening Ports</div>
+            <div class="cli-card-cmd">$ ss -tlpn (:8766)</div>
+          </button>
+
+          <button class="cli-card" onclick="executeRemoteCli('git-status', 'Git Workspace')">
+            <div class="cli-card-title">Git Status</div>
+            <div class="cli-card-cmd">$ git status & log</div>
+          </button>
+        </div>
+
+        <div class="terminal-box" id="termLog">Ready for remote PC command execution...</div>
+      </div>
+    </div>
+
   </div>
 
-  <!-- Toast Element -->
+  <!-- Bottom Navigation Bar -->
+  <nav class="bottom-nav">
+    <div class="nav-item active" onclick="switchTab('tab-link')" id="nav-tab-link">
+      <div class="nav-indicator"></div>
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+      </svg>
+      <span class="nav-label">Link</span>
+    </div>
+
+    <div class="nav-item" onclick="switchTab('tab-alerts')" id="nav-tab-alerts">
+      <div class="nav-indicator"></div>
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+        <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+      </svg>
+      <span class="nav-label">Alerts</span>
+    </div>
+
+    <div class="nav-item" onclick="switchTab('tab-audio')" id="nav-tab-audio">
+      <div class="nav-indicator"></div>
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M3 18v-6a9 9 0 0 1 18 0v6"></path>
+        <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path>
+      </svg>
+      <span class="nav-label">Audio</span>
+    </div>
+
+    <div class="nav-item" onclick="switchTab('tab-files')" id="nav-tab-files">
+      <div class="nav-indicator"></div>
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+        <polyline points="14 2 14 8 20 8"></polyline>
+      </svg>
+      <span class="nav-label">Files</span>
+    </div>
+
+    <div class="nav-item" onclick="switchTab('tab-cli')" id="nav-tab-cli">
+      <div class="nav-indicator"></div>
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="4 17 10 11 4 5"></polyline>
+        <line x1="12" y1="19" x2="20" y2="19"></line>
+      </svg>
+      <span class="nav-label">Terminal</span>
+    </div>
+  </nav>
+
+  <!-- Interactive Toast Notification -->
   <div id="toast">
-    <div class="toast-dot"></div>
-    <span id="toastMsg">Notification dispatched!</span>
+    <div class="toast-dot" id="toastDot"></div>
+    <span id="toastMsg">Ready</span>
   </div>
 
   <script>
-    // Soko Mobile Companion Logic
+    // ============================================================
+    // TAB NAVIGATION CONTROLLER
+    // ============================================================
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+
+      const targetContent = document.getElementById(tabId);
+      const targetNav = document.getElementById('nav-' + tabId);
+
+      if (targetContent) targetContent.classList.add('active');
+      if (targetNav) targetNav.classList.add('active');
+
+      localStorage.setItem('soko_active_tab', tabId);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    // ============================================================
+    // APPLICATION CORE STATE & NETWORKING
+    // ============================================================
     let ws = null;
     let reconnectTimer = null;
     let pingInterval = null;
     let lastPingTimestamp = 0;
-
     const DEFAULT_PORT = 8766;
+
     const ipInput = document.getElementById('bridgeIpInput');
     const connPill = document.getElementById('connPill');
     const statusDot = document.getElementById('statusDot');
@@ -775,18 +1244,744 @@
     const termLog = document.getElementById('termLog');
     const toast = document.getElementById('toast');
     const toastMsg = document.getElementById('toastMsg');
+    const toastDot = document.getElementById('toastDot');
 
-    // Auto-detect IP from current host or default
+    window.SOKO_BRIDGE_DEFAULT_IP = "";
+
     function getDefaultTarget() {
-      if (window.location.host && !window.location.host.startsWith('file')) {
+      if (window.location.host && !window.location.host.startsWith('file') && !window.location.host.includes('localhost') && !window.location.host.includes('127.0.0.1')) {
         return window.location.host;
       }
-      return localStorage.getItem('soko_last_ip') || '192.168.31.210:8766';
+      const saved = localStorage.getItem('soko_last_ip');
+      if (saved && !saved.startsWith('127.0.0.1') && !saved.startsWith('localhost')) {
+        return saved;
+      }
+      return window.SOKO_BRIDGE_DEFAULT_IP || '192.168.31.210:8766';
     }
 
     ipInput.value = getDefaultTarget();
 
-    // Mobile Transfer History Management (stored in localStorage; delete history never unlinks files)
+    function setPresetIp(ip) {
+      ipInput.value = ip;
+      showToast(`Selected IP: ${ip}`, 'info');
+      connectWs();
+    }
+
+    // Toast Messenger with icon colors
+    function showToast(msg, type = 'info') {
+      toastMsg.innerText = msg;
+      if (type === 'success') {
+        toastDot.style.background = 'var(--color-green)';
+        toastDot.style.boxShadow = '0 0 10px var(--color-green-glow)';
+      } else if (type === 'error') {
+        toastDot.style.background = 'var(--color-red)';
+        toastDot.style.boxShadow = '0 0 10px var(--color-red-glow)';
+      } else if (type === 'amber') {
+        toastDot.style.background = 'var(--color-amber)';
+        toastDot.style.boxShadow = '0 0 10px var(--color-amber-glow)';
+      } else {
+        toastDot.style.background = 'var(--brand)';
+        toastDot.style.boxShadow = '0 0 10px var(--brand-glow)';
+      }
+
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2800);
+    }
+
+    function blinkBot() {
+      const left = document.getElementById('eyeLeft');
+      const right = document.getElementById('eyeRight');
+      if (!left || !right) return;
+      left.style.height = '1px';
+      right.style.height = '1px';
+      setTimeout(() => {
+        left.style.height = '10px';
+        right.style.height = '10px';
+      }, 140);
+    }
+
+    document.getElementById('mascotBot').addEventListener('click', () => {
+      blinkBot();
+      showToast('Grok Bot: Companion Online & Connected', 'success');
+    });
+
+    // ============================================================
+    // DEVICE IDENTITY & PAIRING LOGIC
+    // ============================================================
+    function getDeviceId() {
+      let id = localStorage.getItem('soko_device_id');
+      if (!id) {
+        id = `phone-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+        localStorage.setItem('soko_device_id', id);
+      }
+      return id;
+    }
+
+    function getPairToken() {
+      return localStorage.getItem('soko_pair_token') || '';
+    }
+
+    function handlePinInput(input) {
+      let val = input.value.replace(/[^0-9]/g, '');
+      if (val.length > 6) val = val.slice(0, 6);
+      if (val.length > 3) {
+        input.value = `${val.slice(0, 3)} ${val.slice(3)}`;
+      } else {
+        input.value = val;
+      }
+    }
+
+    function updatePairingUI(state, message) {
+      const badge = document.getElementById('pairStatusBadge');
+      const hint = document.getElementById('pairHint');
+      const pinInput = document.getElementById('sasPinInput');
+      const btnPair = document.getElementById('btnPairDevice');
+      const btnUnpair = document.getElementById('btnUnpairDevice');
+
+      if (hint && message) hint.innerText = message;
+
+      if (state === 'paired') {
+        if (badge) {
+          badge.innerText = 'Paired & Verified ✓';
+          badge.className = 'badge green';
+        }
+        if (pinInput) {
+          pinInput.disabled = true;
+          pinInput.value = '••••••';
+        }
+        if (btnPair) btnPair.style.display = 'none';
+        if (btnUnpair) btnUnpair.style.display = 'inline-flex';
+      } else if (state === 'pending') {
+        if (badge) {
+          badge.innerText = 'Awaiting Approval...';
+          badge.className = 'badge amber';
+        }
+        if (pinInput) pinInput.disabled = true;
+        if (btnPair) btnPair.style.display = 'inline-flex';
+        if (btnUnpair) btnUnpair.style.display = 'none';
+      } else if (state === 'rejected') {
+        if (badge) {
+          badge.innerText = 'Pairing Rejected';
+          badge.className = 'badge red';
+        }
+        if (pinInput) {
+          pinInput.disabled = false;
+          pinInput.value = '';
+        }
+        if (btnPair) btnPair.style.display = 'inline-flex';
+        if (btnUnpair) btnUnpair.style.display = 'none';
+      } else {
+        if (badge) {
+          badge.innerText = 'Unpaired';
+          badge.className = 'badge';
+        }
+        if (pinInput) {
+          pinInput.disabled = false;
+          if (pinInput.value === '••••••') pinInput.value = '';
+        }
+        if (btnPair) btnPair.style.display = 'inline-flex';
+        if (btnUnpair) btnUnpair.style.display = 'none';
+      }
+    }
+
+    let pairPollTimer = null;
+
+    async function requestPairing() {
+      const pinInput = document.getElementById('sasPinInput');
+      const rawPin = pinInput.value.trim().replace(/\s+/g, '');
+      if (rawPin.length < 6) {
+        showToast('Please enter the full 6-digit PIN from your Desktop screen', 'amber');
+        pinInput.focus();
+        return;
+      }
+
+      const formattedPin = `${rawPin.slice(0, 3)} ${rawPin.slice(3, 6)}`;
+      updatePairingUI('pending', 'Submitting PIN to Desktop Dynamic Island...');
+      showToast('Submitting PIN to Desktop Island...', 'info');
+
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        connectWs();
+      }
+
+      const payload = {
+        deviceId: getDeviceId(),
+        pin: formattedPin,
+        deviceName: 'Mobile Companion (Android)',
+        model: 'Soko Mobile Companion v1.0.0',
+        rssi: -45,
+        batteryLevel: 94
+      };
+
+      const wsSent = sendPacket('PAIR_REQUEST', payload);
+
+      try {
+        const httpBase = getHttpBaseUrl();
+        const res = await fetch(`${httpBase}/api/pair`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (res.ok) {
+          updatePairingUI('pending', 'PIN accepted! Tap "Approve" on your Desktop Dynamic Island to link.');
+          showToast('PIN Verified! Click Approve on your Desktop Island.', 'success');
+          startPairStatusPolling(payload.deviceId);
+        } else {
+          const friendlyError = data.error === 'PIN_MISMATCH' || (data.error && data.error.includes('PIN'))
+            ? 'Incorrect PIN. Please check the 6 digits on your desktop Dynamic Island.'
+            : (data.error || 'Connection rejected by desktop.');
+          updatePairingUI('rejected', friendlyError);
+          showToast(friendlyError, 'error');
+        }
+      } catch (err) {
+        if (wsSent) {
+          updatePairingUI('pending', 'PIN submitted! Please click "Approve" on your Desktop Island.');
+        } else {
+          const host = cleanHost(ipInput.value);
+          updatePairingUI('rejected', `Cannot connect to desktop at ${host}. Verify Wi-Fi connection.`);
+          showToast(`Cannot reach Desktop Island at ${host}`, 'error');
+        }
+      }
+    }
+
+    function startPairStatusPolling(deviceId) {
+      if (pairPollTimer) clearInterval(pairPollTimer);
+      pairPollTimer = setInterval(async () => {
+        try {
+          const httpBase = getHttpBaseUrl();
+          const res = await fetch(`${httpBase}/api/pair/status?deviceId=${encodeURIComponent(deviceId)}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.status === 'paired' && data.token) {
+              clearInterval(pairPollTimer);
+              pairPollTimer = null;
+              localStorage.setItem('soko_pair_token', data.token);
+              if (window.SokoNative && typeof window.SokoNative.savePairToken === 'function') {
+                window.SokoNative.savePairToken(data.token);
+              }
+              updatePairingUI('paired', 'Paired & Verified with Desktop Dynamic Island.');
+              showToast('Device Paired Successfully! ✓', 'success');
+              blinkBot();
+            } else if (data.status === 'rejected') {
+              clearInterval(pairPollTimer);
+              pairPollTimer = null;
+              updatePairingUI('rejected', 'Pairing request was declined on desktop.');
+              showToast('Pairing request declined by desktop user', 'error');
+            }
+          }
+        } catch (e) {}
+      }, 1200);
+    }
+
+    function unpairDevice() {
+      if (pairPollTimer) {
+        clearInterval(pairPollTimer);
+        pairPollTimer = null;
+      }
+      const token = getPairToken();
+      sendPacket('UNPAIR_REQUEST', { deviceId: getDeviceId(), token });
+      try {
+        fetch(`${getHttpBaseUrl()}/api/unpair`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deviceId: getDeviceId() })
+        });
+      } catch {}
+      localStorage.removeItem('soko_pair_token');
+      if (window.SokoNative && typeof window.SokoNative.savePairToken === 'function') {
+        window.SokoNative.savePairToken('');
+      }
+      updatePairingUI('unpaired', 'Device unlinked. Enter PIN from desktop island to pair.');
+      showToast('Device unlinked from Desktop Island', 'info');
+    }
+
+    // ============================================================
+    // CONNECTION STATUS & NETWORK PROTOCOL
+    // ============================================================
+    function setStatus(state, text) {
+      statusDot.className = 'status-dot ' + (state === 'online' ? 'online' : state === 'connecting' ? 'connecting' : '');
+      connLabel.innerText = text;
+      document.getElementById('btnConnect').innerText = state === 'online' ? 'Disconnect' : 'Connect';
+
+      const banner = document.getElementById('connectionGuideBanner');
+      const bannerText = document.getElementById('connectionGuideText');
+      if (banner && bannerText) {
+        if (state === 'online') {
+          banner.className = 'info-banner online';
+          bannerText.innerHTML = `<strong>Connected to Soko Desktop HUD</strong><br>Wi-Fi link established. Alerts and audio are streaming in real-time.`;
+        } else if (state === 'connecting') {
+          banner.className = 'info-banner hint';
+          bannerText.innerHTML = `<strong>Connecting to Desktop...</strong><br>Looking for Soko Desktop at ${cleanHost(ipInput.value)}...`;
+        } else {
+          banner.className = 'info-banner offline';
+          bannerText.innerHTML = `<strong>Desktop Not Connected</strong><br>Ensure Soko is running on your PC and both devices are on the same Wi-Fi network (or your mobile hotspot).`;
+        }
+      }
+    }
+
+    function cleanHost(raw) {
+      if (!raw || raw.startsWith('127.0.0.1') || raw.startsWith('localhost')) {
+        if (window.location.protocol === 'file:' || window.SokoNative || (window.location.host && !window.location.host.includes('127.0.0.1') && !window.location.host.includes('localhost'))) {
+          return window.SOKO_BRIDGE_DEFAULT_IP || '192.168.31.210:8766';
+        }
+        return '127.0.0.1:8766';
+      }
+      let t = raw.trim().replace(/^https?:\/\//i, '').replace(/^wss?:\/\//i, '').replace(/\/.*$/, '');
+      if (!t.includes(':')) t += `:${DEFAULT_PORT}`;
+      return t;
+    }
+
+    function getWsUrl() {
+      return `ws://${cleanHost(ipInput.value)}`;
+    }
+
+    function getHttpBaseUrl() {
+      return `http://${cleanHost(ipInput.value)}`;
+    }
+
+    function connectWs() {
+      const wsUrl = getWsUrl();
+      const cleanTarget = cleanHost(ipInput.value);
+      localStorage.setItem('soko_last_ip', cleanTarget);
+      if (window.SokoNative && typeof window.SokoNative.saveBridgeIp === 'function') {
+        window.SokoNative.saveBridgeIp(cleanTarget);
+      }
+
+      setStatus('connecting', 'Connecting...');
+      if (ws) {
+        try { ws.close(); } catch(e) {}
+      }
+
+      try {
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+          setStatus('online', 'Connected');
+          showToast('Connected to Desktop Island ✓', 'success');
+          blinkBot();
+
+          syncTransfersFromServer();
+
+          const token = getPairToken();
+          const deviceId = getDeviceId();
+          if (token) {
+            updatePairingUI('pending', 'Authenticating with saved pairing token...');
+            sendPacket('PAIR_REQUEST', {
+              deviceId: deviceId,
+              token: token,
+              deviceName: 'Mobile Companion (Android)',
+              model: 'Soko Mobile Companion v1.0.0',
+              rssi: -48,
+              batteryLevel: 94
+            });
+          } else {
+            updatePairingUI('unpaired', 'Enter the 6-digit PIN from your Desktop Dynamic Island.');
+          }
+
+          startHeartbeat();
+        };
+
+        ws.onmessage = (e) => {
+          try {
+            const packet = JSON.parse(e.data);
+            handleInboundPacket(packet);
+          } catch(err) {
+            console.error('Packet parse error:', err);
+          }
+        };
+
+        ws.onclose = () => {
+          stopHeartbeat();
+          setStatus('offline', 'Offline');
+          pingBadge.innerText = '-- ms';
+          scheduleReconnect();
+        };
+
+        ws.onerror = () => {
+          stopHeartbeat();
+          setStatus('offline', 'Offline');
+        };
+      } catch (err) {
+        setStatus('offline', 'Offline');
+        scheduleReconnect();
+      }
+    }
+
+    function scheduleReconnect() {
+      if (reconnectTimer) return;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connectWs();
+      }, 5000);
+    }
+
+    function startHeartbeat() {
+      stopHeartbeat();
+      pingInterval = setInterval(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          lastPingTimestamp = Date.now();
+          sendPacket('HEARTBEAT_PING', { timestamp: lastPingTimestamp });
+        }
+      }, 8000);
+    }
+
+    function stopHeartbeat() {
+      if (pingInterval) {
+        clearInterval(pingInterval);
+        pingInterval = null;
+      }
+    }
+
+    function handleInboundPacket(packet) {
+      if (packet.packetType === 'HEARTBEAT_PONG' || packet.packetType === 'HEARTBEAT_PING') {
+        const ping = Date.now() - (packet.payload?.timestamp || lastPingTimestamp);
+        pingBadge.innerText = `${Math.max(1, ping)} ms`;
+      } else if (packet.packetType === 'CLI_OUTPUT_STREAM' || packet.packetType === 'CLI_TERMINATED') {
+        const out = packet.payload?.output || packet.payload?.lastOutputLine || 'Done';
+        termLog.innerText = `[${new Date().toLocaleTimeString()}] ${packet.payload?.title || 'CLI'}:\n${out}`;
+        blinkBot();
+      } else if (packet.packetType === 'FILE_OFFER') {
+        const fill = document.getElementById('transferFill');
+        fill.style.background = 'linear-gradient(90deg, var(--brand), var(--color-green))';
+        fill.style.width = '2%';
+        document.getElementById('transferStatus').innerText = `Receiving: ${packet.payload?.filename || 'File'}`;
+        document.getElementById('transferSpeed').innerText = 'Starting Wi-Fi transfer...';
+        document.getElementById('btnCancelTransfer').style.display = 'flex';
+        document.getElementById('btnRetryTransfer').style.display = 'none';
+        blinkBot();
+      } else if (packet.packetType === 'FILE_PROGRESS' || packet.packetType === 'FILE_COMPLETED') {
+        const pct = packet.payload?.percentage || 0;
+        const fname = packet.payload?.filename ? `${packet.payload.filename}: ` : '';
+        const fill = document.getElementById('transferFill');
+        fill.style.background = 'linear-gradient(90deg, var(--brand), var(--color-green))';
+        fill.style.width = pct + '%';
+        document.getElementById('transferStatus').innerText = pct === 100 ? `${fname}Transfer Completed!` : `${fname}${pct}%`;
+        document.getElementById('transferSpeed').innerText = pct === 100 ? 'Complete' : '42 MB/s';
+        document.getElementById('btnCancelTransfer').style.display = pct === 100 ? 'none' : 'flex';
+        document.getElementById('btnRetryTransfer').style.display = 'none';
+        if (pct === 100) {
+          blinkBot();
+          const completedFilename = packet.payload?.filename || 'soko-v1.0.0-release.apk';
+          lastTransferredFilename = completedFilename;
+          const actionWrap = document.getElementById('transferActionWrap');
+          const actionText = document.getElementById('btnDownloadFinishedText');
+          if (actionWrap && actionText) {
+            actionText.innerText = `Save "${completedFilename}" to Phone`;
+            actionWrap.style.display = 'block';
+          }
+          addMobileTransferHistory({
+            id: packet.payload?.id,
+            filename: completedFilename,
+            totalBytes: packet.payload?.totalBytes || packet.payload?.bytesDownloaded || 52000000,
+            direction: 'received',
+            status: 'completed',
+            completedAt: Date.now()
+          });
+          syncTransfersFromServer();
+          setTimeout(() => {
+            document.getElementById('btnCancelTransfer').style.display = 'none';
+          }, 2000);
+        }
+      } else if (packet.packetType === 'FILE_CANCEL' || packet.packetType === 'FILE_FAILED') {
+        const isCancel = packet.packetType === 'FILE_CANCEL';
+        const fill = document.getElementById('transferFill');
+        fill.style.background = isCancel ? 'var(--color-amber)' : 'var(--color-red)';
+        fill.style.width = '100%';
+        document.getElementById('transferStatus').innerText = isCancel ? 'Transfer Cancelled' : 'Transfer Interrupted';
+        document.getElementById('transferSpeed').innerText = isCancel ? 'Temporary file removed' : 'Connection reset';
+        document.getElementById('btnCancelTransfer').style.display = 'none';
+        document.getElementById('btnRetryTransfer').style.display = 'flex';
+        blinkBot();
+      } else if (packet.packetType === 'PAIR_CONFIRM') {
+        if (packet.payload?.token) {
+          localStorage.setItem('soko_pair_token', packet.payload.token);
+          if (window.SokoNative && typeof window.SokoNative.savePairToken === 'function') {
+            window.SokoNative.savePairToken(packet.payload.token);
+          }
+        }
+        if (packet.payload?.deviceId) {
+          localStorage.setItem('soko_device_id', packet.payload.deviceId);
+        }
+        updatePairingUI('paired', 'Paired & Verified with Desktop Dynamic Island.');
+        showToast('Paired successfully with Desktop Island! ✓', 'success');
+        blinkBot();
+      } else if (packet.packetType === 'PAIR_REJECT') {
+        localStorage.removeItem('soko_pair_token');
+        if (window.SokoNative && typeof window.SokoNative.savePairToken === 'function') {
+          window.SokoNative.savePairToken('');
+        }
+        const err = packet.payload?.error || 'PIN mismatch or connection declined.';
+        updatePairingUI('rejected', err);
+        showToast(err, 'error');
+        blinkBot();
+      } else if (packet.packetType === 'BRIDGE_STATUS') {
+        if (packet.payload?.pairedDevice?.isAuthorized && getPairToken()) {
+          updatePairingUI('paired', 'Paired & Verified with Desktop Dynamic Island.');
+        }
+      } else if (packet.packetType === 'AUDIO_STATUS') {
+        updateDesktopAudioIndicator(packet.payload);
+      }
+    }
+
+    function sendPacket(type, payload) {
+      const packet = {
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: type,
+        payload: payload
+      };
+
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(packet));
+        return true;
+      }
+      return false;
+    }
+
+    function toggleConnection() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.close();
+      } else {
+        connectWs();
+      }
+    }
+
+    async function postHttp(endpoint, body) {
+      try {
+        const token = getPairToken();
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        const res = await fetch(`${getHttpBaseUrl()}${endpoint}`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body)
+        });
+        if (res.status === 401) {
+          showToast('Pairing required: please enter PIN to pair.', 'amber');
+          updatePairingUI('unpaired', 'Authorization required. Enter PIN to pair.');
+        }
+        return await res.json();
+      } catch (err) {
+        console.warn('HTTP fallback dispatch:', err);
+      }
+    }
+
+    // ============================================================
+    // NOTIFICATION MIRRORING DISPATCHER
+    // ============================================================
+    function sendPresetNotif(appName, packageName, title, body) {
+      blinkBot();
+      const payload = {
+        id: `notif-${Date.now()}`,
+        appName: appName,
+        packageName: packageName,
+        title: title,
+        body: body,
+        timestamp: Date.now()
+      };
+
+      const sentWs = sendPacket('NOTIFICATION_POST', payload);
+      if (!sentWs) {
+        postHttp('/api/notify', payload);
+      }
+
+      showToast(`Mirrored ${appName} notification to Island!`, 'success');
+    }
+
+    function sendCustomNotif() {
+      const app = document.getElementById('custApp').value.trim() || 'Messages';
+      const title = document.getElementById('custTitle').value.trim() || 'Notice';
+      const body = document.getElementById('custBody').value.trim() || 'Test notification from Soko Mobile';
+      sendPresetNotif(app, `com.${app.toLowerCase().replace(/\\s+/g, '')}.app`, title, body);
+    }
+
+    // ============================================================
+    // REMOTE CLI RUNNER
+    // ============================================================
+    function executeRemoteCli(command, title) {
+      blinkBot();
+      termLog.innerText = `[${new Date().toLocaleTimeString()}] Executing: ${title} ($ ${command})...\nStreaming output from desktop host...`;
+
+      const payload = {
+        commandId: `cmd-${command}`,
+        title: title,
+        command: command,
+        status: 'running',
+        startedAt: Date.now(),
+        lastOutputLine: `Running: ${command}...`
+      };
+
+      const sentWs = sendPacket('CLI_EXECUTE', payload);
+      if (!sentWs) {
+        postHttp('/api/cli', { command: command }).then(res => {
+          if (res) {
+            const out = res.output || res.lastOutputLine || (res.success ? 'Command completed' : res.error);
+            termLog.innerText = `[${new Date().toLocaleTimeString()}] ${res.title || title}:\n${out}`;
+            blinkBot();
+          }
+        });
+      }
+
+      showToast(`Triggered: ${title}`, 'info');
+    }
+
+    // ============================================================
+    // FILE TRANSFER ENGINE
+    // ============================================================
+    let activeUploadXhr = null;
+
+    function triggerFileTransfer(filename = 'soko-v1.0.0-release.apk') {
+      blinkBot();
+      const fill = document.getElementById('transferFill');
+      fill.style.background = 'linear-gradient(90deg, var(--brand), var(--color-green))';
+      fill.style.width = '15%';
+      document.getElementById('transferStatus').innerText = 'Starting Wi-Fi transfer...';
+      document.getElementById('transferSpeed').innerText = '42 MB/s';
+      document.getElementById('btnCancelTransfer').style.display = 'flex';
+      document.getElementById('btnRetryTransfer').style.display = 'none';
+
+      const payload = {
+        filename,
+        totalBytes: 52000000
+      };
+
+      const sentWs = sendPacket('FILE_OFFER', payload);
+      if (!sentWs) {
+        postHttp('/api/transfer', payload);
+      }
+
+      showToast(`Transfer started: ${filename}`, 'info');
+    }
+
+    function cancelFileTransfer() {
+      blinkBot();
+      if (activeUploadXhr) {
+        try { activeUploadXhr.abort(); } catch(e) {}
+        activeUploadXhr = null;
+      }
+
+      const payload = { status: 'cancelled', error: 'Cancelled by user' };
+      const sentWs = sendPacket('FILE_CANCEL', payload);
+      if (!sentWs) {
+        postHttp('/api/transfer/cancel', payload);
+      }
+
+      const fill = document.getElementById('transferFill');
+      fill.style.background = 'var(--color-amber)';
+      fill.style.width = '100%';
+      document.getElementById('transferStatus').innerText = 'Transfer Cancelled';
+      document.getElementById('transferSpeed').innerText = 'Buffer cleaned';
+      document.getElementById('btnCancelTransfer').style.display = 'none';
+      document.getElementById('btnRetryTransfer').style.display = 'flex';
+
+      showToast('Transfer cancelled • Cleaned up partial buffer', 'amber');
+    }
+
+    function retryFileTransfer() {
+      blinkBot();
+      showToast('Retrying file transfer...', 'info');
+      const sentWs = sendPacket('FILE_RETRY', { filename: 'soko-v1.0.0-release.apk' });
+      if (!sentWs) {
+        postHttp('/api/transfer/retry', {});
+      }
+      triggerFileTransfer();
+    }
+
+    function uploadRealFile(input) {
+      if (!input.files || input.files.length === 0) return;
+      const file = input.files[0];
+      try { input.value = ''; } catch(e) {}
+      blinkBot();
+
+      const fill = document.getElementById('transferFill');
+      fill.style.background = 'linear-gradient(90deg, var(--brand), var(--color-green))';
+      fill.style.width = '5%';
+      document.getElementById('transferStatus').innerText = `Sending: ${file.name}`;
+      document.getElementById('transferSpeed').innerText = 'Calculating...';
+      document.getElementById('btnCancelTransfer').style.display = 'flex';
+      document.getElementById('btnRetryTransfer').style.display = 'none';
+
+      const xhr = new XMLHttpRequest();
+      activeUploadXhr = xhr;
+
+      let lastLoaded = 0;
+      let lastTime = Date.now();
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const pct = Math.round((e.loaded / e.total) * 100);
+          fill.style.width = pct + '%';
+          const now = Date.now();
+          const timeDiff = (now - lastTime) / 1000;
+          if (timeDiff > 0.3) {
+            const bytesDiff = e.loaded - lastLoaded;
+            const mbPerSec = ((bytesDiff / timeDiff) / 1048576).toFixed(1);
+            document.getElementById('transferSpeed').innerText = `${mbPerSec} MB/s`;
+            lastLoaded = e.loaded;
+            lastTime = now;
+          }
+          document.getElementById('transferStatus').innerText = `Sending: ${pct}% (${(e.loaded/1048576).toFixed(1)} / ${(e.total/1048576).toFixed(1)} MB)`;
+        }
+      };
+
+      xhr.onload = () => {
+        activeUploadXhr = null;
+        if (xhr.status >= 200 && xhr.status < 300) {
+          fill.style.width = '100%';
+          document.getElementById('transferStatus').innerText = `Saved to Desktop: ${file.name}`;
+          document.getElementById('transferSpeed').innerText = 'Complete';
+          document.getElementById('btnCancelTransfer').style.display = 'none';
+          showToast(`File transferred to Desktop: ${file.name}`, 'success');
+          lastTransferredFilename = file.name;
+          const actionWrap = document.getElementById('transferActionWrap');
+          const actionText = document.getElementById('btnDownloadFinishedText');
+          if (actionWrap && actionText) {
+            actionText.innerText = `Open "${file.name}"`;
+            actionWrap.style.display = 'block';
+          }
+          addMobileTransferHistory({
+            filename: file.name,
+            totalBytes: file.size,
+            direction: 'sent',
+            status: 'completed',
+            completedAt: Date.now()
+          });
+          syncTransfersFromServer();
+        } else {
+          handleUploadError(new Error('Desktop rejected file (HTTP ' + xhr.status + ')'));
+        }
+      };
+
+      xhr.onerror = () => handleUploadError(new Error('Wi-Fi connection interrupted'));
+      xhr.onabort = () => {
+        activeUploadXhr = null;
+      };
+
+      xhr.open('POST', `${getHttpBaseUrl()}/api/upload?filename=${encodeURIComponent(file.name)}`);
+      const token = getPairToken();
+      if (token) {
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      }
+      xhr.send(file);
+
+      showToast(`Beaming ${file.name} to Desktop...`, 'info');
+    }
+
+    function handleUploadError(err) {
+      activeUploadXhr = null;
+      const fill = document.getElementById('transferFill');
+      fill.style.background = 'var(--color-red)';
+      fill.style.width = '100%';
+      document.getElementById('transferStatus').innerText = 'Upload Interrupted';
+      document.getElementById('transferSpeed').innerText = err.message;
+      document.getElementById('btnCancelTransfer').style.display = 'none';
+      document.getElementById('btnRetryTransfer').style.display = 'flex';
+      showToast('Transfer interrupted • Check Wi-Fi connection', 'error');
+    }
+
+    // Transfer History
     let mobileTransferHistory = [];
 
     function loadMobileTransferHistory() {
@@ -845,7 +2040,7 @@
       } catch(e) {}
       saveMobileTransferHistory();
       renderMobileTransferHistory();
-      showToast(`Removed from log • File remains on device`);
+      showToast('Log record removed • File remains saved on device', 'info');
     }
 
     function clearMobileHistory() {
@@ -861,13 +2056,16 @@
       mobileTransferHistory = [];
       saveMobileTransferHistory();
       renderMobileTransferHistory();
-      showToast('History cleared • Files remain on device');
+      showToast('History list cleared • Files remain on device', 'info');
     }
 
     async function syncTransfersFromServer() {
       try {
         const httpBase = getHttpBaseUrl();
-        const res = await fetch(`${httpBase}/api/transfers`);
+        const token = getPairToken();
+        const headers = {};
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        const res = await fetch(`${httpBase}/api/transfers`, { headers });
         if (!res.ok) return;
         const data = await res.json();
         if (data && Array.isArray(data.files)) {
@@ -901,9 +2099,7 @@
             renderMobileTransferHistory();
           }
         }
-      } catch (err) {
-        // bridge server might not be reachable yet
-      }
+      } catch (err) {}
     }
 
     function renderMobileTransferHistory() {
@@ -915,8 +2111,8 @@
 
       if (mobileTransferHistory.length === 0) {
         container.innerHTML = `
-          <div style="padding: 14px; text-align: center; color: var(--text-tertiary); font-size: 11px;">
-            No transfer history yet. Transferred files will appear here.
+          <div style="padding: 16px; text-align: center; color: var(--text-tertiary); font-size: 11px;">
+            No transfer records yet. Beamed files will appear here.
           </div>
         `;
         return;
@@ -928,10 +2124,10 @@
         const isSent = item.direction === 'sent';
         const safeFilename = (item.filename || 'file').replace(/"/g, '&quot;');
         return `
-          <div style="display: flex; align-items: center; justify-content: space-between; background: #08090A; border: 1px solid var(--border-subtle); border-radius: 8px; padding: 7px 10px; font-size: 11px;">
-            <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
-              <div style="width: 24px; height: 24px; border-radius: 6px; background: rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: center; color: ${isSent ? 'var(--brand)' : 'var(--color-green)'}; shrink: 0;">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <div style="display: flex; align-items: center; justify-content: space-between; background: #080A0F; border: 1px solid var(--border-subtle); border-radius: 10px; padding: 8px 12px; font-size: 12px;">
+            <div style="display: flex; align-items: center; gap: 10px; min-width: 0;">
+              <div style="width: 26px; height: 26px; border-radius: 8px; background: rgba(255,255,255,0.06); display: flex; align-items: center; justify-content: center; color: ${isSent ? 'var(--brand)' : 'var(--color-green)'}; flex-shrink: 0;">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
                   ${isSent ? '<line x1="7" y1="17" x2="17" y2="7"></line><polyline points="7 7 17 7 17 17"></polyline>' : '<line x1="17" y1="7" x2="7" y2="17"></line><polyline points="17 17 7 17 7 7"></polyline>'}
                 </svg>
               </div>
@@ -939,23 +2135,18 @@
                 <div style="color: #fff; font-weight: 500; font-family: ui-monospace, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px;">
                   ${safeFilename}
                 </div>
-                <div style="font-size: 9px; color: var(--text-tertiary); font-family: ui-monospace, monospace; margin-top: 1px;">
+                <div style="font-size: 10px; color: var(--text-tertiary); font-family: ui-monospace, monospace; margin-top: 1px;">
                   ${mb} MB • ${timeStr} • ${isSent ? 'Sent' : 'Received'}
                 </div>
               </div>
             </div>
 
-            <div style="display: flex; align-items: center; gap: 6px; shrink: 0;">
-              <button onclick="openOrDownloadTransferredFile('${safeFilename}')" style="background: rgba(94, 106, 210, 0.15); border: 1px solid rgba(94, 106, 210, 0.35); color: #8F9BF0; padding: 2px 7px; border-radius: 5px; font-size: 10px; cursor: pointer; display: flex; align-items: center; gap: 4px; font-weight: 500;" title="Save to Phone or Open file">
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                  <polyline points="7 10 12 15 17 10"></polyline>
-                  <line x1="12" y1="15" x2="12" y2="3"></line>
-                </svg>
-                <span>Save/Open</span>
+            <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
+              <button onclick="openOrDownloadTransferredFile('${safeFilename}')" class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px; border-radius: 8px; font-weight: 500;">
+                <span>Save</span>
               </button>
-              <button onclick="deleteMobileHistoryItem('${item.id}', '${safeFilename}')" style="background: none; border: none; color: var(--text-tertiary); cursor: pointer; padding: 4px; border-radius: 4px;" title="Remove from log (file remains on device)">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <button onclick="deleteMobileHistoryItem('${item.id}', '${safeFilename}')" style="background: none; border: none; color: var(--text-tertiary); cursor: pointer; padding: 6px; border-radius: 4px;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
                   <polyline points="3 6 5 6 21 6"></polyline>
                   <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                 </svg>
@@ -976,459 +2167,29 @@
 
     function openOrDownloadTransferredFile(filename) {
       if (!filename) return;
-      const url = `${getHttpBaseUrl()}/transfers/${encodeURIComponent(filename)}`;
+      const token = getPairToken();
+      const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
+      const url = `${getHttpBaseUrl()}/transfers/${encodeURIComponent(filename)}${tokenParam}`;
       if (window.SokoNative && typeof window.SokoNative.downloadFile === 'function') {
-        window.SokoNative.downloadFile(url, filename, '');
-        showToast(`Saving ${filename} to phone Downloads...`);
+        window.SokoNative.downloadFile(url, filename, token);
+        showToast(`Saving ${filename} to phone Downloads...`, 'info');
       } else {
         const a = document.createElement('a');
-        a.href = `${url}?download=1`;
+        a.href = `${url}${token ? '&' : '?'}download=1`;
         a.download = filename;
         a.target = '_blank';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        showToast(`Opening / Saving ${filename}...`);
+        showToast(`Downloading ${filename}...`, 'info');
       }
     }
 
     setTimeout(loadMobileTransferHistory, 50);
 
-    function showToast(msg) {
-      toastMsg.innerText = msg;
-      toast.classList.add('show');
-      setTimeout(() => toast.classList.remove('show'), 2600);
-    }
-
-    function blinkBot() {
-      const left = document.getElementById('eyeLeft');
-      const right = document.getElementById('eyeRight');
-      left.style.height = '1px';
-      right.style.height = '1px';
-      setTimeout(() => {
-        left.style.height = '8px';
-        right.style.height = '8px';
-      }, 150);
-    }
-
-    document.getElementById('mascotBot').addEventListener('click', () => {
-      blinkBot();
-      showToast('Grok Bot: Companion active');
-    });
-
-    function setStatus(state, text) {
-      statusDot.className = 'status-dot ' + (state === 'online' ? 'online' : state === 'connecting' ? 'connecting' : '');
-      connLabel.innerText = text;
-      document.getElementById('btnConnect').innerText = state === 'online' ? 'Disconnect' : 'Connect';
-      document.getElementById('pairStatusBadge').innerText = state === 'online' ? 'Active' : 'Unpaired';
-      document.getElementById('pairStatusBadge').style.color = state === 'online' ? 'var(--color-green)' : 'var(--text-tertiary)';
-    }
-
-    function cleanHost(raw) {
-      if (!raw) return '127.0.0.1:8766';
-      let t = raw.trim().replace(/^https?:\/\//i, '').replace(/^wss?:\/\//i, '').replace(/\/.*$/, '');
-      if (!t) t = '127.0.0.1:8766';
-      if (!t.includes(':')) t += `:${DEFAULT_PORT}`;
-      return t;
-    }
-
-    function getWsUrl() {
-      return `ws://${cleanHost(ipInput.value)}`;
-    }
-
-    function getHttpBaseUrl() {
-      return `http://${cleanHost(ipInput.value)}`;
-    }
-
-    function connectWs() {
-      const wsUrl = getWsUrl();
-      const rawTarget = ipInput.value.trim();
-      localStorage.setItem('soko_last_ip', rawTarget);
-      if (window.SokoNative && typeof window.SokoNative.saveBridgeIp === 'function') {
-        window.SokoNative.saveBridgeIp(rawTarget);
-      }
-
-      setStatus('connecting', 'Connecting...');
-      if (ws) {
-        try { ws.close(); } catch(e) {}
-      }
-
-      try {
-        ws = new WebSocket(wsUrl);
-
-        ws.onopen = () => {
-          setStatus('online', 'Connected');
-          showToast('Connected to Desktop Island');
-          blinkBot();
-
-          // Sync transfers from bridge server
-          syncTransfersFromServer();
-
-          // Send Pair Request & Registration
-          sendPacket('PAIR_REQUEST', {
-            pin: document.getElementById('sasPinDisplay').innerText,
-            deviceName: 'Mobile Companion (Android)',
-            model: 'Soko Mobile v1.0.0',
-            rssi: -52,
-            batteryLevel: 94
-          });
-
-          startHeartbeat();
-        };
-
-        ws.onmessage = (e) => {
-          try {
-            const packet = JSON.parse(e.data);
-            handleInboundPacket(packet);
-          } catch(err) {
-            console.error('Packet parse error:', err);
-          }
-        };
-
-        ws.onclose = () => {
-          stopHeartbeat();
-          setStatus('offline', 'Disconnected');
-          pingBadge.innerText = '-- ms';
-          scheduleReconnect();
-        };
-
-        ws.onerror = () => {
-          stopHeartbeat();
-          setStatus('offline', 'Error');
-        };
-      } catch (err) {
-        setStatus('offline', 'Failed');
-        scheduleReconnect();
-      }
-    }
-
-    function scheduleReconnect() {
-      if (reconnectTimer) return;
-      reconnectTimer = setTimeout(() => {
-        reconnectTimer = null;
-        connectWs();
-      }, 5000);
-    }
-
-    function startHeartbeat() {
-      stopHeartbeat();
-      pingInterval = setInterval(() => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          lastPingTimestamp = Date.now();
-          sendPacket('HEARTBEAT_PING', { timestamp: lastPingTimestamp });
-        }
-      }, 8000);
-    }
-
-    function stopHeartbeat() {
-      if (pingInterval) {
-        clearInterval(pingInterval);
-        pingInterval = null;
-      }
-    }
-
-    function handleInboundPacket(packet) {
-      if (packet.packetType === 'HEARTBEAT_PONG' || packet.packetType === 'HEARTBEAT_PING') {
-        const ping = Date.now() - (packet.payload?.timestamp || lastPingTimestamp);
-        pingBadge.innerText = `${Math.max(1, ping)} ms`;
-      } else if (packet.packetType === 'CLI_OUTPUT_STREAM' || packet.packetType === 'CLI_TERMINATED') {
-        const out = packet.payload?.output || packet.payload?.lastOutputLine || 'Done';
-        termLog.innerText = `[${new Date().toLocaleTimeString()}] ${packet.payload?.title || 'CLI'}:\n${out}`;
-        blinkBot();
-      } else if (packet.packetType === 'FILE_OFFER') {
-        const fill = document.getElementById('transferFill');
-        fill.style.background = 'linear-gradient(90deg, var(--brand), var(--color-green))';
-        fill.style.width = '2%';
-        document.getElementById('transferStatus').innerText = `Receiving: ${packet.payload?.filename || 'File'}`;
-        document.getElementById('transferSpeed').innerText = 'Starting 42 MB/s LAN stream...';
-        document.getElementById('btnCancelTransfer').style.display = 'flex';
-        document.getElementById('btnRetryTransfer').style.display = 'none';
-        blinkBot();
-      } else if (packet.packetType === 'FILE_PROGRESS' || packet.packetType === 'FILE_COMPLETED') {
-        const pct = packet.payload?.percentage || 0;
-        const fname = packet.payload?.filename ? `${packet.payload.filename}: ` : '';
-        const fill = document.getElementById('transferFill');
-        fill.style.background = 'linear-gradient(90deg, var(--brand), var(--color-green))';
-        fill.style.width = pct + '%';
-        document.getElementById('transferStatus').innerText = pct === 100 ? `${fname}Transfer Completed!` : `${fname}${pct}%`;
-        document.getElementById('transferSpeed').innerText = pct === 100 ? 'Done' : '42 MB/s';
-        document.getElementById('btnCancelTransfer').style.display = pct === 100 ? 'none' : 'flex';
-        document.getElementById('btnRetryTransfer').style.display = 'none';
-        if (pct === 100) {
-          blinkBot();
-          const completedFilename = packet.payload?.filename || 'soko-v1.0.0-release.apk';
-          lastTransferredFilename = completedFilename;
-          const actionWrap = document.getElementById('transferActionWrap');
-          const actionText = document.getElementById('btnDownloadFinishedText');
-          if (actionWrap && actionText) {
-            actionText.innerText = `Save "${completedFilename}" to Phone`;
-            actionWrap.style.display = 'block';
-          }
-          addMobileTransferHistory({
-            id: packet.payload?.id,
-            filename: completedFilename,
-            totalBytes: packet.payload?.totalBytes || packet.payload?.bytesDownloaded || 52000000,
-            direction: 'received',
-            status: 'completed',
-            completedAt: Date.now()
-          });
-          syncTransfersFromServer();
-          setTimeout(() => {
-            document.getElementById('btnCancelTransfer').style.display = 'none';
-          }, 2000);
-        }
-      } else if (packet.packetType === 'FILE_CANCEL' || packet.packetType === 'FILE_FAILED') {
-        const isCancel = packet.packetType === 'FILE_CANCEL';
-        const fill = document.getElementById('transferFill');
-        fill.style.background = isCancel ? 'var(--color-amber)' : 'var(--color-red)';
-        fill.style.width = '100%';
-        document.getElementById('transferStatus').innerText = isCancel ? 'Transfer Cancelled' : 'Transfer Failed';
-        document.getElementById('transferSpeed').innerText = isCancel ? 'Partial buffer deleted' : (packet.payload?.error || 'Interrupted');
-        document.getElementById('btnCancelTransfer').style.display = 'none';
-        document.getElementById('btnRetryTransfer').style.display = 'flex';
-        blinkBot();
-      }
-    }
-
-    function sendPacket(type, payload) {
-      const packet = {
-        magic: 'SK',
-        version: 1,
-        packetId: Date.now(),
-        timestamp: Date.now(),
-        packetType: type,
-        payload: payload
-      };
-
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(packet));
-        return true;
-      }
-      return false;
-    }
-
-    function toggleConnection() {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.close();
-      } else {
-        connectWs();
-      }
-    }
-
-    // Direct HTTP Fallback if WS not available
-    async function postHttp(endpoint, body) {
-      try {
-        const res = await fetch(`${getHttpBaseUrl()}${endpoint}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
-        });
-        return await res.json();
-      } catch (err) {
-        console.warn('HTTP fallback dispatch:', err);
-      }
-    }
-
-    function sendPresetNotif(appName, packageName, title, body) {
-      blinkBot();
-      const payload = {
-        id: `notif-${Date.now()}`,
-        appName: appName,
-        packageName: packageName,
-        title: title,
-        body: body,
-        timestamp: Date.now()
-      };
-
-      const sentWs = sendPacket('NOTIFICATION_POST', payload);
-      if (!sentWs) {
-        postHttp('/api/notify', payload);
-      }
-
-      showToast(`Mirrored ${appName} notification to Island!`);
-    }
-
-    function sendCustomNotif() {
-      const app = document.getElementById('custApp').value.trim() || 'Messages';
-      const title = document.getElementById('custTitle').value.trim() || 'Notice';
-      const body = document.getElementById('custBody').value.trim() || 'Test notification';
-      sendPresetNotif(app, `com.${app.toLowerCase().replace(/\\s+/g, '')}.app`, title, body);
-    }
-
-    function executeRemoteCli(command, title) {
-      blinkBot();
-      termLog.innerText = `[${new Date().toLocaleTimeString()}] Executing: ${title} ($ ${command})...\nStreaming output from desktop host...`;
-
-      const payload = {
-        commandId: `cmd-${command}`,
-        title: title,
-        command: command,
-        status: 'running',
-        startedAt: Date.now(),
-        lastOutputLine: `Running: ${command}...`
-      };
-
-      const sentWs = sendPacket('CLI_EXECUTE', payload);
-      if (!sentWs) {
-        postHttp('/api/cli', { command: command }).then(res => {
-          if (res) {
-            const out = res.output || res.lastOutputLine || (res.success ? 'Command completed' : res.error);
-            termLog.innerText = `[${new Date().toLocaleTimeString()}] ${res.title || title}:\n${out}`;
-            blinkBot();
-          }
-        });
-      }
-
-      showToast(`Triggered: ${title}`);
-    }
-
-    let activeUploadXhr = null;
-
-    function triggerFileTransfer(filename = 'soko-v1.0.0-release.apk') {
-      blinkBot();
-      const fill = document.getElementById('transferFill');
-      fill.style.background = 'linear-gradient(90deg, var(--brand), var(--color-green))';
-      fill.style.width = '15%';
-      document.getElementById('transferStatus').innerText = 'Starting 42MB/s Hotspot Stream...';
-      document.getElementById('transferSpeed').innerText = '42 MB/s';
-      document.getElementById('btnCancelTransfer').style.display = 'flex';
-      document.getElementById('btnRetryTransfer').style.display = 'none';
-
-      const payload = {
-        filename,
-        totalBytes: 52000000
-      };
-
-      const sentWs = sendPacket('FILE_OFFER', payload);
-      if (!sentWs) {
-        postHttp('/api/transfer', payload);
-      }
-
-      showToast(`Transfer started: ${filename}`);
-    }
-
-    function cancelFileTransfer() {
-      blinkBot();
-      if (activeUploadXhr) {
-        try { activeUploadXhr.abort(); } catch(e) {}
-        activeUploadXhr = null;
-      }
-
-      const payload = { status: 'cancelled', error: 'Aborted by mobile user' };
-      const sentWs = sendPacket('FILE_CANCEL', payload);
-      if (!sentWs) {
-        postHttp('/api/transfer/cancel', payload);
-      }
-
-      const fill = document.getElementById('transferFill');
-      fill.style.background = 'var(--color-amber)';
-      fill.style.width = '100%';
-      document.getElementById('transferStatus').innerText = 'Transfer Cancelled';
-      document.getElementById('transferSpeed').innerText = 'Partial buffer deleted';
-      document.getElementById('btnCancelTransfer').style.display = 'none';
-      document.getElementById('btnRetryTransfer').style.display = 'flex';
-
-      showToast('Transfer cancelled • Cleaned up partial buffer');
-    }
-
-    function retryFileTransfer() {
-      blinkBot();
-      showToast('Retrying file transfer...');
-      const sentWs = sendPacket('FILE_RETRY', { filename: 'soko-v1.0.0-release.apk' });
-      if (!sentWs) {
-        postHttp('/api/transfer/retry', {});
-      }
-      triggerFileTransfer();
-    }
-
-    function uploadRealFile(input) {
-      if (!input.files || input.files.length === 0) return;
-      const file = input.files[0];
-      try { input.value = ''; } catch(e) {}
-      blinkBot();
-
-      const fill = document.getElementById('transferFill');
-      fill.style.background = 'linear-gradient(90deg, var(--brand), var(--color-green))';
-      fill.style.width = '5%';
-      document.getElementById('transferStatus').innerText = `Uploading: ${file.name}`;
-      document.getElementById('transferSpeed').innerText = 'Calculating...';
-      document.getElementById('btnCancelTransfer').style.display = 'flex';
-      document.getElementById('btnRetryTransfer').style.display = 'none';
-
-      const xhr = new XMLHttpRequest();
-      activeUploadXhr = xhr;
-
-      let lastLoaded = 0;
-      let lastTime = Date.now();
-
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) {
-          const pct = Math.round((e.loaded / e.total) * 100);
-          fill.style.width = pct + '%';
-          const now = Date.now();
-          const timeDiff = (now - lastTime) / 1000;
-          if (timeDiff > 0.3) {
-            const bytesDiff = e.loaded - lastLoaded;
-            const mbPerSec = ((bytesDiff / timeDiff) / 1048576).toFixed(1);
-            document.getElementById('transferSpeed').innerText = `${mbPerSec} MB/s`;
-            lastLoaded = e.loaded;
-            lastTime = now;
-          }
-          document.getElementById('transferStatus').innerText = `Uploading: ${pct}% (${(e.loaded/1048576).toFixed(1)} / ${(e.total/1048576).toFixed(1)} MB)`;
-        }
-      };
-
-      xhr.onload = () => {
-        activeUploadXhr = null;
-        if (xhr.status >= 200 && xhr.status < 300) {
-          fill.style.width = '100%';
-          document.getElementById('transferStatus').innerText = `Saved to Desktop: ${file.name}`;
-          document.getElementById('transferSpeed').innerText = 'Complete';
-          document.getElementById('btnCancelTransfer').style.display = 'none';
-          showToast(`File transferred to Desktop: ${file.name}`);
-          lastTransferredFilename = file.name;
-          const actionWrap = document.getElementById('transferActionWrap');
-          const actionText = document.getElementById('btnDownloadFinishedText');
-          if (actionWrap && actionText) {
-            actionText.innerText = `Open "${file.name}"`;
-            actionWrap.style.display = 'block';
-          }
-          addMobileTransferHistory({
-            filename: file.name,
-            totalBytes: file.size,
-            direction: 'sent',
-            status: 'completed',
-            completedAt: Date.now()
-          });
-          syncTransfersFromServer();
-        } else {
-          handleUploadError(new Error('Server responded with error ' + xhr.status));
-        }
-      };
-
-      xhr.onerror = () => handleUploadError(new Error('Connection interrupted'));
-      xhr.onabort = () => {
-        activeUploadXhr = null;
-      };
-
-      xhr.open('POST', `${getHttpBaseUrl()}/api/upload?filename=${encodeURIComponent(file.name)}`);
-      xhr.send(file);
-
-      showToast(`Streaming ${file.name} to Desktop Island...`);
-    }
-
-    function handleUploadError(err) {
-      activeUploadXhr = null;
-      const fill = document.getElementById('transferFill');
-      fill.style.background = 'var(--color-red)';
-      fill.style.width = '100%';
-      document.getElementById('transferStatus').innerText = 'Upload Failed';
-      document.getElementById('transferSpeed').innerText = err.message;
-      document.getElementById('btnCancelTransfer').style.display = 'none';
-      document.getElementById('btnRetryTransfer').style.display = 'flex';
-      showToast('Transfer failed • Temporary file deleted');
-    }
-
+    // ============================================================
+    // ANDROID PERMISSIONS & NATIVE BRIDGE INTEGRATION
+    // ============================================================
     function checkRealNotificationAccess() {
       const badge = document.getElementById('notifAccessBadge');
       const btnText = document.getElementById('btnGrantNotifText');
@@ -1438,23 +2199,23 @@
       if (window.SokoNative && typeof window.SokoNative.isNotificationAccessGranted === 'function') {
         const granted = window.SokoNative.isNotificationAccessGranted();
         if (granted) {
-          badge.innerText = 'Active & Intercepting';
-          badge.style.background = 'rgba(48, 209, 88, 0.15)';
-          badge.style.color = 'var(--color-green)';
-          btnText.innerText = 'Notification Access Enabled ✓';
-          btn.style.background = 'rgba(255, 255, 255, 0.08)';
+          badge.innerText = 'Active ✓';
+          badge.className = 'badge green';
+          btnText.innerText = 'Notification Mirroring Active ✓';
+          btn.style.background = 'rgba(255, 255, 255, 0.06)';
+          btn.style.borderColor = 'rgba(16, 185, 129, 0.3)';
+          btn.disabled = true;
         } else {
-          badge.innerText = 'Permission Required';
-          badge.style.background = 'rgba(255, 159, 10, 0.15)';
-          badge.style.color = '#FF9F0A';
+          badge.innerText = 'Required';
+          badge.className = 'badge amber';
           btnText.innerText = 'Grant Notification Access in Android Settings';
-          btn.style.background = '#5E6AD2';
+          btn.style.background = 'var(--brand)';
+          btn.disabled = false;
         }
       } else {
-        badge.innerText = 'Mobile APK Feature';
-        badge.style.background = 'rgba(255, 255, 255, 0.05)';
-        badge.style.color = 'var(--text-tertiary)';
-        btnText.innerText = 'Run in Soko Mobile APK to Intercept System Alerts';
+        badge.innerText = 'Companion Link';
+        badge.className = 'badge';
+        btnText.innerText = 'Install Soko Mobile APK for System Notifications';
       }
     }
 
@@ -1462,20 +2223,233 @@
       if (window.SokoNative && typeof window.SokoNative.openNotificationAccess === 'function') {
         window.SokoNative.openNotificationAccess();
       } else {
-        showToast('Install Soko Mobile APK on your phone to grant notification access.');
+        showToast('Notification mirroring requires the Soko Mobile APK installed on Android', 'amber');
       }
     }
 
-    // Auto connect on startup
+    function checkBatteryOptimizationStatus() {
+      const badge = document.getElementById('batterySaverBadge');
+      const btn = document.getElementById('btnBatteryWhitelist');
+      const btnText = document.getElementById('btnBatteryWhitelistText');
+      if (!badge || !btn || !btnText) return;
+
+      if (window.SokoNative && typeof window.SokoNative.isBatteryOptimizationIgnored === 'function') {
+        const ignored = window.SokoNative.isBatteryOptimizationIgnored();
+        if (ignored) {
+          badge.innerText = 'Unrestricted ✓';
+          badge.className = 'badge green';
+          btnText.innerText = 'Background Service Active (Unrestricted) ✓';
+          btn.style.background = 'rgba(255, 255, 255, 0.05)';
+          btn.style.borderColor = 'rgba(16, 185, 129, 0.3)';
+          btn.disabled = true;
+        } else {
+          badge.innerText = 'Restricted ⚠️';
+          badge.className = 'badge amber';
+          btnText.innerText = 'Disable Battery Limits (Keep Running in Background)';
+          btn.disabled = false;
+        }
+      } else {
+        badge.innerText = 'Web Mode';
+        badge.className = 'badge';
+        btnText.innerText = 'Available in Soko Android APK';
+        btn.disabled = true;
+      }
+    }
+
+    function requestBatteryWhitelist() {
+      if (window.SokoNative && typeof window.SokoNative.requestIgnoreBatteryOptimization === 'function') {
+        window.SokoNative.requestIgnoreBatteryOptimization();
+      } else {
+        showToast('Background persistence is managed by the Android APK', 'info');
+      }
+    }
+
+    // ============================================================
+    // WIRELESS AUDIO STREAMING ENGINE
+    // ============================================================
+    let isAudioStreaming = false;
+    let audioVisualizerInterval = null;
+
+    function setStreamVolume(val) {
+      const player = document.getElementById('desktopAudioPlayer');
+      const label = document.getElementById('audioVolumeLabel');
+      if (player) {
+        player.volume = Math.max(0, Math.min(1, val / 100));
+      }
+      if (label) {
+        label.innerText = `${val}%`;
+      }
+    }
+
+    function updateDesktopAudioIndicator(status) {
+      if (!status) return;
+      const badge = document.getElementById('audioStatusBadge');
+      const meta = document.getElementById('audioStreamMeta');
+      if (!isAudioStreaming && badge) {
+        if (status.isPlaying) {
+          badge.innerText = 'Desktop Sound Active';
+          badge.className = 'badge green';
+        } else {
+          badge.innerText = 'Idle';
+          badge.className = 'badge';
+        }
+      }
+      if (meta && status.format && status.bitrate) {
+        meta.innerText = `${status.bitrate} • ${status.format.toUpperCase()} Stereo`;
+      }
+    }
+
+    function startVisualizerAnimation() {
+      stopVisualizerAnimation();
+      const bars = document.querySelectorAll('#audioVisualizerBars .vbar');
+      if (!bars || bars.length === 0) return;
+
+      audioVisualizerInterval = setInterval(() => {
+        bars.forEach((bar) => {
+          const randH = Math.floor(Math.random() * (24 - 4 + 1)) + 4;
+          bar.style.height = `${randH}px`;
+        });
+      }, 90);
+    }
+
+    function stopVisualizerAnimation() {
+      if (audioVisualizerInterval) {
+        clearInterval(audioVisualizerInterval);
+        audioVisualizerInterval = null;
+      }
+      const bars = document.querySelectorAll('#audioVisualizerBars .vbar');
+      const restingHeights = [6, 12, 18, 8, 16, 22, 14, 6];
+      bars.forEach((bar, idx) => {
+        bar.style.height = `${restingHeights[idx % restingHeights.length]}px`;
+      });
+    }
+
+    async function toggleAudioStreaming() {
+      const player = document.getElementById('desktopAudioPlayer');
+      const btn = document.getElementById('btnToggleAudio');
+      const btnText = document.getElementById('btnAudioText');
+      const badge = document.getElementById('audioStatusBadge');
+      const playIcon = document.getElementById('audioPlayIcon');
+
+      if (!player) return;
+
+      if (isAudioStreaming) {
+        try {
+          player.pause();
+          player.src = '';
+        } catch (e) {}
+        isAudioStreaming = false;
+        stopVisualizerAnimation();
+
+        if (btn) btn.className = 'btn btn-success';
+        if (btnText) btnText.innerText = 'Start Listening to PC Sound';
+        if (badge) {
+          badge.innerText = 'Idle';
+          badge.className = 'badge green';
+        }
+        if (playIcon) {
+          playIcon.innerHTML = '<polygon points="5 3 19 12 5 21 5 3"></polygon>';
+        }
+        showToast('Wireless desktop audio stream paused', 'info');
+      } else {
+        const streamUrl = `${getHttpBaseUrl()}/api/audio/stream?t=${Date.now()}`;
+        const volSlider = document.getElementById('audioVolumeSlider');
+        if (volSlider) {
+          player.volume = (parseInt(volSlider.value, 10) || 85) / 100;
+        }
+        player.src = streamUrl;
+
+        if (btnText) btnText.innerText = 'Connecting to Audio Stream...';
+        if (badge) {
+          badge.innerText = 'Buffering...';
+          badge.className = 'badge amber';
+        }
+
+        try {
+          await player.play();
+          isAudioStreaming = true;
+          startVisualizerAnimation();
+
+          if (btn) btn.className = 'btn btn-danger';
+          if (btnText) btnText.innerText = 'Stop Audio Stream';
+          if (badge) {
+            badge.innerText = 'Streaming Live 🎵';
+            badge.className = 'badge green';
+          }
+          if (playIcon) {
+            playIcon.innerHTML = '<rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect>';
+          }
+          showToast('Streaming desktop audio to device 🎵', 'success');
+        } catch (err) {
+          console.error('Audio stream playback failed:', err);
+          isAudioStreaming = false;
+          stopVisualizerAnimation();
+          player.src = '';
+          if (btn) btn.className = 'btn btn-success';
+          if (btnText) btnText.innerText = 'Start Listening to PC Sound';
+          if (badge) {
+            badge.innerText = 'Stream Muted / Idle';
+            badge.className = 'badge amber';
+          }
+          if (playIcon) {
+            playIcon.innerHTML = '<polygon points="5 3 19 12 5 21 5 3"></polygon>';
+          }
+          showToast('No audio stream detected. Ensure PC sound is playing.', 'amber');
+        }
+
+        player.onerror = () => {
+          if (isAudioStreaming) {
+            isAudioStreaming = false;
+            stopVisualizerAnimation();
+            if (btn) btn.className = 'btn btn-success';
+            if (btnText) btnText.innerText = 'Start Listening to PC Sound';
+            if (badge) {
+              badge.innerText = 'Disconnected';
+              badge.className = 'badge red';
+            }
+            if (playIcon) {
+              playIcon.innerHTML = '<polygon points="5 3 19 12 5 21 5 3"></polygon>';
+            }
+            showToast('Desktop audio stream disconnected', 'amber');
+          }
+        };
+      }
+    }
+
+    // ============================================================
+    // APPLICATION LIFECYCLE INITIALIZER
+    // ============================================================
     window.addEventListener('DOMContentLoaded', () => {
+      // Restore active tab
+      const savedTab = localStorage.getItem('soko_active_tab') || 'tab-link';
+      switchTab(savedTab);
+
       if (window.SokoNative && typeof window.SokoNative.getSavedBridgeIp === 'function') {
         const saved = window.SokoNative.getSavedBridgeIp();
         if (saved && saved.length > 0) {
           ipInput.value = saved;
         }
       }
+      if (window.SokoNative && typeof window.SokoNative.getSavedPairToken === 'function') {
+        const nativeTok = window.SokoNative.getSavedPairToken();
+        if (nativeTok && !localStorage.getItem('soko_pair_token')) {
+          localStorage.setItem('soko_pair_token', nativeTok);
+        }
+      }
+      if (getPairToken()) {
+        updatePairingUI('paired', 'Paired & Verified with Desktop Dynamic Island.');
+      } else {
+        updatePairingUI('unpaired', 'Enter the 6-digit PIN from desktop island to pair.');
+      }
+
       checkRealNotificationAccess();
-      window.addEventListener('focus', checkRealNotificationAccess);
+      checkBatteryOptimizationStatus();
+
+      window.addEventListener('focus', () => {
+        checkRealNotificationAccess();
+        checkBatteryOptimizationStatus();
+      });
+
       connectWs();
     });
   </script>

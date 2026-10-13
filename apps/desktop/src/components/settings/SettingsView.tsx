@@ -17,7 +17,6 @@ import {
   Copy,
   Check,
   ExternalLink,
-  Bell,
   UploadCloud,
   FileUp,
   AlertCircle,
@@ -27,6 +26,7 @@ import {
   ArrowUpRight,
   ArrowDownLeft,
   Clock,
+  Sparkles,
 } from 'lucide-react';
 import { connectionService } from '../../services/connection.ts';
 import { ConnectionStatus, PairedDevice, FileTransferStatus, TransferHistoryItem } from '../../types/index.ts';
@@ -36,7 +36,17 @@ interface SettingsViewProps {
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
-  const [activeTab, setActiveTab] = useState<'pairing' | 'cli' | 'files' | 'security'>('pairing');
+  const [activeTab, setActiveTab] = useState<'pairing' | 'cli' | 'files' | 'security' | 'mascot'>('pairing');
+  const [mascotIdleTimeout, setMascotIdleTimeout] = useState<number>(() => {
+    try {
+      const stored = localStorage.getItem('soko_idle_timeout');
+      if (stored !== null) {
+        const val = parseInt(stored, 10);
+        if (!isNaN(val)) return val;
+      }
+    } catch {}
+    return 60000;
+  });
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>(
     connectionService.getStatus()
   );
@@ -212,6 +222,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 <span>Security & Tunnel</span>
               </div>
               <span className="linear-kbd">4</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('mascot')}
+              className={`flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs font-medium tracking-tight transition-colors ${
+                activeTab === 'mascot'
+                  ? 'bg-white/[0.08] text-white shadow-hairline'
+                  : 'text-linear-text-secondary hover:text-white hover:bg-white/[0.04]'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Sparkles size={14} className={activeTab === 'mascot' ? 'text-[#5E6AD2]' : 'text-linear-text-tertiary'} />
+                <span>Mascot & Island</span>
+              </div>
+              <span className="linear-kbd">5</span>
             </button>
           </nav>
         </div>
@@ -390,40 +415,32 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 </div>
               </div>
 
-              {/* Direct Diagnostic Triggers */}
+              {/* Quick Workstation Controls */}
               <div className="pt-2 border-t border-white/5 flex flex-col gap-2">
                 <span className="text-[10px] font-mono uppercase tracking-wider text-linear-text-tertiary">
-                  Instant Link Verification Triggers
+                  Quick Workstation Actions
                 </span>
                 <div className="grid grid-cols-3 gap-2">
                   <button
-                    onClick={() => connectionService.sendTestNotification('WhatsApp', 'Alex Rivera', 'Live connection verified from Settings!')}
+                    onClick={() => connectionService.executeCliCommand('sysinfo')}
                     className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded bg-white/5 hover:bg-white/10 text-[11px] text-white border border-white/5 transition-colors"
+                    title="Run system telemetry diagnostics"
                   >
-                    <Bell size={12} className="text-[#25D366]" /> Send Notif
+                    <Terminal size={12} className="text-linear-brand" /> System Specs
                   </button>
                   <button
-                    onClick={() => connectionService.sendTestCli('status')}
+                    onClick={() => fileInputRef.current?.click()}
                     className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded bg-white/5 hover:bg-white/10 text-[11px] text-white border border-white/5 transition-colors"
+                    title="Select and send any file to mobile device"
                   >
-                    <Terminal size={12} className="text-linear-brand" /> Run CLI
+                    <FolderDown size={12} className="text-linear-green" /> Send File
                   </button>
                   <button
-                    onClick={(e) => {
-                      if (e.altKey) {
-                        connectionService.sendTestTransfer();
-                      } else {
-                        fileInputRef.current?.click();
-                      }
-                    }}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      connectionService.sendTestTransfer();
-                    }}
-                    title="Click to select file from desktop (Alt+Click for test APK)"
+                    onClick={() => connectionService.sendTestTransfer('soko-v1.0.0-release.apk')}
+                    title="Transmit companion APK package to mobile device"
                     className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded bg-white/5 hover:bg-white/10 text-[11px] text-white border border-white/5 transition-colors"
                   >
-                    <FolderDown size={12} className="text-linear-green" /> Send APK
+                    <Smartphone size={12} className="text-linear-brand" /> Send APK
                   </button>
                 </div>
               </div>
@@ -563,9 +580,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 <button
                   onClick={() => connectionService.sendTestTransfer('soko-v1.0.0-release.apk')}
                   className="linear-button-secondary px-3 py-2 flex items-center gap-1.5 text-xs"
-                  title="Simulate high-speed transfer with 52MB test APK"
+                  title="Transmit production companion APK to phone"
                 >
-                  Send 52MB Demo APK
+                  <Smartphone size={13} /> Send Companion APK
                 </button>
               </div>
             </div>
@@ -834,6 +851,80 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
               <div className="flex justify-between py-1.5 border-b border-white/5">
                 <span className="text-linear-text-secondary">Firewall Evasion</span>
                 <span className="font-mono text-linear-text-primary">Outbound Client-Pull (Zero PC ports opened)</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Mascot & Island Tab */}
+        {activeTab === 'mascot' && (
+          <div className="max-w-xl flex flex-col gap-6">
+            <div>
+              <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">Mascot & Dynamic Island</h2>
+              <p className="text-xs text-linear-text-secondary mt-1">
+                Customize Soko's ambient idle behavior, mascot facial scaling, and interactive HUD morphing.
+              </p>
+            </div>
+
+            <div className="linear-card rounded-lg p-5 flex flex-col gap-4">
+              <div className="flex items-center justify-between pb-3 border-b border-white/5">
+                <div>
+                  <h3 className="text-xs font-semibold text-white">Idle Mascot Orb Mode</h3>
+                  <p className="text-[11px] text-linear-text-tertiary mt-0.5">
+                    When inactive, removes controls and leaves an enlarged, living Soko mascot orb.
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent('soko:preview-mascot-mode'));
+                    onClose?.();
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-[#5E6AD2]/15 hover:bg-[#5E6AD2]/30 text-[#7C88E8] hover:text-white text-xs font-medium border border-[#5E6AD2]/30 active:scale-95 transition-all shadow-sm"
+                  title="Close settings and preview enlarged mascot orb now"
+                >
+                  Test Mascot Orb Now
+                </button>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-medium text-linear-text-secondary">
+                  Auto-Contract Inactivity Delay
+                </label>
+                <div className="grid grid-cols-5 gap-2">
+                  {[
+                    { label: '30s (Quick)', val: 30000 },
+                    { label: '1m (Default)', val: 60000 },
+                    { label: '2m', val: 120000 },
+                    { label: '5m', val: 300000 },
+                    { label: 'Disabled', val: 0 },
+                  ].map((opt) => (
+                    <button
+                      key={opt.label}
+                      onClick={() => {
+                        setMascotIdleTimeout(opt.val);
+                        localStorage.setItem('soko_idle_timeout', String(opt.val));
+                        window.dispatchEvent(new Event('soko:idle-settings-changed'));
+                      }}
+                      className={`py-2 px-2 rounded-lg text-center font-mono text-[11px] transition-all border ${
+                        mascotIdleTimeout === opt.val
+                          ? 'bg-[#5E6AD2] text-white font-semibold border-[#5E6AD2] shadow-[0_0_12px_rgba(94,106,210,0.4)]'
+                          : 'bg-white/[0.03] hover:bg-white/[0.08] text-white/70 hover:text-white border-white/[0.08]'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-white/[0.02] border border-white/5 rounded-lg p-3 text-[11px] text-linear-text-tertiary flex flex-col gap-1.5 font-mono">
+                <div className="flex items-center gap-1.5 text-white/90 font-sans font-medium">
+                  <Sparkles size={12} className="text-emerald-400" />
+                  <span>How Ambient Idle Mode Works:</span>
+                </div>
+                <p>• After the selected idle duration without mouse interactions, the island contracts to a 68×64px circular orb.</p>
+                <p>• Status indicators & buttons fade away, leaving only Soko's face enlarged to 56px.</p>
+                <p>• Hovering your mouse, clicking, or receiving any incoming notification immediately wakes Soko up and restores the full pill.</p>
               </div>
             </div>
           </div>

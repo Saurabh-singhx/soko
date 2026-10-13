@@ -1,134 +1,274 @@
-# Soko (そ小)
-
 <div align="center">
 
-**Dynamic Island Desktop HUD & Mobile Companion for Windows, Linux, and Android**
+<img src="docs/assets/icon.png" width="128" height="128" alt="Soko Logo" style="border-radius: 28px; box-shadow: 0 8px 24px rgba(0,0,0,0.3);" />
 
-*Seamless Bluetooth Pairing • Reactive Mascot Avatar • High-Speed Hotspot APK Transfers • Remote CLI Agent Control*
+# Soko (そ小)
+
+### *Dynamic Island Desktop HUD & High-Speed Android Companion*
+
+[![GitHub Release](https://img.shields.io/github/v/release/Saurabh-singhx/soko?include_prereleases&color=7c3aed&style=for-the-badge&logo=github)](https://github.com/Saurabh-singhx/soko/releases)
+[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows%20%7C%20Android-007ACC?style=for-the-badge&logo=linux)](https://github.com/Saurabh-singhx/soko/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-10b981?style=for-the-badge)](LICENSE)
+[![Build Status](https://img.shields.io/badge/Build-Passing-emerald?style=for-the-badge&logo=githubactions)](https://github.com/Saurabh-singhx/soko)
+
+<p align="center">
+  <b>Zero-Cloud Local Workstation Integration</b><br>
+  Reactive OLED Mascot HUD • High-Speed Hotspot File Transfers (60 MB/s) • Real-Time Notification Mirroring • Remote CLI Agent Terminal • Desktop Audio Streaming
+</p>
+
+[✨ Key Features](#-features) • [📥 Downloads](#-downloads) • [🏗️ Architecture](#-system-architecture) • [🚀 Quick Start](#-quick-start) • [🛡️ Security](#-security--zero-trust) • [📖 Documentation](#-deep-dive-documentation)
+
+<br/>
+
+<img src="docs/assets/soko-island-hud.png" alt="Soko Dynamic Island HUD in Action" width="680" style="border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);" />
 
 </div>
 
 ---
 
-## 📖 Overview
+## 💡 What is Soko?
 
-**Soko** connects your desktop environment (Windows & Linux) with your Android phone into a unified workstation experience.
+**Soko** transforms your desktop (Linux & Windows) and Android device into a synchronized, zero-latency workstation. 
 
-- **Dynamic Island HUD**: A top-center floating HUD on desktop featuring an animated emoji character mascot that reacts to phone notifications, running CLI agent tasks, and file transfers with Apple-inspired spring physics.
-- **Dual-Channel Connectivity**:
-  - **Bluetooth Low Energy (BLE)**: Zero-drain background signaling for notifications, heartbeats, and remote command execution.
-  - **Mobile Hotspot / Wi-Fi LAN**: Zero-config high-speed file transfers (30–60 MB/s) enabling 50MB+ build APK transfers in under 2 seconds without burning mobile cellular data.
-- **Remote Developer Agent Terminal**: Trigger and monitor command-line developer tools (like `antigravity-cli` / `agy`, Git status, or system controls) from your mobile phone with live streamed stdout.
-- **Glassmorphic Mobile UI**: Sleek mobile companion designed with frosted glass cards, glow shaders, and local biometric security.
+Unlike proprietary cloud bridges or heavy screen-mirroring tools, Soko operates **100% locally** over peer-to-peer Wi-Fi LAN, Hotspot, and Bluetooth Low Energy. It pairs a sleek, floating top-center **Dynamic Island HUD** on your desktop with an ultra-responsive companion app on your phone.
+
+Whether you need to beam 100MB+ APKs and media files across devices in seconds without touching cellular data, keep an eye on real-time smartphone notifications while coding, monitor remote CLI agent workflows, or stream PC audio to your phone, Soko does it all with zero internet dependency and zero cloud surveillance.
+
+---
+
+## ✨ Features
+
+### 🏝️ Dynamic Island Desktop HUD
+- **Top-Center Floating Island**: Frameless, transparent, and spring-physics animated desktop HUD styled with Linear dark glassmorphic aesthetics.
+- **Click-Through & Screen Adaptive**: Seamlessly floats above your IDE and active windows without blocking your cursor or screen content. Dismisses on `Escape` or outside click.
+- **Multi-State Fluid Layout**: Expands smoothly when notifications arrive, file transfers initiate, or CLI commands stream output.
+
+### 🤖 Living Soko Bot Mascot
+- **OLED Micro-Avatar**: High-framerate animated cyber-mascot living inside the island.
+- **Biomimetic Eye Engine**: Dynamic eye-tracking, biological ballistic saccades, blink reflexes, and expressively choreographed emotions (`idle`, `happy`, `thinking`, `busy`, `error`, `surprised`).
+- **360° Physics Interactions**: Watch Soko roll, inspect active transfers, read incoming messages left-to-right, and react to system state changes.
+
+### ⚡ 60 MB/s Hotspot & LAN Transfers
+- **Direct Peer-to-Peer Streaming**: Pull and push files directly between devices at 30–60+ MB/s over local Wi-Fi or Mobile Hotspot.
+- **Zero Cellular Data**: Transfers bypass external networks completely—beam heavy build artifacts, videos, and APKs in under 2 seconds.
+- **Native Android DownloadManager**: Received files are automatically verified via SHA-256 and integrated into Android's native Downloads manager and Desktop file manager.
+
+### 🔔 Real-Time Notification Mirroring
+- **Native Android NotificationListener**: Low-latency event streaming delivers notifications right to your desktop Island HUD.
+- **Authentic Brand Squircle Badges**: Pixel-perfect app icons for WhatsApp, Telegram, Slack, Discord, GitHub, Gmail, SMS, and custom applications.
+- **Expandable Card Reader & 1-Click Copy**: Expand notifications on hover or click to inspect multi-line content, and click any message to instantly copy text to your desktop clipboard.
+
+### 💻 Remote Developer CLI Agent Deck
+- **Mobile Control Terminal**: Trigger, inspect, and monitor local command-line tasks (such as `antigravity-cli` / `agy`, Git status, or custom shell operations) straight from your phone.
+- **Live Streaming stdout**: Real-time ANSI terminal logs stream over WebSockets to your mobile companion deck.
+- **Whitelisted Sandbox**: Only commands explicitly registered in the desktop configuration can be executed, preventing arbitrary remote code execution (RCE).
+
+### 🎵 Low-Latency Desktop Audio Streaming
+- **Desktop-to-Phone Audio**: Stream desktop audio directly to your mobile device via PipeWire, PulseAudio, or WASAPI.
+- **High-Fidelity 192 kbps Stream**: Enjoy lag-free audio monitoring on your phone or connected earbuds while away from your desk.
+
+### 🛡️ Zero-Trust Security & Pairing
+- **Short Authentication String (SAS)**: Cryptographic 6-digit confirmation codes guarantee physical human-in-the-loop pairing.
+- **Replay Attack Defense**: Monotonic sequence counters reject duplicated or delayed network packets.
+- **Sandboxed File Ingestion**: Strict basename sanitization prevents directory-traversal attacks (`../`) and enforces `0644` non-executable permissions.
+
+---
+
+## 📥 Downloads
+
+Ready-to-use binaries are published with every release on [GitHub Releases](https://github.com/Saurabh-singhx/soko/releases).
+
+| Platform | Package Format | Direct Download / Install Command | Notes |
+| :--- | :--- | :--- | :--- |
+| **Linux (x64)** | `.AppImage` | [`soko-linux-x86_64.AppImage`](https://github.com/Saurabh-singhx/soko/releases/latest) | Portable, runs on any modern distro (Ubuntu, Fedora, Arch) |
+| **Linux (x64)** | `.deb` | [`soko-linux-amd64.deb`](https://github.com/Saurabh-singhx/soko/releases/latest) | Debian, Ubuntu, Linux Mint native package |
+| **Linux (x64)** | `.tar.gz` | [`soko-linux-x64.tar.gz`](https://github.com/Saurabh-singhx/soko/releases/latest) | Standalone unpacked binary archive |
+| **Windows (x64)** | Portable `.exe` | [`soko-win-x64.exe`](https://github.com/Saurabh-singhx/soko/releases/latest) | Standalone portable executable (No installer required) |
+| **Windows (x64)** | `.zip` | [`soko-win-x64.zip`](https://github.com/Saurabh-singhx/soko/releases/latest) | Unpack and launch `soko.exe` |
+| **Android (API 24+)** | `soko-mobile.apk` | [`soko-mobile.apk`](https://github.com/Saurabh-singhx/soko/releases/latest) | Full companion with background notification listener |
+| **Android (API 24+)** | `soko-mobile-lite.apk` | [`soko-mobile-lite.apk`](https://github.com/Saurabh-singhx/soko/releases/latest) | Lite standalone companion (Clean transfer & CLI, 0 Play Protect warnings) |
+
+> [!TIP]
+> On Linux, you can also launch the application via `./run-desktop.sh` after building locally.
 
 ---
 
 ## 🏗️ System Architecture
 
-Detailed global architecture and data flows are documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+```
+┌────────────────────────────────────────────────────────┐
+│                   Desktop Workstation                  │
+│                                                        │
+│  ┌────────────────────────┐  ┌───────────────────────┐ │
+│  │   Dynamic Island HUD   │  │   Settings & Controls │ │
+│  │   (Electron + React)   │  │   (Linear Dark Theme) │ │
+│  └───────────┬────────────┘  └───────────┬───────────┘ │
+│              │                           │             │
+│              ▼                           ▼             │
+│  ┌──────────────────────────────────────────────────┐  │
+│  │     Soko Local Bridge Daemon (Node.js / :8766)   │  │
+│  │  • WebSocket Duplex Conduit                      │  │
+│  │  • PipeWire / PulseAudio Real-Time Streamer      │  │
+│  │  • Whitelisted CLI PTY Process Spawner          │  │
+│  │  • High-Speed HTTP Chunked Transfer Receiver     │  │
+│  └────────────────────────┬─────────────────────────┘  │
+└───────────────────────────┼────────────────────────────┘
+                            │
+              Local Wi-Fi LAN / Mobile Hotspot
+         Dual-Protocol: WebSocket (Control) + HTTP (Data)
+                            │
+┌───────────────────────────┼────────────────────────────┐
+│                           ▼                            │
+│  ┌──────────────────────────────────────────────────┐  │
+│  │          Soko Android Companion Device           │  │
+│  │                                                  │  │
+│  │  • Native Android NotificationListenerService    │  │
+│  │  • High-Speed Hotspot Downloader (30-60 MB/s)    │  │
+│  │  • Remote CLI Command Deck & Real-time Console   │  │
+│  │  • Low-Latency Mobile Audio Player               │  │
+│  └──────────────────────────────────────────────────┘  │
+│                   Android Smartphone                   │
+└────────────────────────────────────────────────────────┘
+```
 
-```
-┌─────────────────────────────────┐          Bluetooth LE (GATT)          ┌──────────────────────────────────┐
-│          Desktop (Soko)         │ <───────────────────────────────────> │           Mobile (Soko)          │
-│ • Dynamic Island (React/Motion) │   [Pings, Notifications, CLI Triggers]│ • Glassmorphism UI (Flutter)     │
-│ • Settings Multi-Window (Tauri) │                                       │ • NotificationListenerService    │
-│ • Rust Backend Daemon (Tokio)   │ ═════════════════════════════════════ │ • Embedded Hotspot HTTP Server   │
-└─────────────────────────────────┘      High-Speed Wi-Fi LAN (50 MB/s)    └──────────────────────────────────┘
-                                          [APKs, Media, Direct Pull Stream]
-```
+Detailed architectural diagrams, protocols, and threat models can be reviewed in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
 
-## 📂 Project Structure
+## 🚀 Quick Start
 
-```
-soko/
-├── docs/                                 # Research, benchmarks & engineering logs
-│   ├── ARCHITECTURE.md                   # Global system design & threat model
-│   └── features/
-│       ├── 01-dynamic-island-hud.md      # Top-center HUD, transparent click-through & mascot
-│       ├── 02-bluetooth-dual-protocol.md # BLE GATT vs Classic RFCOMM trade-offs
-│       ├── 03-hotspot-high-speed-transfer.md # Zero-config BLE handoff to Hotspot HTTP
-│       ├── 04-remote-cli-execution.md    # Safe PTY execution for Antigravity CLI
-│       ├── 05-notification-mirroring.md  # Android NotificationListenerService & filters
-│       └── 06-security-and-pairing.md    # ECDH, 6-digit confirmation PINs & replay guards
-│
-├── apps/
-│   ├── desktop/                          # Desktop application (Windows & Linux)
-│   │   ├── src-tauri/                    # Rust backend daemon
-│   │   │   ├── src/bluetooth/            # BLE service & packet deserializer
-│   │   │   ├── src/cli/                  # Whitelisted PTY process spawner
-│   │   │   ├── src/transfer/             # High-speed file pull client & sandbox
-│   │   │   ├── src/windows/              # Multi-window controller (Island + Settings)
-│   │   │   └── src/security/             # AES-256-GCM crypto & trust store
-│   │   └── src/                          # Frontend UI (React + Tailwind + Framer Motion)
-│   │       ├── components/island/        # Dynamic Island, Reactive Mascot, Widgets
-│   │       └── components/settings/      # Full settings management window
-│   │
-│   └── mobile/                           # Mobile application (Flutter)
-│       └── lib/
-│           ├── core/                     # Glassmorphic tokens, crypto, packet models
-│           ├── services/                 # BLE service, Hotspot HTTP file server, CLI runner
-│           └── ui/                       # Glassmorphic dashboard, terminal deck, file share
-│
-└── packages/
-    └── protocol/                         # Shared JSON Schemas & packet specifications
-        └── schema/
-            ├── packet.json
-            ├── notification.json
-            ├── cli_command.json
-            └── file_transfer.json
-```
+### Prerequisites
+- **Node.js**: v18.0.0 or higher
+- **npm**: v9.0.0 or higher
+- **Linux (optional)**: `libgtk-3-dev`, `libnotify-dev`, `alsa-utils` / `pipewire`
+- **Android**: Android 7.0 (Nougat, API 24) or newer
 
----
-
-## 📚 Feature Research & Engineering Logs
-
-Each core feature contains a dedicated `.md` file detailing research, failed attempts, and the production solution:
-
-1. [Dynamic Island HUD & Reactive Mascot](docs/features/01-dynamic-island-hud.md) - Research on Wayland vs X11 window placement, transparent click-through hit-testing, and mascot emotion state machines.
-2. [Bluetooth Dual-Protocol Strategy](docs/features/02-bluetooth-dual-protocol.md) - Analysis of why BLE-only fails for bulk files and how dual-mode standby preserves battery.
-3. [Hotspot / LAN High-Speed File Transfer](docs/features/03-hotspot-high-speed-transfer.md) - Why mobile hotspot connections allow zero-data 50 MB/s transfers and bypass Windows Defender public network blocking.
-4. [Remote CLI Agent Runner](docs/features/04-remote-cli-execution.md) - Safe PTY process spawning without raw shell injection risks for Antigravity CLI (`agy`).
-5. [Notification Mirroring](docs/features/05-notification-mirroring.md) - Event-driven Android `NotificationListenerService` and deduplication algorithms.
-6. [Security, Pairing & Threat Model](docs/features/06-security-and-pairing.md) - ECDH key exchange, 6-digit confirmation codes, and monotonic replay attack prevention.
-
----
-
-## 🚀 Getting Started
-
-### 1. Prerequisites
-- Node.js (v18+) & npm
-- Rust & Cargo (for compiling the Tauri desktop backend)
-- Flutter SDK (for building the mobile companion app)
-
-### 2. Desktop Frontend Preview
-You can test the Dynamic Island UI, reactive mascot animations, and full Settings window right in your browser:
+### 1. Clone the Repository
 ```bash
-cd apps/desktop
+git clone https://github.com/Saurabh-singhx/soko.git
+cd soko
+```
+
+### 2. Install Dependencies
+```bash
 npm install
-npm run dev
-```
-- Open `http://localhost:5173` to test the Dynamic Island and click the test buttons (`+ Test Notif`, `+ Run agy`, `+ Send APK`).
-- Open `http://localhost:5173/#settings` to inspect the full desktop management view.
-
-### 3. Desktop Application Run (Tauri)
-```bash
-cd apps/desktop
-cargo tauri dev
+npm --prefix apps/desktop install
 ```
 
-### 4. Mobile Application Run (Flutter)
+### 3. Run the Desktop App (Development)
 ```bash
-cd apps/mobile
-flutter pub get
-flutter run
+# Launch the local connection bridge daemon
+npm run bridge
+
+# In a separate terminal, launch the desktop HUD
+npm run dev:desktop
+```
+
+Or run the complete packaged desktop build directly on Linux:
+```bash
+./run-desktop.sh
+```
+
+### 4. Connect Your Android Device
+1. Install **`soko-mobile.apk`** on your Android device (or open `http://<YOUR_DESKTOP_IP>:8766` in your mobile browser).
+2. Enter the **6-digit SAS PIN** displayed in your desktop Settings window.
+3. Once paired, notifications, high-speed file transfers, and remote CLI tools are instantly live!
+
+---
+
+## 🛠️ Building From Source
+
+### Building Desktop Packages (Linux & Windows)
+Soko uses Electron Builder to package distribution binaries:
+
+```bash
+# Compile desktop frontend
+npm run build:desktop
+
+# Package Linux targets (.AppImage, .deb, .tar.gz)
+npm run build:linux
+
+# Package Windows targets (Portable .exe, .zip)
+npm run build:windows
+
+# Package all desktop targets simultaneously
+npm run build:desktop:all
+```
+Generated artifacts will be placed in the `dist-desktop/` directory.
+
+### Building Android APKs
+Soko features an automated standalone Android build pipeline utilizing `aapt2`, `d8`, `zipalign`, and `apksigner`:
+
+```bash
+npm run build:apk
+```
+This generates:
+- `apks/soko-mobile.apk`: Full companion with Android Notification Listener
+- `apks/soko-mobile-lite.apk`: Lightweight companion with zero permission requirements
+- `apks/soko-desktop.apk`: Dynamic Island HUD testbed compiled for Android displays
+
+---
+
+## 🧪 Testing
+
+Soko includes a comprehensive end-to-end integration test suite verifying health telemetry, notification dispatch, remote CLI whitelist enforcement, path traversal protection, and SHA-256 upload verification:
+
+```bash
+# Start bridge and execute full test suite
+node scripts/soko_bridge.js &
+PID=$!
+npm test
+kill $PID
 ```
 
 ---
 
-## 🛡️ Security Guarantees
-- **No Unrestricted RCE**: Mobile triggers invoke only pre-configured aliases registered in the desktop whitelist.
-- **Anti-Directory Traversal**: All received files are sanitized and confined to `~/Downloads/SokoFiles/`.
-- **Replay Protection**: Packets with duplicate or backwards sequence IDs are rejected immediately.
-- **MITM Defense**: 6-digit cryptographic confirmation PIN ensures physical human verification during initial setup.
+## 🛡️ Security & Zero-Trust
+
+Soko is engineered under a strict **Zero-Trust Local Network** security model:
+
+1. **Whitelisted CLI Execution Only**: Soko rejects arbitrary command execution. Only pre-configured aliases registered in the desktop configuration (e.g., `sysinfo`, `git-status`, `antigravity`) can be executed. Attempts to execute unauthorized commands or shell injections (`rm -rf`, `;`, `&&`) are blocked with HTTP `403 Forbidden`.
+2. **Path Sanitization & Sandbox**: All received files are stripped of directory paths (`../`) to their strict basename and stored inside a sandboxed `transfers/` directory with non-executable permissions (`0644`).
+3. **Cryptographic Checksum Verification**: Transferred files compute and verify SHA-256 hashes on the fly. Corrupted or tampered files are purged immediately.
+4. **Physical SAS Confirmation PIN**: Initial pairing requires manual entry of a 6-digit confirmation PIN displayed on the desktop HUD, guarding against rogue devices on shared Wi-Fi networks.
+
+---
+
+## 📖 Deep-Dive Documentation
+
+Explore our comprehensive engineering logs and feature architecture documents:
+
+| Topic | Document |
+| :--- | :--- |
+| **Global Architecture & Threat Model** | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| **Dynamic Island HUD & X11/Wayland Physics** | [docs/features/01-dynamic-island-hud.md](docs/features/01-dynamic-island-hud.md) |
+| **Bluetooth Low Energy vs Classic RFCOMM** | [docs/features/02-bluetooth-dual-protocol.md](docs/features/02-bluetooth-dual-protocol.md) |
+| **Hotspot & LAN Zero-Cellular High-Speed Transfers** | [docs/features/03-hotspot-high-speed-transfer.md](docs/features/03-hotspot-high-speed-transfer.md) |
+| **Remote CLI Agent Runner & PTY Security** | [docs/features/04-remote-cli-execution.md](docs/features/04-remote-cli-execution.md) |
+| **Android NotificationListener Service & Filters** | [docs/features/05-notification-mirroring.md](docs/features/05-notification-mirroring.md) |
+| **Zero-Trust SAS Pairing & Replay Guards** | [docs/features/06-security-and-pairing.md](docs/features/06-security-and-pairing.md) |
+| **Grok Bot Living OLED Mascot Animation Engine** | [docs/features/07-grok-bot-monochrome-animation.md](docs/features/07-grok-bot-monochrome-animation.md) |
+
+---
+
+## 🤝 Contributing
+
+Contributions, bug reports, and suggestions are warmly welcomed!
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feat/amazing-feature`)
+3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
+4. Push to the branch (`git push origin feat/amazing-feature`)
+5. Open a Pull Request
+
+---
+
+## 📄 License
+
+Distributed under the **MIT License**. See [`LICENSE`](LICENSE) for more details.
+
+---
+
+<div align="center">
+  <sub>Crafted with passion for a unified desktop and mobile developer workflow.</sub>
+</div>

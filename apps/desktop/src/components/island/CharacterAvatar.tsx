@@ -6,6 +6,8 @@ interface CharacterAvatarProps {
   mood: MascotMood;
   size?: number;
   notificationKey?: string | number;
+  isMusicPlaying?: boolean;
+  isIdleMascotOnly?: boolean;
 }
 
 /**
@@ -217,6 +219,8 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
   mood,
   size = 32,
   notificationKey,
+  isMusicPlaying = false,
+  isIdleMascotOnly = false,
 }) => {
   const [currentTarget, setCurrentTarget] = useState<GazeTarget>(NEUTRAL_TARGET);
   const [isBlinking, setIsBlinking] = useState(false);
@@ -646,6 +650,8 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
   const currentRightTopY = isBlinking ? 26.8 : currentTarget.rightTopY;
   const currentRightHeight = isBlinking ? 1.2 : currentTarget.rightHeight;
   const currentRightRx = currentTarget.name.includes('inquisitive') ? 3.0 : EYE_RX;
+  const activeGazeX = isMusicPlaying ? 0 : currentTarget.gazeX;
+  const activeGazeY = isMusicPlaying ? 0 : currentTarget.gazeY;
 
   // Handle direct click spin reaction
   const handleAvatarClick = () => {
@@ -694,15 +700,17 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
         }}
         transition={headSpring}
       >
-        {/* Subtle OLED Ambient Halo (Zero vertical bob) */}
-        <div className="absolute inset-0 rounded-full blur-md bg-white/15 pointer-events-none" />
+        {/* Subtle OLED Ambient Halo (Zero vertical bob) - disabled in idle mode */}
+        {!isIdleMascotOnly && (
+          <div className="absolute inset-0 rounded-full blur-md bg-white/10 pointer-events-none" />
+        )}
 
         <svg
           viewBox="0 0 44 44"
           preserveAspectRatio="xMidYMid meet"
           fill="none"
           xmlns="http://www.w3.org/2000/svg"
-          className="w-full h-full aspect-square relative z-10 drop-shadow-2xl"
+          className={`w-full h-full aspect-square relative z-10 ${isIdleMascotOnly ? '' : 'drop-shadow-md'}`}
         >
           <defs>
             {/* 
@@ -742,9 +750,16 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
                 <feMergeNode in="SourceGraphic" />
               </feMerge>
             </filter>
+
+            {/* Vibrant Music Equalizer Spectrum Gradient */}
+            <linearGradient id="grok-music-equalizer" x1="0" y1="1" x2="0" y2="0">
+              <stop offset="0%" stopColor="#10B981" />
+              <stop offset="50%" stopColor="#34D399" />
+              <stop offset="100%" stopColor="#60A5FA" />
+            </linearGradient>
           </defs>
 
-          {/* 1. Left Ear-Fin Antenna (Fast autonomous spring twitch) */}
+          {/* 1. Left Ear-Fin Antenna (Fast autonomous spring twitch & music rhythm bounce) */}
           <motion.path
             d="M7 17C4 13 4 8 8 10C9 13 8 18 7 17Z"
             fill="url(#grok-fin-mono)"
@@ -754,19 +769,25 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
             animate={
               leftEarTwitch
                 ? { rotate: [-18, 14, -8, 0] }
+                : isMusicPlaying
+                ? { rotate: [-6, 6, -6] }
                 : mood === 'alert'
                 ? { rotate: -24, scale: 1.12 }
                 : { rotate: 0 }
             }
             style={{ originX: '8px', originY: '17px' }}
-            transition={{
-              type: 'spring',
-              stiffness: 600,
-              damping: 24,
-            }}
+            transition={
+              isMusicPlaying
+                ? { duration: 0.65, repeat: Infinity, ease: 'easeInOut' }
+                : {
+                    type: 'spring',
+                    stiffness: 600,
+                    damping: 24,
+                  }
+            }
           />
 
-          {/* 2. Right Ear-Fin Antenna */}
+          {/* 2. Right Ear-Fin Antenna (Music rhythm bounce) */}
           <motion.path
             d="M37 17C40 13 40 8 36 10C35 13 36 18 37 17Z"
             fill="url(#grok-fin-mono)"
@@ -776,16 +797,22 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
             animate={
               rightEarTwitch
                 ? { rotate: [18, -14, 8, 0] }
+                : isMusicPlaying
+                ? { rotate: [6, -6, 6] }
                 : mood === 'alert'
                 ? { rotate: 24, scale: 1.12 }
                 : { rotate: 0 }
             }
             style={{ originX: '36px', originY: '17px' }}
-            transition={{
-              type: 'spring',
-              stiffness: 600,
-              damping: 24,
-            }}
+            transition={
+              isMusicPlaying
+                ? { duration: 0.65, repeat: Infinity, ease: 'easeInOut' }
+                : {
+                    type: 'spring',
+                    stiffness: 600,
+                    damping: 24,
+                  }
+            }
           />
 
           {/* 3. Deep Black Visor Dome */}
@@ -805,17 +832,87 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
           <g clipPath="url(#grok-visor-screen)">
             <motion.g
               filter="url(#eye-bloom)"
-              transform={`translate(${currentTarget.gazeX}, ${currentTarget.gazeY})`}
+              transform={`translate(${activeGazeX}, ${activeGazeY})`}
               animate={{
-                x: currentTarget.gazeX,
-                y: currentTarget.gazeY,
+                x: activeGazeX,
+                y: activeGazeY,
               }}
               style={{
                 transition: isScanning ? 'transform 0.55s ease-in-out' : 'transform 0.12s cubic-bezier(0.16, 1, 0.3, 1)',
               }}
               transition={isScanning ? scanSpring : saccadeSpring}
             >
-              {mood === 'happy' ? (
+              {isMusicPlaying && (isIdleMascotOnly || mood === 'idle') ? (
+                // Musical Equalizer Dancing Spectrum Eyes (Replaces eyes during music idle mode)
+                <motion.g
+                  key="music-equalizer-eyes"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  {/* Left Eye Equalizer Cluster (Grounded at baseline y = 27.5, matching normal eye bottom) */}
+                  <rect x="12.5" y="18.5" width="1.5" height="9" rx="0.75" fill="url(#grok-music-equalizer)">
+                    <animate attributeName="y" values="22.5;17.5;23.5;16.5;22.5" dur="0.62s" repeatCount="indefinite" />
+                    <animate attributeName="height" values="5;10;4;11;5" dur="0.62s" repeatCount="indefinite" />
+                  </rect>
+                  <rect x="14.3" y="16.5" width="1.5" height="11" rx="0.75" fill="url(#grok-music-equalizer)">
+                    <animate attributeName="y" values="16.5;21.5;15.5;20.5;16.5" dur="0.52s" repeatCount="indefinite" />
+                    <animate attributeName="height" values="11;6;12;7;11" dur="0.52s" repeatCount="indefinite" />
+                  </rect>
+                  <rect x="16.1" y="20.5" width="1.5" height="7" rx="0.75" fill="url(#grok-music-equalizer)">
+                    <animate attributeName="y" values="20.5;15.5;22.5;16.5;20.5" dur="0.74s" repeatCount="indefinite" />
+                    <animate attributeName="height" values="7;12;5;11;7" dur="0.74s" repeatCount="indefinite" />
+                  </rect>
+                  <rect x="17.9" y="23.5" width="1.5" height="4" rx="0.75" fill="url(#grok-music-equalizer)">
+                    <animate attributeName="y" values="23.5;19.5;24.5;20.5;23.5" dur="0.45s" repeatCount="indefinite" />
+                    <animate attributeName="height" values="4;8;3;7;4" dur="0.45s" repeatCount="indefinite" />
+                  </rect>
+
+                  {/* Right Eye Equalizer Cluster (Grounded at baseline y = 27.5, matching normal eye bottom) */}
+                  <rect x="24.6" y="23.5" width="1.5" height="4" rx="0.75" fill="url(#grok-music-equalizer)">
+                    <animate attributeName="y" values="23.5;20.5;24.5;19.5;23.5" dur="0.48s" repeatCount="indefinite" />
+                    <animate attributeName="height" values="4;7;3;8;4" dur="0.48s" repeatCount="indefinite" />
+                  </rect>
+                  <rect x="26.4" y="20.5" width="1.5" height="7" rx="0.75" fill="url(#grok-music-equalizer)">
+                    <animate attributeName="y" values="20.5;16.5;22.5;15.5;20.5" dur="0.70s" repeatCount="indefinite" />
+                    <animate attributeName="height" values="7;11;5;12;7" dur="0.70s" repeatCount="indefinite" />
+                  </rect>
+                  <rect x="28.2" y="16.5" width="1.5" height="11" rx="0.75" fill="url(#grok-music-equalizer)">
+                    <animate attributeName="y" values="16.5;20.5;15.5;21.5;16.5" dur="0.55s" repeatCount="indefinite" />
+                    <animate attributeName="height" values="11;7;12;6;11" dur="0.55s" repeatCount="indefinite" />
+                  </rect>
+                  <rect x="30.0" y="21.5" width="1.5" height="6" rx="0.75" fill="url(#grok-music-equalizer)">
+                    <animate attributeName="y" values="21.5;16.5;23.5;17.5;21.5" dur="0.65s" repeatCount="indefinite" />
+                    <animate attributeName="height" values="6;11;4;10;6" dur="0.65s" repeatCount="indefinite" />
+                  </rect>
+
+                  {/* Micro Floating Music Note Centered at Eye Horizon cy = 22 */}
+                  <text
+                    x="22"
+                    y="22"
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    fontSize="4"
+                    fill="#34D399"
+                    opacity="0.85"
+                  >
+                    <animate
+                      attributeName="y"
+                      values="22.5;20.5;22.5"
+                      dur="1.4s"
+                      repeatCount="indefinite"
+                    />
+                    <animate
+                      attributeName="opacity"
+                      values="0.45;0.95;0.45"
+                      dur="1.4s"
+                      repeatCount="indefinite"
+                    />
+                    ♪
+                  </text>
+                </motion.g>
+              ) : mood === 'happy' ? (
                 // Joyful Upward Curved Arcs (^^)
                 <>
                   <path

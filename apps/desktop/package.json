@@ -1,12 +1,21 @@
 {
-  "name": "@soko/desktop-ui",
+  "name": "soko-desktop",
+  "productName": "Soko",
+  "description": "Soko Dynamic Island HUD & Android Device Companion",
+  "author": "Soko Team <team@soko.local>",
+  "homepage": "https://github.com/soko-ecosystem/soko",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "start": "electron .",
+    "dist:linux": "electron-builder --linux -c electron-builder.json",
+    "dist:win": "electron-builder --win -c electron-builder.json",
+    "dist": "npm run build && electron-builder --linux --win -c electron-builder.json"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
@@ -18,10 +27,13 @@
     "tailwind-merge": "^2.3.0"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.12.2",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.19",
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
     "postcss": "^8.4.38",
     "tailwindcss": "^3.4.4",
     "typescript": "^5.4.5",

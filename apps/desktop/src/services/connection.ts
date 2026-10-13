@@ -6,6 +6,8 @@ import {
   FileTransferStatus,
   TransferHistoryItem,
   SokoPacketEnvelope,
+  PairRequestPending,
+  AudioStreamStatus,
 } from '../types/index.ts';
 
 type ConnectionEventListener = (status: ConnectionStatus, device: PairedDevice | null) => void;
@@ -14,6 +16,8 @@ type CliListener = (cli: CliProcessStatus) => void;
 type TransferListener = (transfer: FileTransferStatus) => void;
 type TransferHistoryListener = (history: TransferHistoryItem[]) => void;
 type BridgeEventListener = (isOnline: boolean, clientCount: number, localIps: string[]) => void;
+type PendingPairListener = (request: PairRequestPending) => void;
+type AudioStatusListener = (status: AudioStreamStatus) => void;
 
 const DEFAULT_PAIRED_DEVICE: PairedDevice = {
   id: 'soko-peer-pixel8',
@@ -52,6 +56,13 @@ class ConnectionManager {
   private cliListeners: Set<CliListener> = new Set();
   private transferListeners: Set<TransferListener> = new Set();
   private bridgeListeners: Set<BridgeEventListener> = new Set();
+  private pendingPairListeners: Set<PendingPairListener> = new Set();
+  private audioStatusListeners: Set<AudioStatusListener> = new Set();
+  private audioStatus: AudioStreamStatus = {
+    isPlaying: false,
+    isStreamingToMobile: false,
+    activeListeners: 0,
+  };
 
   private reconnectTimer: any = null;
   private heartbeatTimer: any = null;
@@ -145,6 +156,32 @@ class ConnectionManager {
   public onTransfer(listener: TransferListener): () => void {
     this.transferListeners.add(listener);
     return () => this.transferListeners.delete(listener);
+  }
+
+  public onPendingPair(listener: PendingPairListener): () => void {
+    this.pendingPairListeners.add(listener);
+    return () => this.pendingPairListeners.delete(listener);
+  }
+
+  public onAudioStatus(listener: AudioStatusListener): () => void {
+    this.audioStatusListeners.add(listener);
+    listener(this.audioStatus);
+    return () => this.audioStatusListeners.delete(listener);
+  }
+
+  public getAudioStatus(): AudioStreamStatus {
+    return this.audioStatus;
+  }
+
+  public approvePairing(deviceId: string, approved: boolean): void {
+    this.sendPacket({
+      magic: 'SK',
+      version: 1,
+      packetId: Date.now(),
+      timestamp: Date.now(),
+      packetType: 'PAIR_DECISION',
+      payload: { deviceId, approved },
+    });
   }
 
   public subscribeTransferHistory(listener: TransferHistoryListener): () => void {
@@ -477,13 +514,24 @@ class ConnectionManager {
           if (Array.isArray(packet.payload.localIps) && packet.payload.localIps.length > 0) {
             this.localIps = packet.payload.localIps;
           }
+          if (packet.payload.sasPin) {
+            this.sasPin = packet.payload.sasPin;
+          }
           if (packet.payload.activeClients !== undefined) {
             this.activeClients = packet.payload.activeClients;
           }
-          if (packet.payload.pairedDevice && !this.activeDevice) {
+          if (packet.payload.pairedDevice) {
             this.activeDevice = packet.payload.pairedDevice;
+            this.status = 'connected';
           }
           this.notifyBridge();
+          this.notifyStatus();
+        }
+        break;
+
+      case 'PIN_UPDATED':
+        if (packet.payload?.pin) {
+          this.sasPin = packet.payload.pin;
           this.notifyStatus();
         }
         break;
@@ -500,35 +548,38 @@ class ConnectionManager {
         }
         break;
 
-      case 'PAIR_REQUEST':
+      case 'AUDIO_STATUS':
         if (packet.payload) {
-          if (packet.payload.pin) {
-            this.sasPin = packet.payload.pin;
-          }
-          this.activeDevice = {
-            id: packet.payload.id || 'mobile-companion',
-            name: packet.payload.deviceName || 'Android Mobile Companion',
-            model: packet.payload.model || 'Pixel / Galaxy (Android 15)',
-            rssi: packet.payload.rssi || -52,
-            pingMs: 8,
-            transport: 'dual',
-            batteryLevel: packet.payload.batteryLevel || 94,
-            lastSeen: Date.now(),
-            isAuthorized: true,
-            ipAddress: this.localIps[0] || '192.168.31.210',
+          this.audioStatus = {
+            isPlaying: Boolean(packet.payload.isPlaying),
+            isStreamingToMobile: Boolean(packet.payload.isStreamingToMobile),
+            activeListeners: packet.payload.activeListeners || 0,
+            format: packet.payload.format,
+            bitrate: packet.payload.bitrate,
+            source: packet.payload.source,
           };
+          this.audioStatusListeners.forEach((l) => l(this.audioStatus));
+        }
+        break;
+
+      case 'PAIR_REQUEST_PENDING':
+        if (packet.payload) {
+          const req: PairRequestPending = {
+            deviceId: packet.payload.deviceId,
+            deviceName: packet.payload.deviceName,
+            model: packet.payload.model,
+            pin: packet.payload.pin,
+            ip: packet.payload.ip,
+            timestamp: Date.now(),
+          };
+          this.pendingPairListeners.forEach((l) => l(req));
+        }
+        break;
+
+      case 'PAIR_CONFIRM':
+        if (packet.payload) {
           this.status = 'connected';
           this.notifyStatus();
-
-          // Send confirmation back to phone
-          this.sendPacket({
-            magic: 'SK',
-            version: 1,
-            packetId: Date.now(),
-            timestamp: Date.now(),
-            packetType: 'PAIR_CONFIRM',
-            payload: { status: 'authorized', paired: true },
-          });
         }
         break;
 
@@ -649,6 +700,14 @@ class ConnectionManager {
     const part1 = Math.floor(100 + Math.random() * 900);
     const part2 = Math.floor(100 + Math.random() * 900);
     this.sasPin = `${part1} ${part2}`;
+    this.sendPacket({
+      magic: 'SK',
+      version: 1,
+      packetId: Date.now(),
+      timestamp: Date.now(),
+      packetType: 'REGENERATE_PIN',
+      payload: { pin: this.sasPin },
+    });
     return this.sasPin;
   }
 

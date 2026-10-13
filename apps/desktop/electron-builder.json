@@ -1,0 +1,65 @@
+{
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "appId": "com.soko.desktop",
+  "productName": "Soko",
+  "executableName": "soko",
+  "artifactName": "soko-${os}-${arch}.${ext}",
+  "directories": {
+    "output": "../../dist-desktop"
+  },
+  "files": [
+    "dist/**/*",
+    "electron/**/*",
+    "build/icon.png",
+    "build/icon.ico",
+    "build/icons/**/*",
+    "package.json"
+  ],
+  "extraResources": [
+    {
+      "from": "../../scripts/soko_bridge.js",
+      "to": "scripts/soko_bridge.js"
+    },
+    {
+      "from": "../../apps/mobile/companion",
+      "to": "apps/mobile/companion"
+    }
+  ],
+  "linux": {
+    "target": [
+      {
+        "target": "AppImage",
+        "arch": ["x64"]
+      },
+      {
+        "target": "deb",
+        "arch": ["x64"]
+      },
+      {
+        "target": "tar.gz",
+        "arch": ["x64"]
+      },
+      {
+        "target": "dir",
+        "arch": ["x64"]
+      }
+    ],
+    "category": "Utility",
+    "icon": "build/icon.png",
+    "maintainer": "Soko Team <team@soko.local>",
+    "synopsis": "Dynamic Island HUD & High-Speed Device Companion"
+  },
+  "win": {
+    "target": [
+      {
+        "target": "portable",
+        "arch": ["x64"]
+      },
+      {
+        "target": "zip",
+        "arch": ["x64"]
+      }
+    ],
+    "icon": "build/icon.ico"
+  }
+}

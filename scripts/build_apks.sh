@@ -28,6 +28,10 @@ echo "[1/6] Building apps/desktop web assets..."
 cd "${PROJECT_ROOT}/apps/desktop"
 npm run build
 
+# Generate Soko Bot Mascot launcher icons (matching mobile navbar logo)
+echo "[1b/6] Generating Soko Bot mascot icons for Android launcher..."
+python3 "${PROJECT_ROOT}/scripts/generate_apk_icon.py"
+
 # Prepare temporary build directory
 rm -rf "${BUILD_DIR}"
 mkdir -p "${BUILD_DIR}/keystore"
@@ -69,11 +73,21 @@ build_apk() {
 
   mkdir -p "${WORK}/res/values"
   mkdir -p "${WORK}/res/drawable"
+  mkdir -p "${WORK}/res/mipmap-mdpi"
+  mkdir -p "${WORK}/res/mipmap-hdpi"
+  mkdir -p "${WORK}/res/mipmap-xhdpi"
+  mkdir -p "${WORK}/res/mipmap-xxhdpi"
+  mkdir -p "${WORK}/res/mipmap-xxxhdpi"
   mkdir -p "${WORK}/src/com/soko/${APP_ID}"
   mkdir -p "${WORK}/gen"
   mkdir -p "${WORK}/obj"
   mkdir -p "${WORK}/dex"
   mkdir -p "${WORK}/assets"
+
+  # Copy Soko Bot Mascot launcher icons
+  if [ -d "${PROJECT_ROOT}/apps/mobile/res" ]; then
+    cp -r "${PROJECT_ROOT}/apps/mobile/res/"* "${WORK}/res/"
+  fi
 
   # 1. Strings & Styles
   cat <<EOF > "${WORK}/res/values/strings.xml"
@@ -86,11 +100,12 @@ EOF
   cat <<EOF > "${WORK}/res/values/styles.xml"
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="AppTheme" parent="@android:style/Theme.NoTitleBar.Fullscreen">
-        <item name="android:windowBackground">#08090A</item>
-        <item name="android:colorBackground">#08090A</item>
-        <item name="android:windowTranslucentStatus">true</item>
-        <item name="android:windowTranslucentNavigation">true</item>
+    <style name="AppTheme" parent="@android:style/Theme.NoTitleBar">
+        <item name="android:windowBackground">#090B10</item>
+        <item name="android:colorBackground">#090B10</item>
+        <item name="android:statusBarColor">#090B10</item>
+        <item name="android:navigationBarColor">#090B10</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
     </style>
 </resources>
 EOF
@@ -114,9 +129,17 @@ EOF
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:label="@string/app_name"
+        android:icon="@drawable/ic_launcher"
+        android:roundIcon="@drawable/ic_launcher_round"
         android:theme="@style/AppTheme"
         android:hardwareAccelerated="true"
         android:usesCleartextTraffic="true">
@@ -134,6 +157,13 @@ EOF
 
   if [ "${APP_ID}" = "mobile" ]; then
     cat <<EOF >> "${WORK}/AndroidManifest.xml"
+        <!-- Persistent Foreground Service to prevent background process kill -->
+        <service
+            android:name="com.soko.mobile.SokoBackgroundService"
+            android:label="Soko Link Service"
+            android:foregroundServiceType="connectedDevice"
+            android:exported="false" />
+
         <!-- Real Android System Notification Interceptor Service -->
         <service
             android:name="com.soko.mobile.SokoNotificationListener"
@@ -144,6 +174,17 @@ EOF
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
+
+        <!-- Boot Receiver to auto-start daemon on phone reboot -->
+        <receiver
+            android:name="com.soko.mobile.BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
 EOF
   fi
 
@@ -175,6 +216,7 @@ import android.app.DownloadManager;
 import android.os.Environment;
 import android.view.Window;
 import android.view.WindowManager;
+import android.view.View;
 import android.graphics.Color;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -234,6 +276,63 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public void savePairToken(String token) {
+            try {
+                SharedPreferences prefs = getSharedPreferences("soko_prefs", MODE_PRIVATE);
+                prefs.edit().putString("pair_token", token).apply();
+            } catch (Exception e) {
+                Log.e("SokoApp", "Error saving pair token", e);
+            }
+        }
+
+        @JavascriptInterface
+        public String getSavedPairToken() {
+            try {
+                SharedPreferences prefs = getSharedPreferences("soko_prefs", MODE_PRIVATE);
+                return prefs.getString("pair_token", "");
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
+        @JavascriptInterface
+        public boolean isBatteryOptimizationIgnored() {
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                    android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+                    return pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
+                }
+                return true;
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+        @JavascriptInterface
+        public void requestIgnoreBatteryOptimization() {
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                    String pkg = getPackageName();
+                    android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+                    if (pm != null && !pm.isIgnoringBatteryOptimizations(pkg)) {
+                        Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                        intent.setData(Uri.parse("package:" + pkg));
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(intent);
+                    }
+                }
+            } catch (Exception e) {
+                try {
+                    Intent intent = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(intent);
+                } catch (Exception ex) {
+                    Log.e("SokoApp", "Error requesting battery optimization exemption", ex);
+                }
+            }
+        }
+
+        @JavascriptInterface
         public void downloadFile(String fileUrl, String filename, String mimeType) {
             try {
                 DownloadManager.Request request = new DownloadManager.Request(Uri.parse(fileUrl));
@@ -267,11 +366,50 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
-        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
-                             WindowManager.LayoutParams.FLAG_FULLSCREEN);
+
+        // Safe Area View: System status bar & navigation bar theme
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS | WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+            getWindow().setStatusBarColor(Color.parseColor("#090B10"));
+            getWindow().setNavigationBarColor(Color.parseColor("#090B10"));
+        }
+
+        // Support display cutouts / notches safely on Android 9+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            getWindow().getAttributes().layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+        }
+
+        if ("mobile".equals("${APP_ID}")) {
+            try {
+                Intent serviceIntent = new Intent();
+                serviceIntent.setClassName(this, "com.soko.mobile.SokoBackgroundService");
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    startForegroundService(serviceIntent);
+                } else {
+                    startService(serviceIntent);
+                }
+            } catch (Exception e) {
+                Log.w("SokoApp", "Could not start Soko background service: " + e.getMessage());
+            }
+
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                if (checkSelfPermission("android.permission.POST_NOTIFICATIONS") != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 102);
+                }
+            }
+        }
 
         webView = new WebView(this);
-        webView.setBackgroundColor(Color.parseColor("#08090A"));
+        webView.setBackgroundColor(Color.parseColor("#090B10"));
+        webView.setFitsSystemWindows(true);
+
+        // Remove all scrollbars completely and disable overscroll glow
+        webView.setVerticalScrollBarEnabled(false);
+        webView.setHorizontalScrollBarEnabled(false);
+        webView.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
+        webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
         
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -435,8 +573,12 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
-        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
-                             WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS | WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+            getWindow().setStatusBarColor(Color.parseColor("#090B10"));
+            getWindow().setNavigationBarColor(Color.parseColor("#090B10"));
+        }
 
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
@@ -475,6 +617,122 @@ EOF
   fi
 
   if [ "${APP_ID}" = "mobile" ]; then
+    cat <<EOF > "${WORK}/src/com/soko/mobile/SokoBackgroundService.java"
+package com.soko.mobile;
+
+import android.app.Service;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.Intent;
+import android.os.IBinder;
+import android.os.Build;
+import android.util.Log;
+
+public class SokoBackgroundService extends Service {
+    private static final String TAG = "SokoBgService";
+    public static final String CHANNEL_ID = "soko_foreground_link";
+    public static final int NOTIF_ID = 8766;
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        createNotificationChannel();
+        startInForeground();
+        Log.i(TAG, "Soko Persistent Foreground Service started.");
+    }
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                CHANNEL_ID,
+                "Soko Dynamic Island Link",
+                NotificationManager.IMPORTANCE_LOW
+            );
+            channel.setDescription("Maintains background connectivity and notification mirroring to Desktop Dynamic Island.");
+            channel.setShowBadge(false);
+            NotificationManager nm = getSystemService(NotificationManager.class);
+            if (nm != null) {
+                nm.createNotificationChannel(channel);
+            }
+        }
+    }
+
+    private void startInForeground() {
+        Intent launchIntent = new Intent(this, MainActivity.class);
+        launchIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        PendingIntent pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
+        );
+
+        Notification.Builder builder;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            builder = new Notification.Builder(this, CHANNEL_ID);
+        } else {
+            builder = new Notification.Builder(this);
+        }
+
+        builder.setContentTitle("Soko Link Active")
+               .setContentText("Mirroring phone alerts to Desktop Dynamic Island")
+               .setSmallIcon(android.R.drawable.stat_notify_sync)
+               .setContentIntent(pendingIntent)
+               .setOngoing(true);
+
+        Notification notification = builder.build();
+        startForeground(NOTIF_ID, notification);
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        startInForeground();
+        return START_STICKY;
+    }
+
+    @Override
+    public IBinder onBind(Intent intent) {
+        return null;
+    }
+}
+EOF
+
+    cat <<EOF > "${WORK}/src/com/soko/mobile/BootReceiver.java"
+package com.soko.mobile;
+
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.os.Build;
+import android.util.Log;
+
+public class BootReceiver extends BroadcastReceiver {
+    private static final String TAG = "SokoBootReceiver";
+
+    @Override
+    public void onReceive(Context context, Intent intent) {
+        if (intent == null) return;
+        String action = intent.getAction();
+        if (Intent.ACTION_BOOT_COMPLETED.equals(action) ||
+            "android.intent.action.QUICKBOOT_POWERON".equals(action)) {
+            Log.i(TAG, "Device booted. Starting Soko background service...");
+            Intent serviceIntent = new Intent(context, SokoBackgroundService.class);
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(serviceIntent);
+                } else {
+                    context.startService(serviceIntent);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Failed starting Soko background service on boot", e);
+            }
+        }
+    }
+}
+EOF
+
     cat <<EOF > "${WORK}/src/com/soko/mobile/SokoNotificationListener.java"
 package com.soko.mobile;
 
@@ -537,6 +795,7 @@ public class SokoNotificationListener extends NotificationListenerService {
 
         SharedPreferences prefs = getSharedPreferences("soko_prefs", MODE_PRIVATE);
         String bridgeIp = prefs.getString("bridge_ip", "192.168.31.210:8766");
+        String pairToken = prefs.getString("pair_token", "");
         if (bridgeIp == null || bridgeIp.trim().isEmpty()) {
             bridgeIp = "192.168.31.210:8766";
         }
@@ -545,6 +804,7 @@ public class SokoNotificationListener extends NotificationListenerService {
         }
 
         final String endpoint = bridgeIp + "/api/notify";
+        final String finalPairToken = pairToken;
         final String jsonPayload = "{"
             + "\"id\":\"" + escapeJson(sbn.getKey() != null ? sbn.getKey() : packageName + "_" + System.currentTimeMillis()) + "\","
             + "\"appName\":\"" + escapeJson(appName) + "\","
@@ -564,6 +824,9 @@ public class SokoNotificationListener extends NotificationListenerService {
                     HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                     conn.setRequestMethod("POST");
                     conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+                    if (finalPairToken != null && !finalPairToken.trim().isEmpty()) {
+                        conn.setRequestProperty("Authorization", "Bearer " + finalPairToken.trim());
+                    }
                     conn.setConnectTimeout(3000);
                     conn.setReadTimeout(3000);
                     conn.setDoOutput(true);

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Bluetooth, Settings } from 'lucide-react';
+import { Bluetooth, Settings, Music } from 'lucide-react';
 import { CharacterAvatar } from './CharacterAvatar.tsx';
 import { NotificationBanner } from './NotificationBanner.tsx';
 import { CliStatusWidget } from './CliStatusWidget.tsx';
@@ -15,6 +15,8 @@ import {
   FileTransferStatus,
   ConnectionStatus,
   PairedDevice,
+  PairRequestPending,
+  AudioStreamStatus,
 } from '../../types/index.ts';
 
 interface DynamicIslandProps {
@@ -45,18 +47,35 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
   const [activeNotification, setActiveNotification] = useState<MirroredNotification | null>(null);
   const [activeCli, setActiveCli] = useState<CliProcessStatus | null>(null);
   const [activeTransfer, setActiveTransfer] = useState<FileTransferStatus | null>(null);
+  const [pendingPair, setPendingPair] = useState<PairRequestPending | null>(null);
+  const [audioStatus, setAudioStatus] = useState<AudioStreamStatus>(
+    connectionService.getAudioStatus()
+  );
 
   const [isBotClicked, setIsBotClicked] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [isIdleMascotOnly, setIsIdleMascotOnly] = useState(false);
+  const idleTimerRef = useRef<any>(null);
   const islandRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-close Connection Popover when desktop window loses focus
+  useEffect(() => {
+    const cleanup = window.electronAPI?.onWindowBlur?.(() => {
+      setIsConnectionPopoverOpen(false);
+    });
+    return () => {
+      cleanup?.();
+    };
+  }, []);
 
   // Subscribe to live connection manager events
   useEffect(() => {
     const unsubStatus = connectionService.subscribeStatus((status, dev) => {
       setConnectionStatus(status);
       setPairedDevice(dev);
+      setSasPin(connectionService.getSasPin());
       if (status === 'disconnected') {
         setMood('searching');
       } else if (status === 'connected' && mode === 'compact') {
@@ -85,11 +104,24 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
       setIsConnectionPopoverOpen(false);
     });
 
+    const unsubPair = connectionService.onPendingPair((pairReq) => {
+      setPendingPair(pairReq);
+      setMood('alert');
+      setMode('pairing');
+      setIsConnectionPopoverOpen(false);
+    });
+
+    const unsubAudio = connectionService.onAudioStatus((status) => {
+      setAudioStatus(status);
+    });
+
     return () => {
       unsubStatus();
       unsubNotif();
       unsubCli();
       unsubTransfer();
+      unsubPair();
+      unsubAudio();
     };
   }, [mode]);
 
@@ -171,162 +203,182 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     };
   }, [mode]);
 
-  // Fluid spring physics transition config (calibrated for silky Apple-style motion without stretching)
-  const springTransition = {
-    type: 'spring',
-    stiffness: 280,
-    damping: 26,
-    mass: 0.7,
+  // Idle Mascot Mode Configuration & Timers
+  const getIdleTimeoutMs = () => {
+    try {
+      const stored = localStorage.getItem('soko_idle_timeout');
+      if (stored !== null) {
+        const val = parseInt(stored, 10);
+        if (!isNaN(val)) return val;
+      }
+    } catch {}
+    return 60000; // Default: 60 seconds (1 minute) of inactivity
   };
 
-  // Dynamic avatar size: significantly increased when notification is visible & when clicked
+  const resetIdleTimer = () => {
+    if (idleTimerRef.current) {
+      clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
+    }
+
+    if (isIdleMascotOnly) {
+      setIsIdleMascotOnly(false);
+    }
+
+    const timeoutMs = getIdleTimeoutMs();
+    if (timeoutMs > 0 && mode === 'compact' && !isConnectionPopoverOpen && !isHovered) {
+      idleTimerRef.current = setTimeout(() => {
+        setIsIdleMascotOnly(true);
+      }, timeoutMs);
+    }
+  };
+
+  // Arm, disarm, or reset idle timer based on mode, popover, and hover state
+  useEffect(() => {
+    if (mode !== 'compact' || isConnectionPopoverOpen || isHovered) {
+      if (idleTimerRef.current) {
+        clearTimeout(idleTimerRef.current);
+        idleTimerRef.current = null;
+      }
+      if (mode !== 'compact' || isConnectionPopoverOpen) {
+        setIsIdleMascotOnly(false);
+      }
+    } else {
+      resetIdleTimer();
+    }
+
+    return () => {
+      if (idleTimerRef.current) {
+        clearTimeout(idleTimerRef.current);
+        idleTimerRef.current = null;
+      }
+    };
+  }, [mode, isConnectionPopoverOpen, isHovered]);
+
+  // Synchronize with settings updates or instant preview triggers
+  useEffect(() => {
+    const handleSettingsChange = () => {
+      resetIdleTimer();
+    };
+
+    const handlePreview = () => {
+      setIsConnectionPopoverOpen(false);
+      setIsIdleMascotOnly(true);
+    };
+
+    window.addEventListener('soko:idle-settings-changed', handleSettingsChange);
+    window.addEventListener('soko:preview-mascot-mode', handlePreview);
+    window.addEventListener('storage', handleSettingsChange);
+
+    return () => {
+      window.removeEventListener('soko:idle-settings-changed', handleSettingsChange);
+      window.removeEventListener('soko:preview-mascot-mode', handlePreview);
+      window.removeEventListener('storage', handleSettingsChange);
+    };
+  }, [mode, isConnectionPopoverOpen, isHovered]);
+
+  // Window vertical sizing: Expand IMMEDIATELY (0ms) so popover/card has full height,
+  // Shrink AFTER exit animation settles (300ms) so content is unmounted before clipping.
+  // Window width stays rock-solid at 440px so horizontal center (islandX) NEVER moves.
+  const currentWindowHeightRef = useRef(68);
+
+  useEffect(() => {
+    let timer: any = null;
+
+    let targetH = 68;
+
+    if (isConnectionPopoverOpen) {
+      targetH = 520;
+    } else if (isIdleMascotOnly) {
+      targetH = 76;
+    } else if (mode === 'notification') {
+      const bodyLen = activeNotification?.body?.length || 0;
+      const contentH = bodyLen > 160 ? 170 : bodyLen > 70 ? 120 : 76;
+      targetH = contentH + 12;
+    } else if (mode === 'cli') {
+      targetH = 152;
+    } else if (mode === 'transfer') {
+      targetH = 110;
+    } else if (mode === 'pairing') {
+      targetH = 96;
+    } else {
+      targetH = 68;
+    }
+
+    const currentH = currentWindowHeightRef.current;
+
+    if (targetH === currentH) {
+      return;
+    }
+
+    if (targetH > currentH) {
+      // Expanding vertically: immediately grant canvas height for expanding content
+      window.electronAPI?.setWindowSize?.(440, targetH);
+      currentWindowHeightRef.current = targetH;
+    } else {
+      // Shrinking vertically: keep window large while exit spring settles (300ms)
+      timer = setTimeout(() => {
+        window.electronAPI?.setWindowSize?.(440, targetH);
+        currentWindowHeightRef.current = targetH;
+      }, 300);
+    }
+
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [mode, isConnectionPopoverOpen, activeNotification, isIdleMascotOnly]);
+
+  // Critically damped Apple spring physics (Zero bounce, zero overshoot, zero shaking)
+  const springTransition = {
+    type: 'spring',
+    stiffness: 260,
+    damping: 32,
+    mass: 0.8,
+  };
+
+  // Dynamic avatar size: significantly increased when idle or notification is visible & when clicked
   const getAvatarSize = () => {
+    if (isIdleMascotOnly) {
+      return 56;
+    }
     if (mode === 'notification') {
-      // 48px when notification is visible, 64px when clicked on bot!
-      return isBotClicked ? 64 : 48;
+      return isBotClicked ? 68 : 50;
+    }
+    if (mode === 'pairing') {
+      return 46;
     }
     if (isBotClicked) {
-      return 42;
+      return 52;
     }
-    return 32;
+    return 42;
   };
 
   const avatarSize = getAvatarSize();
 
-  // Dimensions based on mode:
-  // Compact has fixed 42px height.
-  // In notification mode, width stretches a bit for bigger notifications,
-  // and height is dynamic/auto (undefined) to stretch vertically to fit message content naturally.
+  // Dimensions based on mode (scaled up for enhanced visibility and touch/drag comfort, bounded by 420px max width)
   const getIslandDimensions = (): { width: number; height?: number } => {
+    if (isIdleMascotOnly) {
+      return { width: 68, height: 64 };
+    }
     switch (mode) {
       case 'compact':
-        return { width: isBotClicked ? 212 : 196, height: isBotClicked ? 46 : 42 };
+        return { width: isBotClicked ? 320 : 290, height: isBotClicked ? 62 : 54 };
+      case 'pairing':
+        return { width: 420, height: 80 };
       case 'notification': {
-        const bodyLen = activeNotification?.body?.length || 0;
-        const isBig = bodyLen > 160;
-        const isMedium = bodyLen > 70;
-
-        // Stretches a little horizontally when notification is big (420px -> 470px -> 530px)
-        const width = isBig
-          ? (isBotClicked ? 560 : 530)
-          : isMedium
-          ? (isBotClicked ? 490 : 470)
-          : (isBotClicked ? 440 : 420);
-
-        // Height is undefined so container stretches vertically to fit content naturally,
-        // up to screen limit max-h-[min(75vh,520px)] where scroll takes over.
-        return { width, height: undefined };
+        // Comfortably sized pill, stretches vertically to fit content naturally
+        return { width: isBotClicked ? 430 : 410, height: undefined };
       }
       case 'cli': {
         const hasMultiline = Boolean(activeCli?.output && activeCli.output.includes('\n'));
-        return { width: 440, height: hasMultiline ? 116 : 82 };
+        return { width: 420, height: hasMultiline ? 136 : 96 };
       }
       case 'transfer':
-        return { width: 360, height: 78 };
+        return { width: 420, height: 92 };
     }
   };
 
   const dims = getIslandDimensions();
-
-  const DEMO_NOTIFICATIONS: MirroredNotification[] = [
-    {
-      id: 'demo-1',
-      appName: 'WhatsApp',
-      packageName: 'com.whatsapp',
-      title: 'Alex Developer',
-      body: 'Hey Saurabh! I tested the new APK build on Pixel 8 Pro and Galaxy S24 Ultra. The Bluetooth LE sync latency is under 18ms and notification mirroring handles long messages without any clipping. Great job on the ocular tracking!',
-      timestamp: Date.now(),
-    },
-    {
-      id: 'demo-2',
-      appName: 'GitHub',
-      packageName: 'com.github',
-      title: 'Pull Request #42 Merged',
-      body: 'feat(dynamic-island): Responsive multi-line layout engine for reading large notifications, authentic app brand icons, and 360° mascot spin animations.',
-      timestamp: Date.now(),
-    },
-    {
-      id: 'demo-3',
-      appName: 'Slack',
-      packageName: 'com.slack',
-      title: 'Sarah Chen (#engineering)',
-      body: '@channel Heads up: The new Dynamic Island full notification reader is live. You can now click anywhere on the compact pill to open notifications and read multi-line messages without clipping.',
-      timestamp: Date.now(),
-    },
-    {
-      id: 'demo-4',
-      appName: 'Telegram',
-      packageName: 'org.telegram.messenger',
-      title: 'Soko Dev Community',
-      body: 'Release v1.2.0 is out! Highlights: Full clickable Dynamic Island pill, enhanced ocular kinetic tracking, and responsive multi-line card layout for reading extensive notifications comfortably.',
-      timestamp: Date.now(),
-    },
-    {
-      id: 'demo-5',
-      appName: 'Linear',
-      packageName: 'app.linear',
-      title: 'SOKO-112: Comprehensive System Audit',
-      body: `Full sprint changelog and release notes:
-• Dynamic Island: Automatically stretches vertically to fit message content without scrolling.
-• Horizontal scaling: Stretches smoothly from 420px to 530px for rich notifications.
-• Kinetic Tracking: Mascot eye coordination responds realistically to notification events with zero jitter.
-• Screen Limit Boundary: If a notification exceeds the screen limit, smooth vertical scrolling activates seamlessly.
-• Bluetooth LE: Sub-18ms transmission latency verified across Pixel 8 Pro and Galaxy S24 Ultra.
-• APK Deployment: Production signed APKs available in root apks/ directory.`,
-      timestamp: Date.now(),
-    },
-    {
-      id: 'demo-6',
-      appName: 'Gmail',
-      packageName: 'com.google.android.gm',
-      title: 'Google Deepmind Dev Digest',
-      body: 'Your weekly telemetry summary is ready: 99.8% BLE sync reliability across all devices, zero dropped frames in OLED mascot animations, and full cross-platform notification mirroring support.',
-      timestamp: Date.now(),
-    },
-    {
-      id: 'demo-7',
-      appName: 'Discord',
-      packageName: 'com.discord',
-      title: '#announcements',
-      body: 'Grok Bot face expressions are now fully live with 360° spin barrel rolls, left/right eye scanning, and OLED contrast styling!',
-      timestamp: Date.now(),
-    },
-    {
-      id: 'demo-8',
-      appName: 'Antigravity',
-      packageName: 'ai.antigravity.cli',
-      title: 'agy Agent Finished',
-      body: 'Workspace analysis completed with 0 warnings. Build artifacts generated and ready for deployment.',
-      timestamp: Date.now(),
-    },
-  ];
-
-  const [demoIndex, setDemoIndex] = useState(0);
-
-  // Test simulation trigger helpers for demo / local inspection
-  const simulateNotification = () => {
-    const nextIndex = (demoIndex + 1) % DEMO_NOTIFICATIONS.length;
-    setDemoIndex(nextIndex);
-    const notif = {
-      ...DEMO_NOTIFICATIONS[nextIndex],
-      id: `demo-${nextIndex}-${Date.now()}`,
-      timestamp: Date.now(),
-    };
-    setActiveNotification(notif);
-    setMood('alert');
-    setMode('notification');
-  };
-
-  const CLI_QUICK_COMMANDS = ['sysinfo', 'mem', 'disk', 'top-procs', 'git-status'];
-  const [cliCmdIndex, setCliCmdIndex] = useState(0);
-
-  const simulateCli = () => {
-    const cmd = CLI_QUICK_COMMANDS[cliCmdIndex % CLI_QUICK_COMMANDS.length];
-    setCliCmdIndex((prev) => prev + 1);
-    setMood('working');
-    setMode('cli');
-    connectionService.executeCliCommand(cmd);
-  };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -362,26 +414,80 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     }
   };
 
-  const simulateTransfer = () => {
-    setMood('working');
-    setMode('transfer');
-    connectionService.sendTestTransfer('soko-v1.0.0-release.apk');
+  // Window dragging handlers (Electron OS window movement)
+  const isDraggingRef = useRef(false);
+
+  const handleDragStart = (e: React.MouseEvent) => {
+    // Only drag on primary mouse button
+    if (e.button !== 0) return;
+    // Do not trigger window drag if clicking on buttons, avatar, inputs, or popovers
+    if ((e.target as HTMLElement).closest('button, input, a, [data-no-drag]')) return;
+
+    // Prevent native browser element/text drag ghost
+    e.preventDefault();
+
+    let lastX = e.screenX;
+    let lastY = e.screenY;
+    isDraggingRef.current = false;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      // If mouse button was released outside the window
+      if (moveEvent.buttons !== 1) {
+        handleMouseUp();
+        return;
+      }
+
+      const deltaX = moveEvent.screenX - lastX;
+      const deltaY = moveEvent.screenY - lastY;
+      lastX = moveEvent.screenX;
+      lastY = moveEvent.screenY;
+
+      if (Math.abs(deltaX) > 0 || Math.abs(deltaY) > 0) {
+        isDraggingRef.current = true;
+        (window as any).electronAPI?.moveWindow?.(deltaX, deltaY);
+      }
+    };
+
+    const handleMouseUp = () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      if (isDraggingRef.current) {
+        setTimeout(() => {
+          isDraggingRef.current = false;
+        }, 120);
+      }
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
+  const handleDoubleClick = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('button, input, a, [data-no-drag]')) return;
+    (window as any).electronAPI?.resetPosition?.();
   };
 
   const handlePillClick = () => {
+    if (isDraggingRef.current) return;
+    if (isIdleMascotOnly) {
+      resetIdleTimer();
+      setMood('happy');
+      setTimeout(() => {
+        setMood('idle');
+      }, 2500);
+      return;
+    }
     if (mode === 'compact') {
-      setIsBotClicked(true);
-      simulateNotification();
+      setIsConnectionPopoverOpen((prev) => !prev);
     }
   };
 
   return (
-    <div className="flex flex-col items-center justify-start w-full h-full pt-1">
-      {/* Hidden Native File Input for Real Desktop APK / File Selection */}
+    <div className="flex flex-col items-center justify-start w-full h-full pt-1 select-none">
+      {/* Hidden Native File Input for Real Desktop File Selection */}
       <input
         ref={fileInputRef}
         type="file"
-        accept=".apk,application/vnd.android.package-archive,*"
         className="hidden"
         onChange={handleFileSelect}
       />
@@ -389,49 +495,88 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
       {/* Morphing Dynamic Island Pill */}
       <motion.div
         ref={islandRef}
-        layout
-        transition={springTransition}
-        style={{
+        initial={false}
+        animate={{
           width: dims.width,
-          ...(dims.height !== undefined ? { height: dims.height } : {}),
+          height: dims.height ?? 'auto',
         }}
+        transition={springTransition}
+        onMouseDown={handleDragStart}
+        onDoubleClick={handleDoubleClick}
         onClick={handlePillClick}
-        onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
+        onMouseEnter={() => {
+          setIsHovered(true);
+          resetIdleTimer();
+        }}
+        onMouseMove={() => {
+          if (isIdleMascotOnly) {
+            resetIdleTimer();
+          }
+        }}
+        onMouseLeave={() => {
+          setIsHovered(false);
+          resetIdleTimer();
+        }}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={`relative bg-[#08090A] border rounded-[26px] shadow-linear-island flex px-2.5 overflow-hidden backdrop-blur-3xl font-sans transition-colors duration-200 ${
+        className={`group relative bg-[#0B0D14]/90 border flex flex-col justify-center overflow-hidden backdrop-blur-3xl font-sans transition-colors duration-200 select-none ${
+          isIdleMascotOnly
+            ? 'px-1 items-center rounded-full border-white/20'
+            : 'px-3.5 rounded-[30px] border-white/15'
+        } ${
           isDragOver
-            ? 'border-linear-green ring-2 ring-linear-green/30 scale-[1.02]'
+            ? 'border-emerald-400 ring-2 ring-emerald-400/30 scale-[1.02]'
+            : isHovered
+            ? 'border-white/30'
             : ''
         } ${
           mode === 'compact'
-            ? 'cursor-pointer border-white/10 hover:border-white/20 active:scale-[0.99] items-center'
+            ? 'cursor-grab active:cursor-grabbing hover:scale-[1.01] items-center justify-center'
             : mode === 'notification'
-            ? 'border-white/10 min-h-[88px] max-h-[min(75vh,520px)] items-start py-2.5'
-            : 'border-white/10 items-center py-2'
+            ? 'min-h-[68px] max-h-[min(75vh,520px)] justify-center py-2 cursor-default'
+            : 'items-center py-2.5 cursor-default'
         }`}
         title={
           isDragOver
-            ? 'Drop APK or file here to send instantly!'
+            ? 'Drop file here to transmit to phone!'
+            : isIdleMascotOnly
+            ? 'Soko Mascot — Hover or click to wake'
             : mode === 'compact'
-            ? 'Click anywhere to view notification (Drag & drop file to send)'
+            ? 'Soko Island — Drag to move • Double-click to center • Click to open Hub'
             : undefined
         }
       >
-        {/* Left Anchor: Mascot Character Avatar */}
-        <motion.div
-          layout="position"
-          transition={springTransition}
-          className={`shrink-0 cursor-pointer pr-2 flex items-center justify-center ${
-            mode === 'notification' ? 'self-start mt-1' : 'self-center my-auto'
-          }`}
+        {/* Subtle Top Grip Indicator - Absolute to avoid displacing vertical center */}
+        {mode === 'compact' && !isIdleMascotOnly && (
+          <div
+            className="absolute top-1 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full bg-white/20 group-hover:bg-white/40 transition-colors pointer-events-none"
+            title="Drag to move • Double-click to center"
+          />
+        )}
+
+        <div className={`flex items-center ${isIdleMascotOnly ? 'justify-center w-full h-full' : 'w-full my-auto'}`}>
+          {/* Left Anchor: Mascot Character Avatar */}
+          <div
+            data-no-drag="true"
+            className={`shrink-0 cursor-pointer flex items-center justify-center ${
+              isIdleMascotOnly
+                ? 'p-0 m-0'
+                : 'pr-2.5 self-center my-auto'
+            }`}
           onClick={(e) => {
+            if (isIdleMascotOnly) {
+              e.stopPropagation();
+              resetIdleTimer();
+              setMood('happy');
+              setTimeout(() => {
+                setMood('idle');
+              }, 2500);
+              return;
+            }
             if (mode === 'compact') {
-              // Click anywhere on pill or mascot triggers notification
-              setIsBotClicked(true);
-              simulateNotification();
+              e.stopPropagation();
+              setIsConnectionPopoverOpen((prev) => !prev);
             } else if (mode === 'notification') {
               e.stopPropagation();
               // Clicked on bot while notification is visible: toggles enlarged bot size!
@@ -444,27 +589,37 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
             }
           }}
           title={
-            mode === 'notification'
+            isIdleMascotOnly
+              ? 'Click to wake Soko'
+              : mode === 'notification'
               ? (isBotClicked ? 'Click to normal size' : 'Click to enlarge bot')
-              : 'Click to open notification'
+              : 'Click to manage connection'
           }
         >
           <CharacterAvatar
             mood={mood}
             size={avatarSize}
             notificationKey={activeNotification?.id}
+            isMusicPlaying={audioStatus.isPlaying || audioStatus.isStreamingToMobile}
+            isIdleMascotOnly={isIdleMascotOnly}
           />
-        </motion.div>
+        </div>
 
         {/* Center / Body Section */}
-        <div
-          className={`flex-1 min-w-0 ${
-            mode === 'notification'
-              ? 'pt-0.5'
-              : 'flex items-center h-full overflow-hidden'
-          }`}
-        >
-          <AnimatePresence mode="popLayout" initial={false}>
+        <AnimatePresence>
+          {!isIdleMascotOnly && (
+            <motion.div
+              key="island-body-content"
+              initial={{ opacity: 0, width: 0 }}
+              animate={{ opacity: 1, width: 'auto' }}
+              exit={{
+                opacity: 0,
+                width: 0,
+                transition: { duration: 0.16, ease: 'easeOut' },
+              }}
+              className="flex-1 min-w-0 flex items-center my-auto overflow-hidden"
+            >
+              <AnimatePresence mode="wait" initial={false}>
             {mode === 'compact' && (
               <motion.div
                 key="compact"
@@ -483,27 +638,70 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                 }}
                 className="flex items-center justify-between w-full select-none"
               >
-                <div className="flex items-center gap-1.5 text-xs text-linear-text-primary font-medium tracking-tight">
-                  <span
-                    className={`w-1.5 h-1.5 rounded-full ${
-                      connectionStatus === 'connected'
-                        ? 'bg-linear-green'
+                {/* Centered Status and Music Indicator */}
+                <div className="flex-1 flex items-center justify-center gap-2 min-w-0 px-1">
+                  <div className="flex items-center gap-2 text-xs text-linear-text-primary font-medium tracking-tight whitespace-nowrap">
+                    <span
+                      className={`w-2 h-2 rounded-full shrink-0 ${
+                        connectionStatus === 'connected'
+                          ? 'bg-linear-green'
+                          : connectionStatus === 'scanning' || connectionStatus === 'connecting'
+                          ? 'bg-linear-amber animate-ping'
+                          : 'bg-linear-red'
+                      }`}
+                    />
+                    <span className="text-[12px] text-linear-text-primary font-medium tracking-tight whitespace-nowrap">
+                      {connectionStatus === 'connected'
+                        ? 'Soko Ready'
                         : connectionStatus === 'scanning' || connectionStatus === 'connecting'
-                        ? 'bg-linear-amber animate-ping'
-                        : 'bg-linear-red'
-                    }`}
-                  />
-                  <span className="text-[11px] text-linear-text-primary">
-                    {connectionStatus === 'connected'
-                      ? 'Soko Ready'
-                      : connectionStatus === 'scanning' || connectionStatus === 'connecting'
-                      ? 'Connecting...'
-                      : 'No Device'}
-                  </span>
+                        ? 'Connecting...'
+                        : 'No Device'}
+                    </span>
+                  </div>
+
+                  {/* Animated Dynamic Island Music Sign */}
+                  {(audioStatus.isPlaying || audioStatus.isStreamingToMobile) && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.8 }}
+                      className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[10px] font-mono tracking-tight mx-1 shrink-0"
+                      title={
+                        audioStatus.isStreamingToMobile
+                          ? `Streaming Desktop Audio to Mobile (${audioStatus.activeListeners || 1} connected)`
+                          : 'Desktop Music / Audio Active'
+                      }
+                    >
+                      <Music size={10} className="text-emerald-400 animate-pulse shrink-0" />
+                      <div className="flex items-end gap-[2px] h-2.5 pb-[0.5px]">
+                        <motion.span
+                          className="w-[2px] bg-emerald-400 rounded-full"
+                          animate={{ height: ['3px', '10px', '4px', '9px', '3px'] }}
+                          transition={{ duration: 0.65, repeat: Infinity, ease: 'easeInOut' }}
+                        />
+                        <motion.span
+                          className="w-[2px] bg-emerald-400 rounded-full"
+                          animate={{ height: ['8px', '3px', '10px', '5px', '8px'] }}
+                          transition={{ duration: 0.52, repeat: Infinity, ease: 'easeInOut' }}
+                        />
+                        <motion.span
+                          className="w-[2px] bg-emerald-400 rounded-full"
+                          animate={{ height: ['4px', '10px', '3px', '8px', '4px'] }}
+                          transition={{ duration: 0.72, repeat: Infinity, ease: 'easeInOut' }}
+                        />
+                        <motion.span
+                          className="w-[2px] bg-emerald-400 rounded-full"
+                          animate={{ height: ['9px', '4px', '9px', '2px', '9px'] }}
+                          transition={{ duration: 0.48, repeat: Infinity, ease: 'easeInOut' }}
+                        />
+                      </div>
+                    </motion.div>
+                  )}
                 </div>
 
                 <div
-                  className="flex items-center gap-1 text-linear-text-tertiary"
+                  className="flex items-center gap-1.5 text-linear-text-tertiary shrink-0 ml-auto"
+                  data-no-drag="true"
                   onClick={(e) => e.stopPropagation()}
                 >
                   <button
@@ -518,15 +716,15 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                         ? 'Scanning for companion link...'
                         : 'Disconnected (Click to manage connection)'
                     }
-                    className={`p-1 rounded-md hover:bg-white/5 transition-colors ${
+                    className={`p-1.5 rounded-lg hover:bg-white/10 active:scale-90 transition-all duration-150 ${
                       connectionStatus === 'connected'
-                        ? 'text-linear-brand'
+                        ? 'text-[#5E6AD2] hover:shadow-[0_0_10px_rgba(94,106,210,0.4)]'
                         : connectionStatus === 'scanning' || connectionStatus === 'connecting'
-                        ? 'text-linear-amber animate-pulse'
+                        ? 'text-amber-400 animate-pulse'
                         : 'text-linear-text-tertiary opacity-70'
                     }`}
                   >
-                    <Bluetooth size={13} />
+                    <Bluetooth size={15} />
                   </button>
 
                   <button
@@ -535,9 +733,9 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                       onOpenSettings();
                     }}
                     title="Open Settings"
-                    className="p-1 rounded-md hover:bg-white/5 text-linear-text-secondary hover:text-linear-text-primary transition-colors"
+                    className="p-1.5 rounded-lg hover:bg-white/10 active:scale-90 text-linear-text-secondary hover:text-white transition-all duration-150 hover:shadow-[0_0_10px_rgba(255,255,255,0.2)]"
                   >
-                    <Settings size={13} />
+                    <Settings size={15} />
                   </button>
                 </div>
               </motion.div>
@@ -548,6 +746,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                 key="notification"
                 notification={activeNotification}
                 onDismiss={() => {
+                  setActiveNotification(null);
                   setMode('compact');
                   setMood('idle');
                   setIsBotClicked(false);
@@ -589,9 +788,71 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                 }}
               />
             )}
+
+            {mode === 'pairing' && pendingPair && (
+              <motion.div
+                key="pairing"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                transition={{ duration: 0.2 }}
+                className="flex items-center justify-between w-full select-none"
+              >
+                <div className="flex flex-col min-w-0 pr-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400 font-mono">
+                      Link Request
+                    </span>
+                    <span className="text-white/30">•</span>
+                    <span className="text-xs font-semibold text-white truncate max-w-[150px]">
+                      {pendingPair.deviceName}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-linear-text-secondary font-mono flex items-center gap-1.5 mt-0.5">
+                    <span>PIN:</span>
+                    <span className="text-emerald-400 font-bold bg-emerald-500/15 border border-emerald-500/30 px-1.5 py-0.2 rounded">
+                      {pendingPair.pin}
+                    </span>
+                    <span className="text-white/40 truncate text-[10px]">({pendingPair.model})</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0" data-no-drag="true">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      connectionService.approvePairing(pendingPair.deviceId, false);
+                      setPendingPair(null);
+                      setMode('compact');
+                      setMood('idle');
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-400 text-xs font-medium active:scale-95 transition-all"
+                    title="Reject device connection"
+                  >
+                    Deny
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      connectionService.approvePairing(pendingPair.deviceId, true);
+                      setPendingPair(null);
+                      setMode('compact');
+                      setMood('happy');
+                    }}
+                    className="px-3 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-semibold shadow-[0_0_12px_rgba(52,211,153,0.4)] active:scale-95 transition-all"
+                    title="Approve device connection"
+                  >
+                    Approve
+                  </button>
+                </div>
+              </motion.div>
+            )}
           </AnimatePresence>
-        </div>
-      </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  </div>
+  </motion.div>
 
       {/* Floating Connection Popover */}
       <AnimatePresence>
@@ -611,38 +872,6 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
           />
         )}
       </AnimatePresence>
-
-      {/* Floating Demo Toolbar (Linear minimalist badge) */}
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="flex items-center gap-2 mt-2 opacity-35 hover:opacity-100 transition-opacity text-[11px] font-sans text-linear-text-secondary bg-[#08090A]/90 px-2.5 py-1 rounded-full border border-white/10 shadow-lg"
-      >
-        <button onClick={simulateNotification} className="hover:text-linear-text-primary px-1 transition-colors">
-          + Notif
-        </button>
-        <span className="text-white/20">•</span>
-        <button onClick={simulateCli} className="hover:text-linear-brand px-1 transition-colors">
-          + agy CLI
-        </button>
-        <span className="text-white/20">•</span>
-        <button
-          onClick={(e) => {
-            if (e.altKey) {
-              simulateTransfer();
-            } else {
-              fileInputRef.current?.click();
-            }
-          }}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            simulateTransfer();
-          }}
-          title="Click to select & send APK from desktop (Alt+Click or Right-Click for 52MB test)"
-          className="hover:text-linear-green px-1 transition-colors"
-        >
-          + Send APK
-        </button>
-      </div>
     </div>
   );
 };

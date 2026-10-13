@@ -90,7 +90,8 @@ Every encrypted frame utilizes an explicit packet envelope:
 
 ## 5. Defense-in-Depth Summary
 
-1. **Memory Safety**: The desktop daemon is written in 100% safe Rust, eliminating buffer overflows, use-after-free, and memory corruption bugs.
-2. **Whitelisted CLI Scope**: Only explicitly registered command aliases can be invoked from mobile.
-3. **Sandboxed File Ingestion**: Files are sanitized and constrained to dedicated directories without execution bits.
-4. **Biometric Step-Up Authentication**: High-privilege commands require fingerprint or face unlock before dispatch.
+1. **Zero-Trust LAN Security**: Remote network devices on the local Wi-Fi or Hotspot cannot trigger notifications, run remote CLI commands, or download files without completing dynamic 6-digit SAS PIN pairing and human-in-the-loop desktop HUD approval.
+2. **Persistent Bearer Tokens**: Approved pairing exchanges issue cryptographic 128-bit persistent tokens stored in the desktop trust store (`transfers/.trust_store.json`), allowing authorized companion devices to reconnect without re-prompting while blocking unauthorized devices with HTTP 401.
+3. **Whitelisted CLI Scope**: Only explicitly registered command aliases (`sysinfo`, `disk`, `mem`, `net-stats`, etc.) can be invoked from mobile with timeout protections. Arbitrary shell commands are rejected with HTTP 403.
+4. **Sandboxed File Ingestion**: Transferred files are strictly sanitized (directory traversal `../` blocked), non-executable permissions (`chmod 0644`) are enforced, and `.part` buffers are scrubbed immediately on cancellation.
+5. **Dynamic PIN Regeneration**: Users can regenerate their 6-digit SAS pairing PIN at any time directly from the desktop Dynamic Island connection popover.

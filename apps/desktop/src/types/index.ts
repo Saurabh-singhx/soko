@@ -2,7 +2,7 @@
  * Dynamic Island modes and state definitions.
  */
 
-export type IslandMode = 'compact' | 'notification' | 'cli' | 'transfer';
+export type IslandMode = 'compact' | 'notification' | 'cli' | 'transfer' | 'pairing';
 
 export type MascotMood =
   | 'idle'
@@ -12,6 +12,15 @@ export type MascotMood =
   | 'alert'
   | 'error'
   | 'searching';
+
+export interface PairRequestPending {
+  deviceId: string;
+  deviceName: string;
+  model: string;
+  pin: string;
+  ip?: string;
+  timestamp: number;
+}
 
 export interface MirroredNotification {
   id: string;
@@ -88,7 +97,12 @@ export interface SokoPacketEnvelope {
     | 'HEARTBEAT_PONG'
     | 'BRIDGE_STATUS'
     | 'PAIR_REQUEST'
+    | 'PAIR_REQUEST_PENDING'
+    | 'PAIR_DECISION'
     | 'PAIR_CONFIRM'
+    | 'PAIR_REJECT'
+    | 'REGENERATE_PIN'
+    | 'PIN_UPDATED'
     | 'NOTIFICATION_POST'
     | 'NOTIFICATION_DISMISS'
     | 'CLI_EXECUTE'
@@ -99,7 +113,33 @@ export interface SokoPacketEnvelope {
     | 'FILE_COMPLETED'
     | 'FILE_CANCEL'
     | 'FILE_FAILED'
-    | 'FILE_RETRY';
+    | 'FILE_RETRY'
+    | 'AUDIO_STATUS';
   payload: Record<string, any>;
 }
 
+export interface AudioStreamStatus {
+  isPlaying: boolean;
+  isStreamingToMobile: boolean;
+  activeListeners: number;
+  format?: string;
+  bitrate?: string;
+  source?: string;
+}
+
+declare global {
+  interface Window {
+    electronAPI?: {
+      platform: string;
+      openSettings: () => void;
+      closeSettings: () => void;
+      openTransfersFolder: () => void;
+      openFile: (filename: string) => void;
+      moveWindow: (deltaX: number, deltaY: number) => void;
+      resetPosition: () => void;
+      setWindowSize: (width: number, height: number) => void;
+      onWindowBlur: (callback: () => void) => () => void;
+      quitApp: () => void;
+    };
+  }
+}

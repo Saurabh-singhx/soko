@@ -1,13 +1,13 @@
 # Soko Android Packages (APKs)
 
-This folder contains pre-built, signed, and zipalign-verified Android packages for the Soko monorepo.
+Android packages for Soko can be downloaded directly from [GitHub Releases](https://github.com/Saurabh-singhx/soko/releases) or generated locally using the automated build script.
 
-| APK File | Package Name | Application Label | Description |
+| Package | Package Name | Application Label | Description |
 | :--- | :--- | :--- | :--- |
-| **[`soko-desktop.apk`](./soko-desktop.apk)** | `com.soko.desktop` | Soko HUD | Linear-styled Dynamic Island HUD featuring the Grok Bot OLED mascot, notification interactive tester, settings, and CLI remote bridge. |
-| **[`soko-mobile.apk`](./soko-mobile.apk)** | `com.soko.mobile` | Soko Mobile | Mobile companion controller, BLE scanner, Hotspot APK receiver, and remote command runner. |
-| **[`soko-release.apk`](./soko-release.apk)** | `com.soko.desktop` | Soko HUD (Release) | Production signed release build of the Soko HUD. |
-| **[`soko-debug.apk`](./soko-debug.apk)** | `com.soko.mobile` | Soko Mobile (Debug) | Debug signed companion controller build. |
+| **`soko-mobile.apk`** | `com.soko.mobile` | Soko Mobile | Full mobile companion controller: Real-time notification mirroring service, high-speed hotspot transfer receiver, and remote CLI terminal deck. |
+| **`soko-mobile-lite.apk`** | `com.soko.companion` | Soko Mobile Lite | Lightweight companion without notification listener service (zero Play Protect warnings, instant standalone transfer & CLI control). |
+| **`soko-desktop.apk`** | `com.soko.desktop` | Soko HUD (Android) | Dynamic Island HUD compiled for Android displays with interactive Grok Bot OLED mascot and testbed. |
+
 
 ---
 
