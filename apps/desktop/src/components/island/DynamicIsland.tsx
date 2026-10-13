@@ -56,13 +56,13 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
   const getIslandDimensions = () => {
     switch (mode) {
       case 'compact':
-        return { width: 184, height: 38 };
+        return { width: 196, height: 42 };
       case 'notification':
-        return { width: 380, height: 78 };
+        return { width: 388, height: 82 };
       case 'cli':
-        return { width: 420, height: 96 };
+        return { width: 428, height: 102 };
       case 'transfer':
-        return { width: 340, height: 76 };
+        return { width: 348, height: 80 };
     }
   };
 
@@ -179,7 +179,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
           }}
           title="Click to toggle mascot mood / test demo"
         >
-          <CharacterAvatar mood={mood} size={28} />
+          <CharacterAvatar mood={mood} size={32} />
         </div>
 
         {/* Center / Body Section */}

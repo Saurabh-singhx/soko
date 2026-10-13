@@ -78,21 +78,29 @@ The character mascot uses a state machine modeled after vector animators (Rive /
 └─────────┘  └───────────┘  └───────────┘  └───────────┘
 ```
 
-| State Trigger | Visual Reaction | Associated Event |
-| :--- | :--- | :--- |
-| `BT_DISCONNECTED` | Looking around with radar sweep | Bluetooth searching / dropped link |
-| `BT_CONNECTED` | High five / nodding avatar | Mobile paired successfully |
-| `INCOMING_NOTIFICATION` | Wide eyes, turns head right | Notification arrived from phone |
-| `CLI_RUNNING` | Focused face, miniature terminal gears | `antigravity-cli` or script running |
-| `CLI_COMPLETED` | Thumbs up / cheerful smile | Command exited with code 0 |
-| `CLI_ERROR` | Confused / dizzy eyes | Command exited with non-zero code |
-| `TRANSFER_PROGRESS` | Juggling packets / progress bar | Receiving APK or photos |
+### The "Nova" Cyber-Critter Design Architecture
+To make the bot original and visually engaging rather than a generic flat smiley:
+1. **Aerodynamic Audio Ear-Fins (Antennae)**: Dual lateral ear-fins that perk up during alerts, tilt back when working on CLI agents, and droop when Bluetooth disconnects.
+2. **Obsidian Glass Visor Dome**: Multi-layer vector rendering with curved specular light reflection sheen.
+3. **Chromatic Blush Pads**: Glowing soft-focus cheek pads shifting across neon violet, cyber cyan, and emerald.
+4. **Specular Catchlight Pupils**: Dual-layered glow pupils with secondary catchlight stars.
+
+### Dynamic Mood Color Palette Matrix
+
+| State Trigger | Core Glow & Fins | Rim Gradient | Eye Visuals | Associated System Event |
+| :--- | :--- | :--- | :--- | :--- |
+| **Idle / Relaxed** | Cyber Cyan (`#00F0FF`) | Neon Violet ➔ Cyan | Specular catchlight pupils | Device paired and idling |
+| **Incoming Notif** | Sunset Coral (`#FF3366`) | Coral ➔ Gold | Wide glowing amber rings | Phone notification received |
+| **CLI Running** | Electric Violet (`#8B5CF6`) | Violet ➔ Cyan | Terminal crosshairs & goggles | `antigravity-cli` / agent active |
+| **Success / Saved** | Emerald (`#10B981`) | Emerald ➔ Aqua | Joyful sparkle crescent arcs | APK transfer / CLI exit 0 |
+| **Error / Failed** | Crimson (`#EF4444`) | Crimson ➔ Maroon | Glitch red crosshairs | Process exit non-zero / checksum fail |
+| **Searching** | Indigo (`#6366F1`) | Indigo ➔ Blue | Sideways radar gaze | Bluetooth discovery active |
 
 ---
 
 ## 5. Animation Physics & UI Stack
 
 - **Physics Engine**: Framer Motion / Spring physics with Apple-matching curves:
-  - `stiffness: 400`, `damping: 30`, `mass: 0.8`.
+  - `stiffness: 450`, `damping: 32`, `mass: 0.85`.
 - **Layout Morphing**: Uses layout morphing (`layout` & `layoutId` properties) so dimensions resize organically without jarring frame jumps.
-- **Color Aesthetics**: Deep obsidian core (`#0A0A0C`), subtle white border (`rgba(255, 255, 255, 0.12)`), neon accent indicators, and OLED deep black contrast.
+- **Color Aesthetics**: Deep obsidian core (`#0A0A0C`), multi-spectrum aurora gradients, and OLED deep black contrast.
