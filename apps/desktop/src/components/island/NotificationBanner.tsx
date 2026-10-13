@@ -1,6 +1,6 @@
 import React from 'react';
-import { motion } from 'framer-motion';
-import { X, Copy, Check } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { X, Check } from 'lucide-react';
 import { MirroredNotification } from '../../types/index.ts';
 import { AppIcon, getAppBrandInfo } from './AppIcon.tsx';
 
@@ -11,9 +11,9 @@ interface NotificationBannerProps {
 
 /**
  * Linear-styled Notification Card inside the Dynamic Island.
- * Features authentic app icons in their original brand colors,
- * set inside subtle glassmorphic squircle badges fitting the Linear dark canvas.
- * Stretches vertically to display full content naturally; scrolls only if screen limit is reached.
+ * Features authentic app icons in their original brand colors.
+ * Clicking on the notification text copies message text to clipboard with instant feedback.
+ * Action buttons retain only the dismiss action.
  */
 export const NotificationBanner: React.FC<NotificationBannerProps> = ({
   notification,
@@ -22,9 +22,14 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
   const [copied, setCopied] = React.useState(false);
   const brand = getAppBrandInfo(notification.appName, notification.packageName);
 
-  const handleCopy = (e: React.MouseEvent) => {
+  const handleCopyText = (e: React.MouseEvent) => {
     e.stopPropagation();
-    navigator.clipboard.writeText(`${notification.title}: ${notification.body}`);
+    const selection = window.getSelection()?.toString().trim();
+    const textToCopy = selection && selection.length > 0
+      ? selection
+      : `${notification.title}: ${notification.body}`;
+
+    navigator.clipboard.writeText(textToCopy);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -35,7 +40,7 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -4 }}
       transition={{ duration: 0.18 }}
-      className="flex items-start justify-between w-full gap-2 px-1 py-0.5 font-sans"
+      className="flex items-start justify-between w-full gap-2 px-1 py-0.5 font-sans select-none"
     >
       {/* Brand Icon Badge + Details Block */}
       <div className="flex items-start gap-2.5 min-w-0 flex-1">
@@ -55,8 +60,12 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
           />
         </div>
 
-        {/* Text Content Block */}
-        <div className="flex flex-col min-w-0 flex-1">
+        {/* Interactive Text Block - Click to Copy */}
+        <div
+          onClick={handleCopyText}
+          className="flex flex-col min-w-0 flex-1 cursor-pointer group/text"
+          title="Click to copy message"
+        >
           <div className="flex items-center gap-1.5 min-w-0">
             <span
               className="text-[10px] font-semibold tracking-wider uppercase font-mono shrink-0"
@@ -66,32 +75,45 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
             </span>
             <span className="text-[10px] text-linear-text-tertiary shrink-0">•</span>
             <span
-              className="text-xs font-medium text-linear-text-primary tracking-tight truncate"
+              className="text-xs font-medium text-linear-text-primary tracking-tight truncate group-hover/text:text-white transition-colors"
               title={notification.title}
             >
               {notification.title}
             </span>
+
+            {/* Instant Copied Feedback Pill */}
+            <AnimatePresence>
+              {copied && (
+                <motion.span
+                  initial={{ opacity: 0, scale: 0.85, x: -3 }}
+                  animate={{ opacity: 1, scale: 1, x: 0 }}
+                  exit={{ opacity: 0, scale: 0.85 }}
+                  transition={{ duration: 0.14 }}
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-linear-green/15 text-linear-green border border-linear-green/25 shrink-0 ml-1"
+                >
+                  <Check size={10} /> Copied
+                </motion.span>
+              )}
+            </AnimatePresence>
           </div>
 
           {/* Full Readable Body Text:
               Stretches vertically without scroll.
               Scroll activates ONLY if content reaches screen limit (min(65vh, 440px)). */}
-          <div className="text-xs text-linear-text-secondary mt-1 tracking-normal leading-relaxed break-words whitespace-pre-wrap select-text max-h-[min(65vh,440px)] overflow-y-auto pr-1">
+          <div
+            className={`text-xs mt-1 tracking-normal leading-relaxed break-words whitespace-pre-wrap select-text max-h-[min(65vh,440px)] overflow-y-auto pr-1 transition-colors ${
+              copied
+                ? 'text-linear-green/90'
+                : 'text-linear-text-secondary group-hover/text:text-linear-text-primary'
+            }`}
+          >
             {notification.body}
           </div>
         </div>
       </div>
 
-      {/* Action Buttons */}
+      {/* Action Buttons: Only Dismiss (X) */}
       <div className="flex items-center gap-1 shrink-0 self-start mt-0.5">
-        <button
-          onClick={handleCopy}
-          title="Copy message text"
-          className="p-1.5 rounded-md hover:bg-white/5 active:scale-95 text-linear-text-secondary hover:text-linear-text-primary border border-transparent hover:border-white/10 transition-colors"
-        >
-          {copied ? <Check size={13} className="text-linear-green" /> : <Copy size={13} />}
-        </button>
-
         <button
           onClick={(e) => {
             e.stopPropagation();
