@@ -638,15 +638,15 @@
             Send 52MB APK
           </button>
 
-          <button class="btn btn-secondary" style="flex: 1;" onclick="document.getElementById('realFileInput').click()">
+          <label class="btn btn-secondary" for="realFileInput" style="flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; text-align: center;">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
               <polyline points="14 2 14 8 20 8"></polyline>
             </svg>
-            Pick Any File
-          </button>
+            <span>Pick Any File</span>
+          </label>
         </div>
-        <input type="file" id="realFileInput" style="display: none;" onchange="uploadRealFile(this)" />
+        <input type="file" id="realFileInput" style="position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none;" onchange="uploadRealFile(this)" />
 
         <div class="progress-bar-wrap">
           <div class="progress-bar-fill" id="transferFill"></div>
@@ -769,6 +769,7 @@
         mobileTransferHistory = [];
       }
       renderMobileTransferHistory();
+      syncTransfersFromServer();
     }
 
     function saveMobileTransferHistory() {
@@ -786,23 +787,81 @@
         status: item.status || 'completed',
         completedAt: item.completedAt || Date.now()
       };
-      mobileTransferHistory = [record, ...mobileTransferHistory.filter(h => h.id !== record.id)];
+      mobileTransferHistory = [record, ...mobileTransferHistory.filter(h => h.id !== record.id && h.filename !== record.filename)];
       saveMobileTransferHistory();
       renderMobileTransferHistory();
     }
 
     function deleteMobileHistoryItem(id, filename) {
       mobileTransferHistory = mobileTransferHistory.filter(item => item.id !== id);
+      try {
+        let deleted = JSON.parse(localStorage.getItem('soko_mobile_deleted_history') || '[]');
+        if (filename && !deleted.includes(filename)) {
+          deleted.push(filename);
+          localStorage.setItem('soko_mobile_deleted_history', JSON.stringify(deleted));
+        }
+      } catch(e) {}
       saveMobileTransferHistory();
       renderMobileTransferHistory();
       showToast(`Removed from log • File remains on device`);
     }
 
     function clearMobileHistory() {
+      try {
+        let deleted = JSON.parse(localStorage.getItem('soko_mobile_deleted_history') || '[]');
+        mobileTransferHistory.forEach(item => {
+          if (item.filename && !deleted.includes(item.filename)) {
+            deleted.push(item.filename);
+          }
+        });
+        localStorage.setItem('soko_mobile_deleted_history', JSON.stringify(deleted));
+      } catch(e) {}
       mobileTransferHistory = [];
       saveMobileTransferHistory();
       renderMobileTransferHistory();
       showToast('History cleared • Files remain on device');
+    }
+
+    async function syncTransfersFromServer() {
+      try {
+        const httpBase = getHttpBaseUrl();
+        const res = await fetch(`${httpBase}/api/transfers`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data && Array.isArray(data.files)) {
+          let changed = false;
+          let deleted = [];
+          try {
+            deleted = JSON.parse(localStorage.getItem('soko_mobile_deleted_history') || '[]');
+          } catch(e) {
+            deleted = [];
+          }
+
+          data.files.forEach(f => {
+            if (deleted.includes(f.filename)) return;
+            const exists = mobileTransferHistory.some(h => h.filename === f.filename);
+            if (!exists) {
+              mobileTransferHistory.push({
+                id: 'srv-' + f.filename,
+                filename: f.filename,
+                totalBytes: f.size,
+                direction: 'sent',
+                status: 'completed',
+                completedAt: f.mtime ? Math.round(f.mtime) : Date.now()
+              });
+              changed = true;
+            }
+          });
+
+          if (changed) {
+            mobileTransferHistory.sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0));
+            saveMobileTransferHistory();
+            renderMobileTransferHistory();
+          }
+        }
+      } catch (err) {
+        // bridge server might not be reachable yet
+      }
     }
 
     function renderMobileTransferHistory() {
@@ -890,18 +949,20 @@
       document.getElementById('pairStatusBadge').style.color = state === 'online' ? 'var(--color-green)' : 'var(--text-tertiary)';
     }
 
+    function cleanHost(raw) {
+      if (!raw) return '127.0.0.1:8766';
+      let t = raw.trim().replace(/^https?:\/\//i, '').replace(/^wss?:\/\//i, '').replace(/\/.*$/, '');
+      if (!t) t = '127.0.0.1:8766';
+      if (!t.includes(':')) t += `:${DEFAULT_PORT}`;
+      return t;
+    }
+
     function getWsUrl() {
-      let target = ipInput.value.trim();
-      if (!target) target = '127.0.0.1:8766';
-      if (!target.includes(':')) target += `:${DEFAULT_PORT}`;
-      return `ws://${target}`;
+      return `ws://${cleanHost(ipInput.value)}`;
     }
 
     function getHttpBaseUrl() {
-      let target = ipInput.value.trim();
-      if (!target) target = '127.0.0.1:8766';
-      if (!target.includes(':')) target += `:${DEFAULT_PORT}`;
-      return `http://${target}`;
+      return `http://${cleanHost(ipInput.value)}`;
     }
 
     function connectWs() {
@@ -924,6 +985,9 @@
           setStatus('online', 'Connected');
           showToast('Connected to Desktop Island');
           blinkBot();
+
+          // Sync transfers from bridge server
+          syncTransfersFromServer();
 
           // Send Pair Request & Registration
           sendPacket('PAIR_REQUEST', {
@@ -1024,6 +1088,7 @@
             status: 'completed',
             completedAt: Date.now()
           });
+          syncTransfersFromServer();
           setTimeout(() => {
             document.getElementById('btnCancelTransfer').style.display = 'none';
           }, 2000);
@@ -1189,6 +1254,7 @@
     function uploadRealFile(input) {
       if (!input.files || input.files.length === 0) return;
       const file = input.files[0];
+      try { input.value = ''; } catch(e) {}
       blinkBot();
 
       const fill = document.getElementById('transferFill');
@@ -1237,6 +1303,7 @@
             status: 'completed',
             completedAt: Date.now()
           });
+          syncTransfersFromServer();
         } else {
           handleUploadError(new Error('Server responded with error ' + xhr.status));
         }

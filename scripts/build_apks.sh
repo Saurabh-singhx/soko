@@ -164,7 +164,11 @@ import android.os.Bundle;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.WebChromeClient;
+import android.webkit.ValueCallback;
 import android.webkit.JavascriptInterface;
+import android.net.Uri;
+import android.content.ClipData;
 import android.view.Window;
 import android.view.WindowManager;
 import android.graphics.Color;
@@ -176,6 +180,8 @@ import java.io.InputStream;
 import java.io.ByteArrayOutputStream;
 
 public class MainActivity extends Activity {
+    private static final int FILECHOOSER_RESULTCODE = 1001;
+    private ValueCallback<Uri[]> uploadMessage = null;
     private WebView webView;
 
     public class SokoNativeBridge {
@@ -254,6 +260,44 @@ public class MainActivity extends Activity {
             }
         });
 
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
+                if (uploadMessage != null) {
+                    uploadMessage.onReceiveValue(null);
+                    uploadMessage = null;
+                }
+                uploadMessage = filePathCallback;
+
+                Intent intent = null;
+                try {
+                    if (fileChooserParams != null) {
+                        intent = fileChooserParams.createIntent();
+                    }
+                } catch (Exception e) {
+                    intent = null;
+                }
+
+                if (intent == null) {
+                    intent = new Intent(Intent.ACTION_GET_CONTENT);
+                    intent.addCategory(Intent.CATEGORY_OPENABLE);
+                    intent.setType("*/*");
+                }
+
+                try {
+                    startActivityForResult(Intent.createChooser(intent, "Select File to Send"), FILECHOOSER_RESULTCODE);
+                    return true;
+                } catch (Exception e) {
+                    Log.e("SokoApp", "Cannot start file chooser", e);
+                    if (uploadMessage != null) {
+                        uploadMessage.onReceiveValue(null);
+                        uploadMessage = null;
+                    }
+                    return false;
+                }
+            }
+        });
+
         try {
             InputStream is = getAssets().open("index.html");
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -270,6 +314,31 @@ public class MainActivity extends Activity {
         }
 
         setContentView(webView);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == FILECHOOSER_RESULTCODE) {
+            if (uploadMessage == null) return;
+            Uri[] results = null;
+            if (resultCode == Activity.RESULT_OK && data != null) {
+                String dataString = data.getDataString();
+                ClipData clipData = data.getClipData();
+                if (clipData != null && clipData.getItemCount() > 0) {
+                    results = new Uri[clipData.getItemCount()];
+                    for (int i = 0; i < clipData.getItemCount(); i++) {
+                        results[i] = clipData.getItemAt(i).getUri();
+                    }
+                } else if (dataString != null) {
+                    results = new Uri[]{ Uri.parse(dataString) };
+                } else if (data.getData() != null) {
+                    results = new Uri[]{ data.getData() };
+                }
+            }
+            uploadMessage.onReceiveValue(results);
+            uploadMessage = null;
+        }
     }
 
     @Override

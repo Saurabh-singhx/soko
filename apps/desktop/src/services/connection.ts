@@ -174,12 +174,67 @@ class ConnectionManager {
     this.notifyTransferHistory();
   }
 
+  private getDeletedHistoryFilenames(): Set<string> {
+    try {
+      const saved = localStorage.getItem('soko_deleted_history_filenames');
+      if (saved) {
+        return new Set(JSON.parse(saved));
+      }
+    } catch {}
+    return new Set();
+  }
+
+  private saveDeletedHistoryFilename(filename: string): void {
+    try {
+      const set = this.getDeletedHistoryFilenames();
+      set.add(filename);
+      localStorage.setItem('soko_deleted_history_filenames', JSON.stringify([...set]));
+    } catch {}
+  }
+
+  public async syncTransfersFromServer(): Promise<void> {
+    try {
+      const httpBase = this.bridgeUrl.replace(/^ws/, 'http');
+      const res = await fetch(`${httpBase}/api/transfers`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data && Array.isArray(data.files)) {
+        let changed = false;
+        const deleted = this.getDeletedHistoryFilenames();
+        for (const file of data.files) {
+          if (deleted.has(file.filename)) continue;
+          const exists = this.transferHistory.some((h) => h.filename === file.filename);
+          if (!exists) {
+            this.transferHistory.push({
+              id: `srv-${file.filename}`,
+              filename: file.filename,
+              totalBytes: file.size,
+              completedAt: file.mtime ? Math.round(file.mtime) : Date.now(),
+              direction: 'received',
+              status: 'completed',
+            });
+            changed = true;
+          }
+        }
+        if (changed) {
+          this.transferHistory.sort((a, b) => b.completedAt - a.completedAt);
+          this.saveTransferHistory();
+          this.notifyTransferHistory();
+        }
+      }
+    } catch {}
+  }
+
   /**
    * Deletes a single history record from the transfer log.
    * NOTE: Explicitly removes the history entry without deleting the physical file on disk.
    */
   public deleteTransferHistoryItem(id: string): void {
-    this.transferHistory = this.transferHistory.filter((item) => item.id !== id);
+    const item = this.transferHistory.find((h) => h.id === id);
+    if (item) {
+      this.saveDeletedHistoryFilename(item.filename);
+    }
+    this.transferHistory = this.transferHistory.filter((i) => i.id !== id);
     this.saveTransferHistory();
     this.notifyTransferHistory();
   }
@@ -189,6 +244,9 @@ class ConnectionManager {
    * NOTE: Clears the transfer log from localStorage without deleting any files on disk.
    */
   public clearTransferHistory(): void {
+    for (const item of this.transferHistory) {
+      this.saveDeletedHistoryFilename(item.filename);
+    }
     this.transferHistory = [];
     this.saveTransferHistory();
     this.notifyTransferHistory();
@@ -201,6 +259,7 @@ class ConnectionManager {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
           this.transferHistory = parsed;
+          this.syncTransfersFromServer();
           return;
         }
       }
@@ -236,6 +295,7 @@ class ConnectionManager {
       },
     ];
     this.saveTransferHistory();
+    this.syncTransfersFromServer();
   }
 
   private saveTransferHistory(): void {
@@ -273,6 +333,7 @@ class ConnectionManager {
         this.notifyStatus();
         this.notifyBridge();
         this.startHeartbeat();
+        this.syncTransfersFromServer();
       };
 
       this.ws.onmessage = (event) => {
@@ -468,6 +529,7 @@ class ConnectionManager {
               status: 'completed',
               sha256: packet.payload.sha256,
             });
+            this.syncTransfersFromServer();
           }
         }
         break;
@@ -808,6 +870,7 @@ class ConnectionManager {
           direction: 'sent',
           status: 'completed',
         });
+        this.syncTransfersFromServer();
       } else {
         let errMessage = 'Upload failed';
         try {
