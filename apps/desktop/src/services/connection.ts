@@ -227,6 +227,11 @@ class ConnectionManager {
   }
 
   private handleInboundPacket(packet: SokoPacketEnvelope) {
+    if (!packet || packet.magic !== 'SK') {
+      console.warn('[Security] Discarded packet with invalid framing magic bytes:', packet?.magic);
+      return;
+    }
+
     switch (packet.packetType) {
       case 'BRIDGE_STATUS':
         if (packet.payload) {

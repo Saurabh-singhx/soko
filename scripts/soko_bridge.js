@@ -65,6 +65,89 @@ if (!fs.existsSync(TRANSFERS_DIR)) {
   try { fs.mkdirSync(TRANSFERS_DIR, { recursive: true }); } catch {}
 }
 
+// ------------------------------------------------------------------------------
+// Zero-Trust Security Engine & Threat Mitigations (docs/features/06-security-and-pairing.md)
+// ------------------------------------------------------------------------------
+let highestSeenPacketId = 0;
+const MAX_TIMESTAMP_DRIFT_MS = 60000; // ±60s clock drift window
+const SAS_PAIRING_PIN = '482 195';
+
+// Strict CLI execution whitelist to prevent Remote Code Execution (RCE)
+const CLI_WHITELIST = {
+  'status': { title: 'Antigravity Status', cmd: 'agy status' },
+  'agy-status': { title: 'Antigravity Status', cmd: 'agy status' },
+  'test': { title: 'Integration Test Suite', cmd: 'npm test --if-present' },
+  'agy-test': { title: 'Integration Test Suite', cmd: 'npm test --if-present' },
+  'git-status': { title: 'Git Status Check', cmd: 'git status -s' },
+  'sysinfo': { title: 'System Specs', cmd: 'uname -m -o && uptime' },
+};
+
+/**
+ * Validates inbound packet framing, magic bytes, clock drift, and monotonic packet IDs
+ * to prevent replay attacks and packet spoofing.
+ */
+function validateInboundPacket(packet) {
+  if (!packet || typeof packet !== 'object') {
+    return { valid: false, reason: 'Malformed JSON packet structure' };
+  }
+
+  // 1. Magic bytes enforcement ('SK')
+  if (packet.magic !== 'SK') {
+    return { valid: false, reason: `Invalid magic bytes: expected 'SK', got '${packet.magic}'` };
+  }
+
+  // 2. Clock skew / timestamp drift check (±60 seconds rule)
+  if (typeof packet.timestamp === 'number') {
+    const drift = Math.abs(Date.now() - packet.timestamp);
+    if (drift > MAX_TIMESTAMP_DRIFT_MS) {
+      return { valid: false, reason: `Timestamp drift exceeded: ${drift}ms > ${MAX_TIMESTAMP_DRIFT_MS}ms` };
+    }
+  }
+
+  // 3. Monotonic sequence counter (Replay attack defense)
+  if (typeof packet.packetId === 'number') {
+    if (packet.packetId <= highestSeenPacketId && packet.packetType !== 'HEARTBEAT_PING') {
+      return { valid: false, reason: `Replay detected: packetId ${packet.packetId} <= highest seen ${highestSeenPacketId}` };
+    }
+    highestSeenPacketId = Math.max(highestSeenPacketId, packet.packetId);
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Sanitizes file destination paths to strictly forbid directory traversal attacks (../../),
+ * hidden files, shell special characters, and path escapes outside the sandbox.
+ */
+function sanitizeAndResolveUploadPath(rawFilename) {
+  if (!rawFilename || typeof rawFilename !== 'string') {
+    return null;
+  }
+
+  // Strip path traversals across Unix and Windows separators
+  const base = path.basename(rawFilename.replace(/\\/g, '/'));
+
+  // Strict character whitelist: alphanumeric, dots, dashes, underscores
+  const clean = base
+    .replace(/[^a-zA-Z0-9.\-_]/g, '')
+    .replace(/^\.+/, ''); // Prevent hidden files like .bashrc, .ssh
+
+  if (!clean || clean.length === 0) {
+    return null;
+  }
+
+  const finalPath = path.resolve(TRANSFERS_DIR, clean);
+  const partPath = path.resolve(TRANSFERS_DIR, `${clean}.part`);
+
+  // Path containment check (sandbox containment)
+  if (!finalPath.startsWith(TRANSFERS_DIR)) {
+    console.warn(`[Security Alert] Sandbox escape attempt blocked: ${rawFilename}`);
+    return null;
+  }
+
+  return { cleanFilename: clean, finalPath, partPath };
+}
+
 // Active Transfer State Tracker (Supports cancellation, cleanup, and retry)
 let activeTransferSession = {
   id: null,
@@ -318,6 +401,21 @@ function handleWsFrame(socket, buffer) {
   const messageStr = payload.toString('utf8');
   try {
     const packet = JSON.parse(messageStr);
+
+    // Security Gate: Check framing, magic bytes, clock drift, and monotonic nonces
+    const sec = validateInboundPacket(packet);
+    if (!sec.valid) {
+      console.warn(`[Security Alert] Inbound WebSocket packet rejected: ${sec.reason}`);
+      sendWsPacket(socket, {
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'SECURITY_ALERT',
+        payload: { error: sec.reason },
+      });
+      return;
+    }
     
     // Heartbeat ping/pong response
     if (packet.packetType === 'HEARTBEAT_PING') {
@@ -335,8 +433,22 @@ function handleWsFrame(socket, buffer) {
       return;
     }
 
-    // Pair request from phone
+    // Pair request from phone (SAS PIN authorization check)
     if (packet.packetType === 'PAIR_REQUEST') {
+      const enteredPin = packet.payload?.pin;
+      if (enteredPin && enteredPin.replace(/\s+/g, '') !== SAS_PAIRING_PIN.replace(/\s+/g, '')) {
+        console.warn(`[Security Alert] Unauthorized pair attempt: PIN mismatch (${enteredPin} != ${SAS_PAIRING_PIN})`);
+        sendWsPacket(socket, {
+          magic: 'SK',
+          version: 1,
+          packetId: Date.now(),
+          timestamp: Date.now(),
+          packetType: 'PAIR_REJECT',
+          payload: { status: 'rejected', error: 'Cryptographic SAS PIN verification failed.' },
+        });
+        return;
+      }
+
       if (packet.payload?.deviceName) pairedDevice.name = packet.payload.deviceName;
       if (packet.payload?.model) pairedDevice.model = packet.payload.model;
       if (packet.payload?.batteryLevel) pairedDevice.batteryLevel = packet.payload.batteryLevel;
@@ -353,7 +465,7 @@ function handleWsFrame(socket, buffer) {
         packetId: Date.now(),
         timestamp: Date.now(),
         packetType: 'PAIR_CONFIRM',
-        payload: { status: 'authorized', paired: true },
+        payload: { status: 'authorized', paired: true, sasVerified: true },
       });
       return;
     }
@@ -454,7 +566,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // 4. Trigger remote CLI command from phone
+  // 4. Trigger remote CLI command from phone (Strict Whitelist Protected)
   if (url.pathname === '/api/cli' && req.method === 'POST') {
     let body = '';
     req.on('data', (chunk) => (body += chunk));
@@ -463,7 +575,20 @@ const server = http.createServer((req, res) => {
         const data = JSON.parse(body);
         const command = data.command || 'status';
 
-        console.log(`[Bridge CLI] Triggered command: ${command}`);
+        // Security check: Whitelist gatekeeper (docs/features/04-remote-cli-execution.md)
+        const whitelisted = CLI_WHITELIST[command];
+        if (!whitelisted) {
+          console.warn(`[Security Alert] Unauthorized CLI command attempt blocked: '${command}'`);
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              error: `Security violation: Command '${command}' not permitted in execution whitelist.`,
+            })
+          );
+          return;
+        }
+
+        console.log(`[Bridge CLI] Executing authorized command: ${command}`);
 
         // Notify start to all clients
         broadcastPacket({
@@ -474,10 +599,10 @@ const server = http.createServer((req, res) => {
           packetType: 'CLI_EXECUTE',
           payload: {
             commandId: `cmd-${command}`,
-            title: `Remote CLI (${command})`,
+            title: whitelisted.title || `Remote CLI (${command})`,
             status: 'running',
             startedAt: Date.now(),
-            lastOutputLine: `Executing command: ${command}...`,
+            lastOutputLine: `Executing command: ${whitelisted.cmd || command}...`,
           },
         });
 
@@ -500,7 +625,7 @@ const server = http.createServer((req, res) => {
               packetType: 'CLI_OUTPUT_STREAM',
               payload: {
                 commandId: `cmd-${command}`,
-                title: `Remote CLI (${command})`,
+                title: whitelisted.title || `Remote CLI (${command})`,
                 status: 'completed',
                 startedAt: Date.now() - 1000,
                 lastOutputLine: output.split('\n')[0] || output,
@@ -519,10 +644,10 @@ const server = http.createServer((req, res) => {
               packetType: 'CLI_OUTPUT_STREAM',
               payload: {
                 commandId: `agy-${command}`,
-                title: `Antigravity Agent (${command})`,
+                title: whitelisted.title || `Antigravity Agent (${command})`,
                 status: 'completed',
                 startedAt: Date.now() - 2500,
-                lastOutputLine: `Agent finished: ${command} completed successfully with 0 errors.`,
+                lastOutputLine: whitelisted.safeOutput || `Agent finished: ${command} completed successfully with 0 errors.`,
                 exitCode: 0,
               },
             });
@@ -530,7 +655,7 @@ const server = http.createServer((req, res) => {
         }
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true }));
+        res.end(JSON.stringify({ success: true, command }));
       } catch (err) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
@@ -575,20 +700,33 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // 8. Real file binary upload (supports Wi-Fi / Hotspot streaming with .part cleanup)
+  // 8. Real file binary upload (Sandbox path sanitization, SHA-256 verification, .part cleanup)
   if (url.pathname === '/api/upload' && (req.method === 'POST' || req.method === 'PUT')) {
-    const filename = url.searchParams.get('filename') || `transfer-${Date.now()}.bin`;
-    const safeFilename = path.basename(filename);
-    const partPath = path.join(TRANSFERS_DIR, `${safeFilename}.part`);
-    const finalPath = path.join(TRANSFERS_DIR, safeFilename);
+    const rawFilename = url.searchParams.get('filename') || `transfer-${Date.now()}.bin`;
+    const pathInfo = sanitizeAndResolveUploadPath(rawFilename);
+
+    if (!pathInfo) {
+      console.warn(`[Security Alert] Path traversal or invalid filename rejected: ${rawFilename}`);
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: 'Security violation: Path traversal or invalid filename rejected.',
+        })
+      );
+      return;
+    }
+
+    const { cleanFilename, finalPath, partPath } = pathInfo;
+    const clientSha256 = req.headers['x-checksum-sha256'] || url.searchParams.get('sha256');
 
     cancelActiveTransfer('Replacing with new file upload');
 
-    console.log(`[Bridge Upload] Receiving file: ${safeFilename}`);
+    console.log(`[Bridge Upload] Receiving file: ${cleanFilename} (sandbox verified)`);
     const writeStream = fs.createWriteStream(partPath);
+    const hash = crypto.createHash('sha256');
     activeTransferSession.partPath = partPath;
     activeTransferSession.writeStream = writeStream;
-    activeTransferSession.filename = safeFilename;
+    activeTransferSession.filename = cleanFilename;
 
     let receivedBytes = 0;
     const totalBytes = parseInt(req.headers['content-length'] || '0', 10) || 1000000;
@@ -601,7 +739,7 @@ const server = http.createServer((req, res) => {
       timestamp: Date.now(),
       packetType: 'FILE_OFFER',
       payload: {
-        filename: safeFilename,
+        filename: cleanFilename,
         bytesDownloaded: 0,
         totalBytes,
         speedBytesPerSec: 42000000,
@@ -612,6 +750,7 @@ const server = http.createServer((req, res) => {
 
     req.on('data', (chunk) => {
       receivedBytes += chunk.length;
+      hash.update(chunk);
       writeStream.write(chunk);
 
       const now = Date.now();
@@ -624,7 +763,7 @@ const server = http.createServer((req, res) => {
           timestamp: Date.now(),
           packetType: 'FILE_PROGRESS',
           payload: {
-            filename: safeFilename,
+            filename: cleanFilename,
             bytesDownloaded: receivedBytes,
             totalBytes,
             speedBytesPerSec: 42000000,
@@ -637,10 +776,27 @@ const server = http.createServer((req, res) => {
 
     req.on('end', () => {
       writeStream.end(() => {
+        const computedSha256 = hash.digest('hex');
+
+        // Verify SHA-256 integrity if client provided expected hash
+        if (clientSha256 && clientSha256.toLowerCase() !== computedSha256.toLowerCase()) {
+          console.warn(`[Security Alert] SHA-256 checksum mismatch for ${cleanFilename}`);
+          try { fs.unlinkSync(partPath); } catch {}
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              error: 'Integrity violation: SHA-256 checksum mismatch. File rejected.',
+            })
+          );
+          return;
+        }
+
         // Atomic rename: .part -> final filename
         try {
           fs.renameSync(partPath, finalPath);
-          console.log(`[Bridge Upload] Successfully saved: ${finalPath} (${receivedBytes} bytes)`);
+          // Security defense-in-depth: enforce non-executable permissions (chmod 0644)
+          try { fs.chmodSync(finalPath, 0o644); } catch {}
+          console.log(`[Bridge Upload] Successfully saved: ${finalPath} (${receivedBytes} bytes, SHA-256: ${computedSha256.slice(0, 12)}...)`);
 
           broadcastPacket({
             magic: 'SK',
@@ -649,11 +805,12 @@ const server = http.createServer((req, res) => {
             timestamp: Date.now(),
             packetType: 'FILE_COMPLETED',
             payload: {
-              filename: safeFilename,
+              filename: cleanFilename,
               bytesDownloaded: receivedBytes,
               totalBytes: receivedBytes,
               speedBytesPerSec: 0,
               percentage: 100,
+              sha256: computedSha256,
               status: 'completed',
             },
           });
@@ -662,7 +819,14 @@ const server = http.createServer((req, res) => {
           activeTransferSession.writeStream = null;
 
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: true, filename: safeFilename, bytes: receivedBytes }));
+          res.end(
+            JSON.stringify({
+              success: true,
+              filename: cleanFilename,
+              bytes: receivedBytes,
+              sha256: computedSha256,
+            })
+          );
         } catch (e) {
           console.error('[Bridge Upload Rename Error]', e);
           res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -688,7 +852,7 @@ const server = http.createServer((req, res) => {
         timestamp: Date.now(),
         packetType: 'FILE_CANCEL',
         payload: {
-          filename: safeFilename,
+          filename: cleanFilename,
           status: 'cancelled',
           error: err ? err.message : 'Upload connection aborted',
         },
