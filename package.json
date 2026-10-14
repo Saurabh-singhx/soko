@@ -1,6 +1,6 @@
 {
   "name": "soko-monorepo",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Cross-platform desktop dynamic island & mobile companion with high-speed hotspot transfer and CLI control",
   "workspaces": [
