@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Bluetooth, Settings, Music } from 'lucide-react';
+import { Music, Check, Zap } from 'lucide-react';
 import { CharacterAvatar } from './CharacterAvatar.tsx';
 import { NotificationBanner } from './NotificationBanner.tsx';
 import { CliStatusWidget } from './CliStatusWidget.tsx';
@@ -17,11 +17,19 @@ import {
   PairedDevice,
   PairRequestPending,
   AudioStreamStatus,
+  AgentActivityStatus,
 } from '../../types/index.ts';
 
 interface DynamicIslandProps {
-  onOpenSettings: () => void;
+  onOpenSettings: (tab?: string) => void;
 }
+
+const formatTokens = (tokens?: number): string => {
+  if (!tokens || tokens <= 0) return '0 tokens';
+  if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M tokens`;
+  if (tokens >= 10000) return `${(tokens / 1000).toFixed(1)}k tokens`;
+  return `${tokens.toLocaleString()} tokens`;
+};
 
 /**
  * Apple-inspired Dynamic Island Container Component.
@@ -51,6 +59,19 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
   const [audioStatus, setAudioStatus] = useState<AudioStreamStatus>(
     connectionService.getAudioStatus()
   );
+  const [agentStatus, setAgentStatus] = useState<AgentActivityStatus | null>(() =>
+    connectionService.getAgentActivity()
+  );
+
+  // Completed Agent task notice state (holds message & highlighted tokens)
+  const [completedTaskNotice, setCompletedTaskNotice] = useState<{
+    message: string;
+    tokensUsed?: number;
+    agent?: string | null;
+    name?: string | null;
+    timestamp: number;
+  } | null>(null);
+  const completedTaskTimerRef = useRef<any>(null);
 
   const [isBotClicked, setIsBotClicked] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
@@ -59,6 +80,135 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
   const idleTimerRef = useRef<any>(null);
   const islandRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [measuredNotificationHeight, setMeasuredNotificationHeight] = useState<number | null>(null);
+
+  // Idle Mascot Mode Configuration & Timers
+  const getIdleTimeoutMs = () => {
+    try {
+      const stored = localStorage.getItem('soko_idle_timeout');
+      if (stored !== null) {
+        const val = parseInt(stored, 10);
+        if (!isNaN(val)) return val;
+      }
+    } catch {}
+    return 60000; // Default: 60 seconds (1 minute) of inactivity
+  };
+
+  const wakeToNormalMode = (gracePeriodMs?: number) => {
+    if (idleTimerRef.current) {
+      clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
+    }
+    setIsIdleMascotOnly(false);
+    const timeoutMs = getIdleTimeoutMs();
+    if (timeoutMs > 0 && mode === 'compact' && !isConnectionPopoverOpen && !isHovered) {
+      const delay = Math.max(timeoutMs, gracePeriodMs || 0);
+      idleTimerRef.current = setTimeout(() => {
+        setIsIdleMascotOnly(true);
+      }, delay);
+    }
+  };
+
+  const resetIdleTimer = () => {
+    wakeToNormalMode();
+  };
+
+  // Subscribe to live CLI Agent watcher status
+  useEffect(() => {
+    const unsubAgent = connectionService.subscribeAgentActivity((status) => {
+      setAgentStatus(status);
+      if (!status) return;
+
+      if (status.status === 'completed') {
+        // Agent task is done! If in idle mode, wake Soko to normal mode immediately
+        wakeToNormalMode(25000);
+        setMood('happy');
+        setTimeout(() => {
+          setMood((prev) => (prev === 'happy' ? 'idle' : prev));
+        }, 4000);
+
+        const taskMessage = status.message || status.detail || `${status.name || 'Agent'}: Task completed`;
+        setCompletedTaskNotice({
+          message: taskMessage,
+          tokensUsed: status.tokensUsed,
+          agent: status.agent,
+          name: status.name,
+          timestamp: Date.now(),
+        });
+
+        if (completedTaskTimerRef.current) {
+          clearTimeout(completedTaskTimerRef.current);
+        }
+        completedTaskTimerRef.current = setTimeout(() => {
+          setCompletedTaskNotice(null);
+        }, 20000);
+      } else if (status.status === 'working' || status.status === 'thinking') {
+        // Active agent running: wake Soko to normal mode
+        wakeToNormalMode(10000);
+        setMood(status.status === 'working' ? 'working' : 'thinking');
+        setCompletedTaskNotice(null);
+      }
+    });
+    return unsubAgent;
+  }, [mode, isConnectionPopoverOpen, isHovered]);
+
+  // Dynamic status text: strictly event-driven, only changes when something is happening
+  const dynamicStatusText = useMemo(() => {
+    // 1. User dragging a file over the Island
+    if (isDragOver) {
+      return 'Drop to send to phone';
+    }
+
+    // 2. File transfer in progress
+    if (activeTransfer && activeTransfer.status === 'active') {
+      return `Transferring ${activeTransfer.filename} (${activeTransfer.percentage}%)`;
+    }
+
+    // 3. CLI execution in progress
+    if (activeCli && activeCli.status === 'running') {
+      return `Running: ${activeCli.title}`;
+    }
+
+    // 3b. Active CLI Agent execution (Google Antigravity, OpenAI Codex, Anthropic Claude)
+    if (agentStatus && agentStatus.agent && (agentStatus.status === 'working' || agentStatus.status === 'thinking')) {
+      const prefix = agentStatus.agent === 'antigravity'
+        ? '⚡ Antigravity'
+        : agentStatus.agent === 'codex'
+        ? '⚡ Codex'
+        : '⚡ Claude';
+      return `${prefix}: ${agentStatus.detail || 'Thinking...'}`;
+    }
+    if (agentStatus && agentStatus.agent && agentStatus.status === 'completed') {
+      return `${agentStatus.name || 'Agent'}: Done ✓`;
+    }
+
+    // 4. Audio streaming to phone
+    if (audioStatus.isStreamingToMobile) {
+      return 'Streaming audio to phone';
+    }
+
+    // 5. Connection states
+    if (connectionStatus === 'scanning') {
+      return 'Scanning for devices...';
+    }
+    if (connectionStatus === 'connecting') {
+      return 'Connecting...';
+    }
+    if (connectionStatus === 'disconnected' || !pairedDevice) {
+      return 'Not Connected';
+    }
+
+    // 6. Connected & idle: simple small connected text
+    return 'Connected';
+  }, [
+    isDragOver,
+    activeTransfer,
+    activeCli,
+    agentStatus,
+    audioStatus.isStreamingToMobile,
+    connectionStatus,
+    pairedDevice,
+  ]);
 
   // Auto-close Connection Popover when desktop window loses focus
   useEffect(() => {
@@ -84,6 +234,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     });
 
     const unsubNotif = connectionService.onNotification((notif) => {
+      wakeToNormalMode();
       setActiveNotification(notif);
       setMood('alert');
       setMode('notification');
@@ -91,6 +242,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     });
 
     const unsubCli = connectionService.onCli((cli) => {
+      wakeToNormalMode();
       setActiveCli(cli);
       setMood(cli.status === 'running' ? 'working' : 'happy');
       setMode('cli');
@@ -98,6 +250,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     });
 
     const unsubTransfer = connectionService.onTransfer((transfer) => {
+      wakeToNormalMode();
       setActiveTransfer(transfer);
       setMood(transfer.status === 'active' ? 'working' : 'happy');
       setMode('transfer');
@@ -105,6 +258,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     });
 
     const unsubPair = connectionService.onPendingPair((pairReq) => {
+      wakeToNormalMode();
       setPendingPair(pairReq);
       setMood('alert');
       setMode('pairing');
@@ -115,6 +269,11 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
       setAudioStatus(status);
     });
 
+    const handleWakeEvent = () => {
+      wakeToNormalMode();
+    };
+    window.addEventListener('soko:wake-to-normal-mode', handleWakeEvent);
+
     return () => {
       unsubStatus();
       unsubNotif();
@@ -122,6 +281,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
       unsubTransfer();
       unsubPair();
       unsubAudio();
+      window.removeEventListener('soko:wake-to-normal-mode', handleWakeEvent);
     };
   }, [mode]);
 
@@ -203,48 +363,29 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     };
   }, [mode]);
 
-  // Idle Mascot Mode Configuration & Timers
-  const getIdleTimeoutMs = () => {
-    try {
-      const stored = localStorage.getItem('soko_idle_timeout');
-      if (stored !== null) {
-        const val = parseInt(stored, 10);
-        if (!isNaN(val)) return val;
-      }
-    } catch {}
-    return 60000; // Default: 60 seconds (1 minute) of inactivity
-  };
-
-  const resetIdleTimer = () => {
-    if (idleTimerRef.current) {
-      clearTimeout(idleTimerRef.current);
-      idleTimerRef.current = null;
-    }
-
-    if (isIdleMascotOnly) {
-      setIsIdleMascotOnly(false);
-    }
-
-    const timeoutMs = getIdleTimeoutMs();
-    if (timeoutMs > 0 && mode === 'compact' && !isConnectionPopoverOpen && !isHovered) {
-      idleTimerRef.current = setTimeout(() => {
-        setIsIdleMascotOnly(true);
-      }, timeoutMs);
-    }
-  };
-
-  // Arm, disarm, or reset idle timer based on mode, popover, and hover state
+  // Arm, disarm, or reset idle timer based on mode, popover, hover state, completedTaskNotice, and active agent
   useEffect(() => {
-    if (mode !== 'compact' || isConnectionPopoverOpen || isHovered) {
+    if (
+      mode !== 'compact' ||
+      isConnectionPopoverOpen ||
+      isHovered ||
+      completedTaskNotice !== null ||
+      (agentStatus && agentStatus.agent && agentStatus.status !== 'idle')
+    ) {
       if (idleTimerRef.current) {
         clearTimeout(idleTimerRef.current);
         idleTimerRef.current = null;
       }
-      if (mode !== 'compact' || isConnectionPopoverOpen) {
+      if (
+        mode !== 'compact' ||
+        isConnectionPopoverOpen ||
+        completedTaskNotice !== null ||
+        (agentStatus && agentStatus.agent && agentStatus.status !== 'idle')
+      ) {
         setIsIdleMascotOnly(false);
       }
     } else {
-      resetIdleTimer();
+      wakeToNormalMode();
     }
 
     return () => {
@@ -253,7 +394,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         idleTimerRef.current = null;
       }
     };
-  }, [mode, isConnectionPopoverOpen, isHovered]);
+  }, [mode, isConnectionPopoverOpen, isHovered, completedTaskNotice, agentStatus?.status, agentStatus?.agent]);
 
   // Synchronize with settings updates or instant preview triggers
   useEffect(() => {
@@ -282,6 +423,42 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
   // Window width stays rock-solid at 440px so horizontal center (islandX) NEVER moves.
   const currentWindowHeightRef = useRef(68);
 
+  // Dynamically measure rendered notification height directly from the DOM
+  useEffect(() => {
+    if (mode !== 'notification') {
+      setMeasuredNotificationHeight(null);
+      return;
+    }
+
+    const updateHeight = () => {
+      if (islandRef.current) {
+        const rect = islandRef.current.getBoundingClientRect();
+        const scrollH = islandRef.current.scrollHeight;
+        const pillH = Math.max(rect.height, scrollH);
+        if (pillH > 0) {
+          // Window has pt-1 (4px). Add 20px transparent clearance so pill shadow & corners never touch window boundary.
+          const neededWindowH = Math.ceil(pillH + 20);
+          setMeasuredNotificationHeight((prev) => (prev !== neededWindowH ? neededWindowH : prev));
+        }
+      }
+    };
+
+    updateHeight();
+    const frame = requestAnimationFrame(updateHeight);
+    const ro = new ResizeObserver(() => {
+      updateHeight();
+    });
+
+    if (islandRef.current) {
+      ro.observe(islandRef.current);
+    }
+
+    return () => {
+      cancelAnimationFrame(frame);
+      ro.disconnect();
+    };
+  }, [mode, activeNotification]);
+
   useEffect(() => {
     let timer: any = null;
 
@@ -292,9 +469,22 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     } else if (isIdleMascotOnly) {
       targetH = 76;
     } else if (mode === 'notification') {
-      const bodyLen = activeNotification?.body?.length || 0;
-      const contentH = bodyLen > 160 ? 170 : bodyLen > 70 ? 120 : 76;
-      targetH = contentH + 12;
+      const rawBody = (activeNotification?.body || '').trim();
+      const paragraphs = rawBody ? rawBody.split('\n') : [''];
+      let totalLines = 0;
+      for (const p of paragraphs) {
+        if (p.length === 0) {
+          totalLines += 0.5;
+        } else {
+          totalLines += Math.max(1, Math.ceil(p.length / 36));
+        }
+      }
+      // Base overhead:
+      // Window pt-1 (4px) + pill pt-2.5 pb-3.5 (24px) + border (2px) + header (~26px) + gap (6px) + bottom clearance buffer (18px) = 80px
+      // Plus 21px per line of text
+      const calculatedH = Math.max(110, 80 + Math.ceil(totalLines * 21) + (isBotClicked ? 24 : 0));
+      const measuredH = measuredNotificationHeight || 0;
+      targetH = Math.min(320, Math.max(calculatedH, measuredH));
     } else if (mode === 'cli') {
       targetH = 152;
     } else if (mode === 'transfer') {
@@ -326,7 +516,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     return () => {
       if (timer) clearTimeout(timer);
     };
-  }, [mode, isConnectionPopoverOpen, activeNotification, isIdleMascotOnly]);
+  }, [mode, isConnectionPopoverOpen, activeNotification, isIdleMascotOnly, measuredNotificationHeight, isBotClicked]);
 
   // Critically damped Apple spring physics (Zero bounce, zero overshoot, zero shaking)
   const springTransition = {
@@ -361,8 +551,34 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
       return { width: 68, height: 64 };
     }
     switch (mode) {
-      case 'compact':
-        return { width: isBotClicked ? 320 : 290, height: isBotClicked ? 62 : 54 };
+      case 'compact': {
+        if (completedTaskNotice) {
+          const msgLen = completedTaskNotice.message?.length || 0;
+          const hasTokens = Boolean(completedTaskNotice.tokensUsed && completedTaskNotice.tokensUsed > 0);
+          let width = hasTokens ? 370 : 310;
+          if (msgLen > 30) {
+            width = 420;
+          } else if (msgLen > 18) {
+            width = 395;
+          }
+          if (isBotClicked) width = Math.min(430, width + 20);
+          return { width: Math.min(420, width), height: isBotClicked ? 62 : 54 };
+        }
+
+        const textLen = dynamicStatusText?.length || 0;
+        let baseWidth = 270;
+        if (dynamicStatusText === 'Connected') {
+          baseWidth = 230;
+        } else if (dynamicStatusText === 'Not Connected') {
+          baseWidth = 250;
+        } else if (textLen > 24) {
+          baseWidth = 320;
+        } else if (textLen > 16) {
+          baseWidth = 295;
+        }
+        if (isBotClicked) baseWidth += 30;
+        return { width: Math.min(350, baseWidth), height: isBotClicked ? 62 : 54 };
+      }
       case 'pairing':
         return { width: 420, height: 80 };
       case 'notification': {
@@ -520,10 +736,12 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={`group relative bg-[#0B0D14]/90 border flex flex-col justify-center overflow-hidden backdrop-blur-3xl font-sans transition-colors duration-200 select-none ${
+        className={`group relative bg-[#0B0D14]/90 border flex flex-col overflow-hidden backdrop-blur-3xl font-sans transition-colors duration-200 select-none ${
           isIdleMascotOnly
-            ? 'px-1 items-center rounded-full border-white/20'
-            : 'px-3.5 rounded-[30px] border-white/15'
+            ? 'px-1 items-center justify-center rounded-full border-white/20'
+            : mode === 'notification'
+            ? 'px-4 pt-2.5 pb-3.5 rounded-[24px] border-white/15'
+            : 'px-3.5 py-2 rounded-[30px] border-white/15'
         } ${
           isDragOver
             ? 'border-emerald-400 ring-2 ring-emerald-400/30 scale-[1.02]'
@@ -534,7 +752,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
           mode === 'compact'
             ? 'cursor-grab active:cursor-grabbing hover:scale-[1.01] items-center justify-center'
             : mode === 'notification'
-            ? 'min-h-[68px] max-h-[min(75vh,520px)] justify-center py-2 cursor-default'
+            ? 'min-h-[72px] max-h-[min(75vh,520px)] justify-start cursor-default'
             : 'items-center py-2.5 cursor-default'
         }`}
         title={
@@ -555,13 +773,15 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
           />
         )}
 
-        <div className={`flex items-center ${isIdleMascotOnly ? 'justify-center w-full h-full' : 'w-full my-auto'}`}>
+        <div className={`flex ${isIdleMascotOnly ? 'items-center justify-center w-full h-full' : mode === 'notification' ? 'items-start w-full' : 'items-center w-full my-auto'}`}>
           {/* Left Anchor: Mascot Character Avatar */}
           <div
             data-no-drag="true"
             className={`shrink-0 cursor-pointer flex items-center justify-center ${
               isIdleMascotOnly
                 ? 'p-0 m-0'
+                : mode === 'notification'
+                ? 'pr-2.5 self-start pt-1'
                 : 'pr-2.5 self-center my-auto'
             }`}
           onClick={(e) => {
@@ -602,6 +822,9 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
             notificationKey={activeNotification?.id}
             isMusicPlaying={audioStatus.isPlaying || audioStatus.isStreamingToMobile}
             isIdleMascotOnly={isIdleMascotOnly}
+            connectionStatus={connectionStatus}
+            activeAgent={agentStatus?.agent}
+            agentStatus={agentStatus}
           />
         </div>
 
@@ -617,7 +840,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                 width: 0,
                 transition: { duration: 0.16, ease: 'easeOut' },
               }}
-              className="flex-1 min-w-0 flex items-center my-auto overflow-hidden"
+              className={`flex-1 min-w-0 flex overflow-hidden ${mode === 'notification' ? 'items-start w-full' : 'items-center my-auto'}`}
             >
               <AnimatePresence mode="wait" initial={false}>
             {mode === 'compact' && (
@@ -636,108 +859,124 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                   delay: 0.05,
                   ease: [0.16, 1, 0.3, 1],
                 }}
-                className="flex items-center justify-between w-full select-none"
+                className="flex items-center justify-center w-full select-none min-w-0 pr-1"
               >
-                {/* Centered Status and Music Indicator */}
-                <div className="flex-1 flex items-center justify-center gap-2 min-w-0 px-1">
-                  <div className="flex items-center gap-2 text-xs text-linear-text-primary font-medium tracking-tight whitespace-nowrap">
-                    <span
-                      className={`w-2 h-2 rounded-full shrink-0 ${
-                        connectionStatus === 'connected'
-                          ? 'bg-linear-green'
-                          : connectionStatus === 'scanning' || connectionStatus === 'connecting'
-                          ? 'bg-linear-amber animate-ping'
-                          : 'bg-linear-red'
-                      }`}
-                    />
-                    <span className="text-[12px] text-linear-text-primary font-medium tracking-tight whitespace-nowrap">
-                      {connectionStatus === 'connected'
-                        ? 'Soko Ready'
-                        : connectionStatus === 'scanning' || connectionStatus === 'connecting'
-                        ? 'Connecting...'
-                        : 'No Device'}
-                    </span>
-                  </div>
+                {completedTaskNotice ? (
+                  <motion.div
+                    key={`completed-${completedTaskNotice.timestamp}`}
+                    initial={{ opacity: 0, y: 3, filter: 'blur(2px)' }}
+                    animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                    exit={{ opacity: 0, y: -3, filter: 'blur(2px)' }}
+                    transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
+                    className="w-full flex items-center justify-between min-w-0 gap-2 pr-0.5"
+                  >
+                    {/* Left: Message with completion checkmark (strictly truncated, never overlaps right badge) */}
+                    <div
+                      className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden cursor-pointer group/msg"
+                      title={`${completedTaskNotice.message} (Click to manage)`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsConnectionPopoverOpen((prev) => !prev);
+                      }}
+                    >
+                      <div className="w-4 h-4 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0">
+                        <Check size={10} className="text-emerald-400 stroke-[2.5]" />
+                      </div>
+                      <span className="text-[12px] text-white font-medium tracking-tight truncate min-w-0 flex-1 group-hover/msg:text-emerald-200 transition-colors">
+                        {completedTaskNotice.message}
+                      </span>
+                    </div>
 
-                  {/* Animated Dynamic Island Music Sign */}
-                  {(audioStatus.isPlaying || audioStatus.isStreamingToMobile) && (
-                    <motion.div
-                      initial={{ opacity: 0, scale: 0.8 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.8 }}
-                      className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[10px] font-mono tracking-tight mx-1 shrink-0"
+                    {/* Right: Highlighted Tokens Used Badge (strictly shrink-0, perfectly positioned on right) */}
+                    {completedTaskNotice.tokensUsed !== undefined && completedTaskNotice.tokensUsed > 0 && (
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.85 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ duration: 0.22, delay: 0.05 }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenSettings('tokens');
+                        }}
+                        className="shrink-0 flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-gradient-to-r from-emerald-500/20 via-teal-500/25 to-emerald-500/20 hover:from-emerald-500/30 hover:to-teal-500/35 border border-emerald-400/50 hover:border-emerald-300 text-emerald-300 shadow-[0_0_12px_rgba(52,211,153,0.35)] font-mono text-[11px] font-semibold tracking-tight whitespace-nowrap ml-auto cursor-pointer active:scale-95 transition-all"
+                        title={`Tokens used in this agent task: ${completedTaskNotice.tokensUsed.toLocaleString()} • Click to view Token Telemetry`}
+                      >
+                        <Zap size={10} className="text-emerald-300 fill-emerald-300 shrink-0 animate-pulse" />
+                        <span>{formatTokens(completedTaskNotice.tokensUsed)}</span>
+                      </motion.div>
+                    )}
+                  </motion.div>
+                ) : (
+                  /* Centered Status and Music Indicator */
+                  <div className="flex-1 flex items-center justify-center gap-2 min-w-0 px-1">
+                    <div
+                      className="flex items-center text-xs text-linear-text-primary font-medium tracking-tight whitespace-nowrap cursor-pointer hover:text-white transition-colors min-w-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsConnectionPopoverOpen((prev) => !prev);
+                      }}
                       title={
-                        audioStatus.isStreamingToMobile
-                          ? `Streaming Desktop Audio to Mobile (${audioStatus.activeListeners || 1} connected)`
-                          : 'Desktop Music / Audio Active'
+                        connectionStatus === 'connected'
+                          ? `Connected to ${pairedDevice?.name || 'Phone'} • Click to manage`
+                          : 'Click to connect a device'
                       }
                     >
-                      <Music size={10} className="text-emerald-400 animate-pulse shrink-0" />
-                      <div className="flex items-end gap-[2px] h-2.5 pb-[0.5px]">
+                      <AnimatePresence mode="wait" initial={false}>
                         <motion.span
-                          className="w-[2px] bg-emerald-400 rounded-full"
-                          animate={{ height: ['3px', '10px', '4px', '9px', '3px'] }}
-                          transition={{ duration: 0.65, repeat: Infinity, ease: 'easeInOut' }}
-                        />
-                        <motion.span
-                          className="w-[2px] bg-emerald-400 rounded-full"
-                          animate={{ height: ['8px', '3px', '10px', '5px', '8px'] }}
-                          transition={{ duration: 0.52, repeat: Infinity, ease: 'easeInOut' }}
-                        />
-                        <motion.span
-                          className="w-[2px] bg-emerald-400 rounded-full"
-                          animate={{ height: ['4px', '10px', '3px', '8px', '4px'] }}
-                          transition={{ duration: 0.72, repeat: Infinity, ease: 'easeInOut' }}
-                        />
-                        <motion.span
-                          className="w-[2px] bg-emerald-400 rounded-full"
-                          animate={{ height: ['9px', '4px', '9px', '2px', '9px'] }}
-                          transition={{ duration: 0.48, repeat: Infinity, ease: 'easeInOut' }}
-                        />
-                      </div>
-                    </motion.div>
-                  )}
-                </div>
+                          key={dynamicStatusText}
+                          initial={{ opacity: 0, y: 3, filter: 'blur(2px)' }}
+                          animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                          exit={{ opacity: 0, y: -3, filter: 'blur(2px)' }}
+                          transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
+                          className="text-[12px] text-linear-text-primary font-medium tracking-tight whitespace-nowrap truncate max-w-[260px] flex items-center gap-1.5"
+                        >
+                          {connectionStatus === 'connected' && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0 animate-pulse" />
+                          )}
+                          <span>{dynamicStatusText}</span>
+                        </motion.span>
+                      </AnimatePresence>
+                    </div>
 
-                <div
-                  className="flex items-center gap-1.5 text-linear-text-tertiary shrink-0 ml-auto"
-                  data-no-drag="true"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setIsConnectionPopoverOpen((prev) => !prev);
-                    }}
-                    title={
-                      connectionStatus === 'connected'
-                        ? `Connected to ${pairedDevice?.name || 'Mobile Phone'}`
-                        : connectionStatus === 'scanning' || connectionStatus === 'connecting'
-                        ? 'Scanning for companion link...'
-                        : 'Disconnected (Click to manage connection)'
-                    }
-                    className={`p-1.5 rounded-lg hover:bg-white/10 active:scale-90 transition-all duration-150 ${
-                      connectionStatus === 'connected'
-                        ? 'text-[#5E6AD2] hover:shadow-[0_0_10px_rgba(94,106,210,0.4)]'
-                        : connectionStatus === 'scanning' || connectionStatus === 'connecting'
-                        ? 'text-amber-400 animate-pulse'
-                        : 'text-linear-text-tertiary opacity-70'
-                    }`}
-                  >
-                    <Bluetooth size={15} />
-                  </button>
-
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onOpenSettings();
-                    }}
-                    title="Open Settings"
-                    className="p-1.5 rounded-lg hover:bg-white/10 active:scale-90 text-linear-text-secondary hover:text-white transition-all duration-150 hover:shadow-[0_0_10px_rgba(255,255,255,0.2)]"
-                  >
-                    <Settings size={15} />
-                  </button>
-                </div>
+                    {/* Animated Dynamic Island Music Sign */}
+                    {(audioStatus.isPlaying || audioStatus.isStreamingToMobile) && (
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.8 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.8 }}
+                        className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[10px] font-mono tracking-tight mx-1 shrink-0"
+                        title={
+                          audioStatus.isStreamingToMobile
+                            ? `Streaming Desktop Audio to Mobile (${audioStatus.activeListeners || 1} connected)`
+                            : 'Desktop Music / Audio Active'
+                        }
+                      >
+                        <Music size={10} className="text-emerald-400 animate-pulse shrink-0" />
+                        <div className="flex items-end gap-[2px] h-2.5 pb-[0.5px]">
+                          <motion.span
+                            className="w-[2px] bg-emerald-400 rounded-full"
+                            animate={{ height: ['3px', '10px', '4px', '9px', '3px'] }}
+                            transition={{ duration: 0.65, repeat: Infinity, ease: 'easeInOut' }}
+                          />
+                          <motion.span
+                            className="w-[2px] bg-emerald-400 rounded-full"
+                            animate={{ height: ['8px', '3px', '10px', '5px', '8px'] }}
+                            transition={{ duration: 0.52, repeat: Infinity, ease: 'easeInOut' }}
+                          />
+                          <motion.span
+                            className="w-[2px] bg-emerald-400 rounded-full"
+                            animate={{ height: ['4px', '10px', '3px', '8px', '4px'] }}
+                            transition={{ duration: 0.72, repeat: Infinity, ease: 'easeInOut' }}
+                          />
+                          <motion.span
+                            className="w-[2px] bg-emerald-400 rounded-full"
+                            animate={{ height: ['9px', '4px', '9px', '2px', '9px'] }}
+                            transition={{ duration: 0.48, repeat: Infinity, ease: 'easeInOut' }}
+                          />
+                        </div>
+                      </motion.div>
+                    )}
+                  </div>
+                )}
               </motion.div>
             )}
 
@@ -861,12 +1100,11 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
             status={connectionStatus}
             device={pairedDevice}
             sasPin={sasPin}
-            onScanAndConnect={() => connectionService.scanAndConnect()}
             onDisconnect={() => connectionService.disconnectDevice()}
             onRegeneratePin={() => setSasPin(connectionService.regeneratePin())}
-            onOpenSettings={() => {
+            onOpenSettings={(tab) => {
               setIsConnectionPopoverOpen(false);
-              onOpenSettings();
+              onOpenSettings(tab);
             }}
             onClose={() => setIsConnectionPopoverOpen(false)}
           />
