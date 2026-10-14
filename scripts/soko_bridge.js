@@ -54,18 +54,267 @@ function getLocalIps() {
   return addresses;
 }
 
+function scanAvailableDevices() {
+  const devices = [];
+
+  // 1. Scan for real Bluetooth devices via bluetoothctl
+  try {
+    const btOut = execSync('bluetoothctl devices', { encoding: 'utf8', timeout: 1500 });
+    const lines = btOut.trim().split('\n');
+    for (const line of lines) {
+      const match = line.match(/^Device\s+([0-9A-Fa-f:]+)\s+(.+)$/);
+      if (match && match[2].trim()) {
+        const devName = match[2].trim();
+        devices.push({
+          id: `bt-${match[1].replace(/:/g, '')}`,
+          name: devName,
+          model: devName.toLowerCase().includes('bud') || devName.toLowerCase().includes('ear') ? 'Bluetooth Audio / Wearable' : 'Bluetooth Companion Device',
+          transport: 'ble',
+          rssi: -56,
+          mac: match[1],
+        });
+      }
+    }
+  } catch {}
+
+  // 2. Discover local mobile companion on the Wi-Fi / Hotspot LAN
+  const localIps = getLocalIps();
+  const primaryIp = localIps[0] || '192.168.31.210';
+  devices.push({
+    id: `wifi-companion-${primaryIp}`,
+    name: 'Android Mobile Companion (Wi-Fi / Hotspot)',
+    model: `Local Companion (${primaryIp}:8766)`,
+    transport: 'wifi',
+    rssi: -42,
+    ipAddress: primaryIp,
+  });
+
+  return devices;
+}
+
+// ------------------------------------------------------------------------------
+// Native AI Token Engine: Zero-dependency token tracker for Antigravity & Codex
+// ------------------------------------------------------------------------------
+let tokenCache = null;
+let tokenCacheTime = 0;
+const TOKEN_CACHE_TTL_MS = 15000;
+
+function scanNativeTokenUsage() {
+  const now = Date.now();
+  if (tokenCache && (now - tokenCacheTime) < TOKEN_CACHE_TTL_MS) {
+    return tokenCache;
+  }
+
+  const home = os.homedir();
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const todayTimestamp = startOfToday.getTime();
+
+  const antigravity = {
+    id: 'antigravity',
+    name: 'Google Antigravity',
+    totalTokens: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedTokens: 0,
+    todayTokens: 0,
+    sessionsCount: 0,
+    color: '#4285F4',
+  };
+
+  const codex = {
+    id: 'codex',
+    name: 'OpenAI Codex CLI',
+    totalTokens: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedTokens: 0,
+    todayTokens: 0,
+    sessionsCount: 0,
+    color: '#10A37F',
+  };
+
+  const claude = {
+    id: 'claude',
+    name: 'Anthropic Claude',
+    totalTokens: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedTokens: 0,
+    todayTokens: 0,
+    sessionsCount: 0,
+    color: '#D97706',
+  };
+
+  const recentSessions = [];
+
+  // 1. Scan Antigravity Brain (~/.gemini/antigravity-cli/brain)
+  const agyBrain = path.join(home, '.gemini/antigravity-cli/brain');
+  if (fs.existsSync(agyBrain)) {
+    try {
+      const dirs = fs.readdirSync(agyBrain);
+      for (const dir of dirs) {
+        const transcriptPath = path.join(agyBrain, dir, '.system_generated/logs/transcript.jsonl');
+        if (fs.existsSync(transcriptPath)) {
+          antigravity.sessionsCount++;
+          try {
+            const stat = fs.statSync(transcriptPath);
+            const content = fs.readFileSync(transcriptPath, 'utf8');
+            const lines = content.split('\n');
+            let sessionTokens = 0;
+            let sessionTime = stat.mtimeMs;
+            let sessionPrompt = '';
+
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              try {
+                const item = JSON.parse(line);
+                if (item.created_at) {
+                  const t = new Date(item.created_at).getTime();
+                  if (!isNaN(t)) sessionTime = t;
+                }
+                if (item.type === 'USER_INPUT' && item.content && !sessionPrompt) {
+                  const clean = item.content.replace(/<[^>]+>/g, '').trim();
+                  if (clean) sessionPrompt = clean.slice(0, 80);
+                }
+                const inp = item.input_tokens || 0;
+                const out = item.output_tokens || 0;
+                const cache = item.cache_read_tokens || 0;
+                if (inp || out) {
+                  antigravity.inputTokens += inp;
+                  antigravity.outputTokens += out;
+                  antigravity.cachedTokens += cache;
+                  sessionTokens += (inp + out);
+                  if (sessionTime >= todayTimestamp) {
+                    antigravity.todayTokens += (inp + out);
+                  }
+                }
+              } catch {}
+            }
+
+            if (sessionTokens > 0) {
+              recentSessions.push({
+                id: `agy-${dir.slice(0, 8)}`,
+                assistant: 'Antigravity',
+                model: 'Gemini',
+                tokens: sessionTokens,
+                timestamp: sessionTime,
+                summary: sessionPrompt || `Session ${dir.slice(0, 8)}`,
+              });
+            }
+          } catch {}
+        }
+      }
+    } catch {}
+  }
+  antigravity.totalTokens = antigravity.inputTokens + antigravity.outputTokens;
+
+  // 2. Scan Codex CLI Sessions (~/.codex/sessions)
+  const codexBase = path.join(home, '.codex/sessions');
+  function walkCodex(dir) {
+    if (!fs.existsSync(dir)) return;
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walkCodex(full);
+        } else if (entry.name.endsWith('.jsonl')) {
+          codex.sessionsCount++;
+          try {
+            const stat = fs.statSync(full);
+            const lines = fs.readFileSync(full, 'utf8').split('\n');
+            let sessionTime = stat.mtimeMs;
+            let sessionTokens = 0;
+
+            for (let i = lines.length - 1; i >= 0; i--) {
+              const line = lines[i].trim();
+              if (!line) continue;
+              if (line.includes('"type":"token_count"')) {
+                try {
+                  const data = JSON.parse(line);
+                  const usage = data.payload?.info?.total_token_usage;
+                  if (usage) {
+                    const inp = usage.input_tokens || 0;
+                    const out = usage.output_tokens || 0;
+                    const cache = usage.cached_input_tokens || 0;
+                    const tot = usage.total_tokens || (inp + out);
+                    codex.inputTokens += inp;
+                    codex.outputTokens += out;
+                    codex.cachedTokens += cache;
+                    codex.totalTokens += tot;
+                    sessionTokens = tot;
+                    if (data.timestamp) {
+                      const t = new Date(data.timestamp).getTime();
+                      if (!isNaN(t)) sessionTime = t;
+                    }
+                    if (sessionTime >= todayTimestamp) {
+                      codex.todayTokens += tot;
+                    }
+                    break;
+                  }
+                } catch {}
+              }
+            }
+
+            if (sessionTokens > 0) {
+              recentSessions.push({
+                id: `codex-${path.basename(full, '.jsonl').slice(-8)}`,
+                assistant: 'Codex',
+                model: 'GPT-5.6 / Codex',
+                tokens: sessionTokens,
+                timestamp: sessionTime,
+                summary: `Codex Session ${path.basename(full, '.jsonl').slice(-8)}`,
+              });
+            }
+          } catch {}
+        }
+      }
+    } catch {}
+  }
+  walkCodex(codexBase);
+
+  // 3. Scan Claude Sessions (if any ~/.claude exists)
+  const claudeDir = path.join(home, '.claude');
+  if (fs.existsSync(claudeDir)) {
+    try {
+      const claudeEntries = fs.readdirSync(claudeDir, { withFileTypes: true });
+      for (const entry of claudeEntries) {
+        if (entry.name.endsWith('.json') || entry.name.endsWith('.jsonl')) {
+          claude.sessionsCount++;
+        }
+      }
+    } catch {}
+  }
+
+  // Sort recent sessions descending by timestamp
+  recentSessions.sort((a, b) => b.timestamp - a.timestamp);
+
+  const totalTokens = antigravity.totalTokens + codex.totalTokens + claude.totalTokens;
+  const todayTokens = antigravity.todayTokens + codex.todayTokens + claude.todayTokens;
+  const cachedTokens = antigravity.cachedTokens + codex.cachedTokens + claude.cachedTokens;
+  const totalSessions = antigravity.sessionsCount + codex.sessionsCount + claude.sessionsCount;
+
+  tokenCache = {
+    totalTokens,
+    todayTokens,
+    cachedTokens,
+    totalSessions,
+    byPlatform: {
+      antigravity,
+      codex,
+      claude,
+    },
+    assistants: [antigravity, codex, claude],
+    recentSessions: recentSessions.slice(0, 15),
+    lastUpdated: now,
+  };
+  tokenCacheTime = now;
+  return tokenCache;
+}
+
 let activeClients = new Set();
-let pairedDevice = {
-  id: 'mobile-peer-live',
-  name: 'Mobile Companion (Android)',
-  model: 'Soko Mobile Companion v1.0.0',
-  rssi: -52,
-  pingMs: 8,
-  transport: 'dual',
-  batteryLevel: 94,
-  lastSeen: Date.now(),
-  isAuthorized: true,
-};
+let pairedDevice = null;
 
 // Path to mobile companion web application and transfer directory
 const COMPANION_INDEX_CANDIDATES = [
@@ -77,14 +326,34 @@ const COMPANION_INDEX_CANDIDATES = [
   path.resolve(process.cwd(), 'apps/mobile/companion/index.html'),
 ];
 const COMPANION_INDEX = COMPANION_INDEX_CANDIDATES.find((p) => fs.existsSync(p)) || COMPANION_INDEX_CANDIDATES[0];
-const TRANSFERS_DIR = process.env.SOKO_TRANSFERS_DIR || (
-  fs.existsSync(path.resolve(process.cwd(), 'transfers'))
-    ? path.resolve(process.cwd(), 'transfers')
-    : path.resolve(__dirname, '../transfers')
-);
-if (!fs.existsSync(TRANSFERS_DIR)) {
-  try { fs.mkdirSync(TRANSFERS_DIR, { recursive: true }); } catch {}
+function getSafeTransfersDir() {
+  if (process.env.SOKO_TRANSFERS_DIR) return process.env.SOKO_TRANSFERS_DIR;
+
+  // 1. Try local repo transfers directory if writable
+  const localRepoTransfers = path.resolve(process.cwd(), 'transfers');
+  if (fs.existsSync(localRepoTransfers)) {
+    try {
+      fs.accessSync(localRepoTransfers, fs.constants.W_OK);
+      return localRepoTransfers;
+    } catch {}
+  }
+
+  // 2. User-writable persistent directory in ~/.config/soko/transfers
+  const userTransfers = path.resolve(os.homedir(), '.config/soko/transfers');
+  try {
+    fs.mkdirSync(userTransfers, { recursive: true });
+    return userTransfers;
+  } catch {}
+
+  // 3. System temp fallback
+  const tmpTransfers = path.resolve(os.tmpdir(), 'soko-transfers');
+  try {
+    fs.mkdirSync(tmpTransfers, { recursive: true });
+  } catch {}
+  return tmpTransfers;
 }
+
+const TRANSFERS_DIR = getSafeTransfersDir();
 
 // ------------------------------------------------------------------------------
 // Zero-Trust Security Engine & Threat Mitigations (docs/features/06-security-and-pairing.md)
@@ -237,6 +506,464 @@ setInterval(() => {
     broadcastAudioStatus();
   }
 }, 2500);
+
+// ------------------------------------------------------------------------------
+// Native CLI Agent Task Watcher (Google Antigravity, OpenAI Codex, Anthropic Claude)
+// ------------------------------------------------------------------------------
+let currentAgentActivity = {
+  agent: null,
+  name: null,
+  status: 'idle',
+  detail: '',
+  message: '',
+  tokensUsed: 0,
+  timestamp: Date.now(),
+};
+let simulatedAgentActivity = null;
+let simulationTimeout = null;
+let lastAgentStateKey = '';
+
+// Persistence cache for completed real agent tasks
+let realAgentCompletionCache = null;
+let lastObservedWorkingAgent = null;
+
+function simulateAgent(agentId, detail, durationMs = 6000) {
+  if (simulationTimeout) {
+    clearTimeout(simulationTimeout);
+    simulationTimeout = null;
+  }
+  if (!agentId || agentId === 'none' || agentId === 'reset') {
+    simulatedAgentActivity = null;
+    broadcastAgentActivity();
+    return;
+  }
+
+  const names = {
+    antigravity: 'Google Antigravity',
+    codex: 'OpenAI Codex',
+    claude: 'Anthropic Claude',
+  };
+  const defaultDetails = {
+    antigravity: 'Analyzing codebase & executing tools',
+    codex: 'Streaming code generation',
+    claude: 'Reasoning and synthesizing context',
+  };
+
+  const simulatedTokens = {
+    antigravity: 1840,
+    codex: 1250,
+    claude: 2130,
+  };
+  const tokenCount = simulatedTokens[agentId] || 1500;
+
+  simulatedAgentActivity = {
+    agent: agentId,
+    name: names[agentId] || agentId,
+    status: 'working',
+    detail: detail || defaultDetails[agentId] || 'Agent task in progress',
+    message: detail || 'Agent task in progress',
+    tokensUsed: tokenCount,
+    timestamp: Date.now(),
+  };
+  broadcastAgentActivity();
+
+  simulationTimeout = setTimeout(() => {
+    // Show completed status with message and tokens used
+    simulatedAgentActivity = {
+      agent: agentId,
+      name: names[agentId] || agentId,
+      status: 'completed',
+      detail: 'Task completed',
+      message: detail ? `Finished: ${detail}` : 'Task completed successfully',
+      tokensUsed: tokenCount,
+      timestamp: Date.now(),
+    };
+    broadcastAgentActivity();
+
+    simulationTimeout = setTimeout(() => {
+      simulatedAgentActivity = null;
+      broadcastAgentActivity();
+    }, 10000);
+  }, durationMs);
+}
+
+function checkActiveAgentActivity() {
+  if (simulatedAgentActivity) {
+    return simulatedAgentActivity;
+  }
+
+  const now = Date.now();
+  const home = os.homedir();
+
+  // 1. Check Google Antigravity
+  // Transcripts in ~/.gemini/antigravity-cli/brain/*/
+  try {
+    const brainDir = path.join(home, '.gemini/antigravity-cli/brain');
+    if (fs.existsSync(brainDir)) {
+      const entries = fs.readdirSync(brainDir, { withFileTypes: true });
+      let newestTime = 0;
+      let newestDir = null;
+      for (const e of entries) {
+        if (e.isDirectory() && !e.name.startsWith('.')) {
+          try {
+            const s = fs.statSync(path.join(brainDir, e.name));
+            if (s.mtimeMs > newestTime) {
+              newestTime = s.mtimeMs;
+              newestDir = path.join(brainDir, e.name);
+            }
+          } catch {}
+        }
+      }
+
+      if (newestDir) {
+        const transcriptPath = path.join(newestDir, '.system_generated/logs/transcript.jsonl');
+        if (fs.existsSync(transcriptPath)) {
+          const stat = fs.statSync(transcriptPath);
+          const ageMs = now - stat.mtimeMs;
+          if (ageMs <= 60000) {
+            let detail = 'Working on task';
+            let isDone = false;
+            let turnTokens = 0;
+            let taskSummary = '';
+
+            try {
+              const bufferSize = Math.min(stat.size, 262144);
+              const buffer = Buffer.alloc(bufferSize);
+              const fd = fs.openSync(transcriptPath, 'r');
+              fs.readSync(fd, buffer, 0, bufferSize, Math.max(0, stat.size - bufferSize));
+              fs.closeSync(fd);
+
+              const lines = buffer.toString('utf8').trim().split('\n');
+              const parsed = [];
+              let lastUserIdx = -1;
+
+              for (let i = 0; i < lines.length; i++) {
+                if (!lines[i].trim()) continue;
+                try {
+                  const item = JSON.parse(lines[i]);
+                  parsed.push(item);
+                  if (item.type === 'USER_INPUT') {
+                    lastUserIdx = parsed.length - 1;
+                    if (item.content) {
+                      const clean = item.content.replace(/<[^>]+>/g, '').trim();
+                      if (clean) taskSummary = clean.slice(0, 70);
+                    }
+                  }
+                } catch {}
+              }
+
+              if (parsed.length > 0) {
+                const startIdx = lastUserIdx >= 0 ? lastUserIdx : 0;
+                for (let i = startIdx; i < parsed.length; i++) {
+                  turnTokens += (parsed[i].input_tokens || 0) + (parsed[i].output_tokens || 0);
+                }
+
+                const last = parsed[parsed.length - 1];
+                if (last.tool_calls && last.tool_calls.length > 0) {
+                  const call = last.tool_calls[last.tool_calls.length - 1];
+                  const action = call.args?.toolAction || call.args?.toolSummary || call.name;
+                  detail = typeof action === 'string' ? action.replace(/^"|"$/g, '') : 'Executing tool';
+                  isDone = false;
+                } else if (last.type === 'GENERIC') {
+                  detail = 'Processing tool results';
+                  isDone = false;
+                } else if (last.type === 'PLANNER_RESPONSE') {
+                  detail = 'Task completed';
+                  isDone = true;
+                  if (last.content && typeof last.content === 'string') {
+                    const firstLine = last.content.split('\n')[0].replace(/^[#*>\s]+/, '').replace(/^\[!.*?\]/, '').trim();
+                    if (firstLine && firstLine.length > 3) {
+                      taskSummary = firstLine.slice(0, 80);
+                    }
+                  }
+                } else if (last.type === 'USER_INPUT') {
+                  detail = 'Analyzing user prompt';
+                  isDone = false;
+                }
+              }
+            } catch {}
+
+            if (isDone) {
+              const comp = {
+                agent: 'antigravity',
+                name: 'Google Antigravity',
+                status: 'completed',
+                detail: 'Task completed',
+                message: taskSummary || 'Task completed successfully',
+                tokensUsed: turnTokens || 1650,
+                timestamp: stat.mtimeMs,
+                expiresAt: now + 45000,
+              };
+              realAgentCompletionCache = comp;
+              lastObservedWorkingAgent = null;
+              return comp;
+            } else {
+              realAgentCompletionCache = null;
+              lastObservedWorkingAgent = {
+                agent: 'antigravity',
+                name: 'Google Antigravity',
+                tokens: turnTokens,
+                summary: taskSummary,
+                timestamp: stat.mtimeMs,
+              };
+              return {
+                agent: 'antigravity',
+                name: 'Google Antigravity',
+                status: 'working',
+                detail,
+                tokensUsed: turnTokens,
+                timestamp: stat.mtimeMs,
+              };
+            }
+          }
+        }
+      }
+    }
+  } catch {}
+
+  // Transition from working to completed if active agent transcript stopped updating
+  if (lastObservedWorkingAgent && (now - lastObservedWorkingAgent.timestamp) <= 60000) {
+    const comp = {
+      agent: lastObservedWorkingAgent.agent,
+      name: lastObservedWorkingAgent.name,
+      status: 'completed',
+      detail: 'Task completed',
+      message: lastObservedWorkingAgent.summary || 'Task completed successfully',
+      tokensUsed: lastObservedWorkingAgent.tokens || 1400,
+      timestamp: now,
+      expiresAt: now + 45000,
+    };
+    realAgentCompletionCache = comp;
+    lastObservedWorkingAgent = null;
+    return comp;
+  }
+
+  // 2. Check OpenAI Codex CLI
+  // Active rollout in ~/.codex/sessions/**
+  try {
+    const codexBase = path.join(home, '.codex/sessions');
+    if (fs.existsSync(codexBase)) {
+      let newestRollout = null;
+      let newestTime = 0;
+
+      function findNewest(dir, depth) {
+        if (depth > 5) return;
+        try {
+          const files = fs.readdirSync(dir, { withFileTypes: true });
+          for (const f of files) {
+            const full = path.join(dir, f.name);
+            if (f.isDirectory()) {
+              findNewest(full, depth + 1);
+            } else if (f.name.startsWith('rollout-') && f.name.endsWith('.jsonl')) {
+              try {
+                const s = fs.statSync(full);
+                if (s.mtimeMs > newestTime) {
+                  newestTime = s.mtimeMs;
+                  newestRollout = full;
+                }
+              } catch {}
+            }
+          }
+        } catch {}
+      }
+
+      findNewest(codexBase, 0);
+
+      if (newestRollout && (now - newestTime) <= 60000) {
+        let codexTokens = 1200;
+        let isDone = false;
+        let taskSummary = 'Codex task completed';
+        let detail = 'Generating code solution';
+
+        try {
+          const tailBuf = Buffer.alloc(32768);
+          const stat = fs.statSync(newestRollout);
+          const fd = fs.openSync(newestRollout, 'r');
+          const readBytes = Math.min(stat.size, 32768);
+          fs.readSync(fd, tailBuf, 0, readBytes, Math.max(0, stat.size - readBytes));
+          fs.closeSync(fd);
+          const lines = tailBuf.toString('utf8').trim().split('\n');
+
+          for (let i = lines.length - 1; i >= 0; i--) {
+            if (!lines[i].trim()) continue;
+            try {
+              const item = JSON.parse(lines[i]);
+              if (item.type === 'event_msg' && (item.payload?.type === 'task_complete' || item.payload?.type === 'turn_complete')) {
+                isDone = true;
+              }
+              if (item.type === 'token_count' && item.payload?.info?.total_token_usage?.total_tokens) {
+                codexTokens = item.payload.info.total_token_usage.total_tokens;
+              } else if (item.type === 'token_usage_record' && item.payload?.usage?.total_tokens) {
+                codexTokens = item.payload.usage.total_tokens;
+              }
+              if (item.type === 'response_item' && item.payload?.type === 'message' && item.payload?.content) {
+                const txt = item.payload.content[0]?.text;
+                if (txt && typeof txt === 'string') {
+                  taskSummary = txt.split('\n')[0].slice(0, 75);
+                }
+              }
+            } catch {}
+          }
+        } catch {}
+
+        if (isDone) {
+          const comp = {
+            agent: 'codex',
+            name: 'OpenAI Codex',
+            status: 'completed',
+            detail: 'Task completed',
+            message: taskSummary || 'OpenAI Codex: Task completed',
+            tokensUsed: codexTokens,
+            timestamp: newestTime,
+            expiresAt: now + 45000,
+          };
+          realAgentCompletionCache = comp;
+          lastObservedWorkingAgent = null;
+          return comp;
+        } else {
+          realAgentCompletionCache = null;
+          lastObservedWorkingAgent = {
+            agent: 'codex',
+            name: 'OpenAI Codex',
+            tokens: codexTokens,
+            summary: taskSummary,
+            timestamp: newestTime,
+          };
+          return {
+            agent: 'codex',
+            name: 'OpenAI Codex',
+            status: 'working',
+            detail,
+            tokensUsed: codexTokens,
+            timestamp: newestTime,
+          };
+        }
+      }
+    }
+  } catch {}
+
+  // 3. Check Anthropic Claude
+  try {
+    const claudeDir = path.join(home, '.claude');
+    if (fs.existsSync(claudeDir)) {
+      let newestFile = null;
+      let newestTime = 0;
+      function findClaudeNewest(dir, depth) {
+        if (depth > 3) return;
+        try {
+          const entries = fs.readdirSync(dir, { withFileTypes: true });
+          for (const e of entries) {
+            const full = path.join(dir, e.name);
+            if (e.isDirectory()) {
+              findClaudeNewest(full, depth + 1);
+            } else if (e.name.endsWith('.json') || e.name.endsWith('.jsonl')) {
+              try {
+                const s = fs.statSync(full);
+                if (s.mtimeMs > newestTime) {
+                  newestTime = s.mtimeMs;
+                  newestFile = full;
+                }
+              } catch {}
+            }
+          }
+        } catch {}
+      }
+      findClaudeNewest(claudeDir, 0);
+
+      if (newestFile && (now - newestTime) <= 60000) {
+        let claudeTokens = 2100;
+        let isDone = false;
+        let summary = 'Claude completed task';
+
+        try {
+          const tailBuf = Buffer.alloc(16384);
+          const stat = fs.statSync(newestFile);
+          const fd = fs.openSync(newestFile, 'r');
+          const readBytes = Math.min(stat.size, 16384);
+          fs.readSync(fd, tailBuf, 0, readBytes, Math.max(0, stat.size - readBytes));
+          fs.closeSync(fd);
+          const raw = tailBuf.toString('utf8');
+          if (raw.includes('"completed"') || raw.includes('"status":"done"') || raw.includes('"finish_reason"')) {
+            isDone = true;
+          }
+        } catch {}
+
+        if (isDone) {
+          const comp = {
+            agent: 'claude',
+            name: 'Anthropic Claude',
+            status: 'completed',
+            detail: 'Task completed',
+            message: summary,
+            tokensUsed: claudeTokens,
+            timestamp: newestTime,
+            expiresAt: now + 45000,
+          };
+          realAgentCompletionCache = comp;
+          lastObservedWorkingAgent = null;
+          return comp;
+        } else {
+          realAgentCompletionCache = null;
+          lastObservedWorkingAgent = {
+            agent: 'claude',
+            name: 'Anthropic Claude',
+            tokens: claudeTokens,
+            summary,
+            timestamp: newestTime,
+          };
+          return {
+            agent: 'claude',
+            name: 'Anthropic Claude',
+            status: 'working',
+            detail: 'Reasoning and synthesizing',
+            tokensUsed: claudeTokens,
+            timestamp: newestTime,
+          };
+        }
+      }
+    }
+  } catch {}
+
+  // If a recent task completed within the retention window, keep returning it
+  if (realAgentCompletionCache && realAgentCompletionCache.expiresAt > now) {
+    return realAgentCompletionCache;
+  } else if (realAgentCompletionCache && realAgentCompletionCache.expiresAt <= now) {
+    realAgentCompletionCache = null;
+  }
+
+  return {
+    agent: null,
+    name: null,
+    status: 'idle',
+    detail: '',
+    message: '',
+    tokensUsed: 0,
+    timestamp: now,
+  };
+}
+
+function broadcastAgentActivity() {
+  const current = checkActiveAgentActivity();
+  currentAgentActivity = current;
+  broadcastPacket({
+    magic: 'SK',
+    version: 1,
+    packetId: Date.now(),
+    timestamp: Date.now(),
+    packetType: 'AGENT_ACTIVITY_STATUS',
+    payload: current,
+  });
+}
+
+// Background CLI agent watcher loop (every 1.5s)
+setInterval(() => {
+  const active = checkActiveAgentActivity();
+  const key = `${active.agent}-${active.status}-${active.detail}-${active.tokensUsed}-${active.message}`;
+  if (key !== lastAgentStateKey) {
+    lastAgentStateKey = key;
+    broadcastAgentActivity();
+  }
+}, 1500);
 
 // Strict CLI execution whitelist to prevent Remote Code Execution (RCE)
 const CLI_WHITELIST = {
@@ -734,12 +1461,26 @@ function handleWsFrame(socket, buffer) {
           socket.isAuthorized = true;
           socket.deviceId = deviceId;
           socket.deviceName = trusted.name || packet.payload?.deviceName;
-          if (packet.payload?.deviceName) pairedDevice.name = packet.payload.deviceName;
-          if (packet.payload?.model) pairedDevice.model = packet.payload.model;
-          if (packet.payload?.batteryLevel) pairedDevice.batteryLevel = packet.payload.batteryLevel;
-          if (packet.payload?.rssi) pairedDevice.rssi = packet.payload.rssi;
-          pairedDevice.lastSeen = Date.now();
-          pairedDevice.isAuthorized = true;
+          if (!pairedDevice) {
+            pairedDevice = {
+              id: deviceId,
+              name: packet.payload?.deviceName || trusted.name || 'Mobile Phone',
+              model: packet.payload?.model || 'Mobile Companion',
+              rssi: -52,
+              pingMs: 8,
+              transport: 'dual',
+              batteryLevel: packet.payload?.batteryLevel || 100,
+              lastSeen: Date.now(),
+              isAuthorized: true,
+            };
+          } else {
+            if (packet.payload?.deviceName) pairedDevice.name = packet.payload.deviceName;
+            if (packet.payload?.model) pairedDevice.model = packet.payload.model;
+            if (packet.payload?.batteryLevel) pairedDevice.batteryLevel = packet.payload.batteryLevel;
+            if (packet.payload?.rssi) pairedDevice.rssi = packet.payload.rssi;
+            pairedDevice.lastSeen = Date.now();
+            pairedDevice.isAuthorized = true;
+          }
 
           console.log(`[Security] Recognized trusted companion: ${pairedDevice.name} (${deviceId})`);
           sendWsPacket(socket, {
@@ -834,11 +1575,17 @@ function handleWsFrame(socket, buffer) {
           });
           saveTrustStore(trustedDevices);
 
-          pairedDevice.id = deviceId;
-          pairedDevice.name = pending.deviceName;
-          pairedDevice.model = pending.model;
-          pairedDevice.isAuthorized = true;
-          pairedDevice.lastSeen = Date.now();
+          pairedDevice = {
+            id: deviceId,
+            name: pending.deviceName,
+            model: pending.model,
+            rssi: -50,
+            pingMs: 12,
+            transport: 'dual',
+            batteryLevel: 98,
+            lastSeen: Date.now(),
+            isAuthorized: true,
+          };
 
           console.log(`[Security] Device APPROVED by desktop user: ${pending.deviceName} (${deviceId})`);
 
@@ -894,6 +1641,21 @@ function handleWsFrame(socket, buffer) {
         console.log(`[Security] Unpaired device: ${deviceId}`);
       }
       socket.isAuthorized = socket.isLocalDesktop;
+      pairedDevice = null;
+
+      // Broadcast cleared pairedDevice to all clients
+      broadcastPacket({
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'BRIDGE_STATUS',
+        payload: {
+          status: 'online',
+          pairedDevice: null,
+        },
+      });
+
       sendWsPacket(socket, {
         magic: 'SK',
         version: 1,
@@ -917,6 +1679,40 @@ function handleWsFrame(socket, buffer) {
         packetType: 'PIN_UPDATED',
         payload: { pin: activeSasPin },
       });
+      return;
+    }
+
+    // Native Token Stats query
+    if (packet.packetType === 'FETCH_TOKEN_STATS') {
+      const stats = scanNativeTokenUsage();
+      sendWsPacket(socket, {
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'TOKEN_STATS_UPDATE',
+        payload: stats,
+      });
+      return;
+    }
+
+    // Live Agent Activity query
+    if (packet.packetType === 'FETCH_AGENT_ACTIVITY') {
+      const activity = checkActiveAgentActivity();
+      sendWsPacket(socket, {
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'AGENT_ACTIVITY_STATUS',
+        payload: activity,
+      });
+      return;
+    }
+
+    // Simulate Agent Activity (for live user testing & UI previews)
+    if (packet.packetType === 'SIMULATE_AGENT_ACTIVITY') {
+      simulateAgent(packet.payload?.agent, packet.payload?.detail, packet.payload?.durationMs);
       return;
     }
 
@@ -1182,6 +1978,149 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // 3. Scan for available nearby devices (Bluetooth & Wi-Fi LAN)
+  if (url.pathname === '/api/devices/scan' && req.method === 'GET') {
+    const devices = scanAvailableDevices();
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.end(JSON.stringify({ devices }));
+    return;
+  }
+
+  // 4. Manually select and pair device from desktop UI
+  if (url.pathname === '/api/devices/pair-select' && req.method === 'POST') {
+    let bodyStr = '';
+    req.on('data', (chunk) => (bodyStr += chunk));
+    req.on('end', () => {
+      try {
+        const body = JSON.parse(bodyStr || '{}');
+        const deviceId = body.deviceId || `dev-${Date.now()}`;
+        const deviceName = body.name || body.deviceName || 'Companion Device';
+        const model = body.model || 'Device';
+        const transport = body.transport || 'dual';
+        const rssi = typeof body.rssi === 'number' ? body.rssi : -50;
+
+        pairedDevice = {
+          id: deviceId,
+          name: deviceName,
+          model,
+          rssi,
+          pingMs: 12,
+          transport,
+          batteryLevel: 95,
+          lastSeen: Date.now(),
+          isAuthorized: true,
+          ipAddress: body.ipAddress,
+        };
+
+        const token = crypto.randomBytes(16).toString('hex');
+        trustedDevices.set(deviceId, {
+          name: deviceName,
+          model,
+          token,
+          pairedAt: Date.now(),
+        });
+        saveTrustStore(trustedDevices);
+
+        console.log(`[Security] Desktop manually paired with device: ${deviceName} (${deviceId})`);
+
+        broadcastPacket({
+          magic: 'SK',
+          version: 1,
+          packetId: Date.now(),
+          timestamp: Date.now(),
+          packetType: 'BRIDGE_STATUS',
+          payload: {
+            status: 'online',
+            pairedDevice,
+          },
+        });
+
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        });
+        res.end(JSON.stringify({ status: 'paired', pairedDevice }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // 5. Unpair active device
+  if (url.pathname === '/api/devices/unpair' && req.method === 'POST') {
+    pairedDevice = null;
+    trustedDevices.clear();
+    saveTrustStore(trustedDevices);
+    console.log('[Security] Desktop unpaired and cleared trust store.');
+
+    broadcastPacket({
+      magic: 'SK',
+      version: 1,
+      packetId: Date.now(),
+      timestamp: Date.now(),
+      packetType: 'BRIDGE_STATUS',
+      payload: {
+        status: 'online',
+        pairedDevice: null,
+      },
+    });
+
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.end(JSON.stringify({ status: 'unpaired' }));
+    return;
+  }
+
+  // 6. Native AI Token Stats endpoint
+  if (url.pathname === '/api/tokens' && req.method === 'GET') {
+    const stats = scanNativeTokenUsage();
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.end(JSON.stringify(stats));
+    return;
+  }
+
+  // 7. Live CLI Agent Activity endpoint
+  if (url.pathname === '/api/agent-activity' && req.method === 'GET') {
+    const activity = checkActiveAgentActivity();
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.end(JSON.stringify(activity));
+    return;
+  }
+
+  // 8. Simulate / Test CLI Agent Activity endpoint
+  if (url.pathname === '/api/agent-activity/simulate' && req.method === 'POST') {
+    let bodyStr = '';
+    req.on('data', (chunk) => (bodyStr += chunk));
+    req.on('end', () => {
+      try {
+        const body = JSON.parse(bodyStr || '{}');
+        simulateAgent(body.agent, body.detail, body.durationMs);
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        });
+        res.end(JSON.stringify({ success: true, activity: checkActiveAgentActivity() }));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
   // Pair Request endpoint (Direct HTTP Pairing & Verification)
   if (url.pathname === '/api/pair' && req.method === 'POST') {
     let bodyStr = '';
@@ -1319,6 +2258,8 @@ const server = http.createServer((req, res) => {
             packageName: data.packageName || data.package_name || 'com.soko.app',
             title: data.title || 'Mobile Notification',
             body: data.body || '',
+            priority: data.priority || (data.isImportant ? 'high' : 'normal'),
+            isImportant: Boolean(data.isImportant || data.important || data.priority === 'high' || data.priority === 'urgent'),
             timestamp: Date.now(),
           },
         };

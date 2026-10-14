@@ -18,6 +18,7 @@
     "bridge": "node scripts/soko_bridge.js",
     "start": "node scripts/soko_bridge.js",
     "test": "node scripts/test_integration.js",
+    "test:island": "node scripts/test_idle_and_agent_completion.js",
     "version:bump": "node scripts/update_version.js"
   },
   "keywords": [
