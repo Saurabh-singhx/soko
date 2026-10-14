@@ -2,7 +2,12 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
-  openSettings: () => ipcRenderer.send('soko:open-settings'),
+  openSettings: (tab) => ipcRenderer.send('soko:open-settings', tab),
+  onSwitchSettingsTab: (callback) => {
+    const handler = (_event, tab) => callback(tab);
+    ipcRenderer.on('soko:switch-settings-tab', handler);
+    return () => ipcRenderer.removeListener('soko:switch-settings-tab', handler);
+  },
   closeSettings: () => ipcRenderer.send('soko:close-settings'),
   openTransfersFolder: () => ipcRenderer.send('soko:open-transfers'),
   openFile: (filename) => ipcRenderer.send('soko:open-file', filename),

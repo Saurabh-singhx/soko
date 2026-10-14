@@ -17,18 +17,21 @@ import {
   Terminal,
   FolderDown,
   Sparkles,
+  Headphones,
+  ArrowLeft,
+  CheckCircle2,
+  Zap,
 } from 'lucide-react';
-import { ConnectionStatus, PairedDevice } from '../../types/index.ts';
+import { ConnectionStatus, PairedDevice, DiscoveredDevice, AiTokenSummary } from '../../types/index.ts';
 import { connectionService } from '../../services/connection.ts';
 
 interface ConnectionPopoverProps {
   status: ConnectionStatus;
   device: PairedDevice | null;
   sasPin: string;
-  onScanAndConnect: () => void;
   onDisconnect: () => void;
   onRegeneratePin: () => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (tab?: string) => void;
   onClose: () => void;
 }
 
@@ -43,7 +46,6 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
   status,
   device,
   sasPin,
-  onScanAndConnect,
   onDisconnect,
   onRegeneratePin,
   onOpenSettings,
@@ -60,12 +62,65 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
     } catch {}
     return 60000;
   });
+  const [discoveredDevices, setDiscoveredDevices] = useState<DiscoveredDevice[]>([]);
+  const [isScanningDevices, setIsScanningDevices] = useState(false);
+  const [selectedDeviceToPair, setSelectedDeviceToPair] = useState<DiscoveredDevice | null>(null);
+  const [isPairingInFlight, setIsPairingInFlight] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isConnected = status === 'connected';
-  const isScanning = status === 'scanning' || status === 'connecting';
+  const isScanning = isScanningDevices || status === 'scanning' || status === 'connecting';
   const localIps = connectionService.getLocalIps();
   const primaryIp = localIps[0] || '192.168.31.210';
   const mobileUrl = `http://${primaryIp}:8766`;
+
+  const fetchDiscoveredDevices = async () => {
+    setIsScanningDevices(true);
+    try {
+      const list = await connectionService.scanForDevices();
+      setDiscoveredDevices(list);
+    } catch (e) {
+      console.warn('Failed to scan devices:', e);
+    } finally {
+      setIsScanningDevices(false);
+    }
+  };
+
+  React.useEffect(() => {
+    if (!isConnected) {
+      fetchDiscoveredDevices();
+    }
+  }, [isConnected]);
+
+  const [tokenSummary, setTokenSummary] = useState<AiTokenSummary | null>(() => connectionService.getTokenSummary());
+
+  React.useEffect(() => {
+    const unsubTokens = connectionService.subscribeTokenStats((stats) => {
+      setTokenSummary(stats);
+    });
+    if (!connectionService.getTokenSummary()) {
+      connectionService.fetchTokenSummary().catch(() => {});
+    }
+    return unsubTokens;
+  }, []);
+
+  const formatTokens = (num: number) => {
+    if (num >= 1_000_000_000) return `${(num / 1_000_000_000).toFixed(2)}B`;
+    if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(2)}M`;
+    if (num >= 1_000) return `${(num / 1_000).toFixed(1)}k`;
+    return num.toLocaleString();
+  };
+
+  const handleConfirmPair = async () => {
+    if (!selectedDeviceToPair) return;
+    setIsPairingInFlight(true);
+    try {
+      await connectionService.pairWithDevice(selectedDeviceToPair, sasPin);
+      setSelectedDeviceToPair(null);
+    } finally {
+      setIsPairingInFlight(false);
+    }
+  };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -172,31 +227,163 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
                 </span>
               </div>
             </div>
-          ) : isScanning ? (
-            <div className="flex flex-col items-center justify-center py-4 gap-2 text-center">
-              <RefreshCw size={22} className="text-[#5E6AD2] animate-spin" />
-              <h4 className="text-xs font-semibold text-white">Scanning for Companion...</h4>
-              <p className="text-[10px] text-linear-text-secondary max-w-[220px]">
-                Searching for mobile companion on your local Wi-Fi or Bluetooth mesh.
-              </p>
+          ) : selectedDeviceToPair ? (
+            <div className="flex flex-col gap-2.5">
+              <div className="flex items-center justify-between pb-2 border-b border-white/[0.08]">
+                <button
+                  onClick={() => setSelectedDeviceToPair(null)}
+                  className="flex items-center gap-1 text-[11px] text-linear-text-secondary hover:text-white transition-colors"
+                >
+                  <ArrowLeft size={12} />
+                  <span>Back to list</span>
+                </button>
+                <span className="text-[10px] font-mono font-medium text-amber-400 bg-amber-500/15 px-1.5 py-0.5 rounded border border-amber-500/30">
+                  Pairing SAS
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-[#5E6AD2]/20 border border-[#5E6AD2]/35 flex items-center justify-center text-[#5E6AD2]">
+                  {selectedDeviceToPair.transport === 'ble' ? (
+                    selectedDeviceToPair.name.toLowerCase().includes('bud') ||
+                    selectedDeviceToPair.name.toLowerCase().includes('ear') ? (
+                      <Headphones size={16} />
+                    ) : (
+                      <Bluetooth size={16} />
+                    )
+                  ) : (
+                    <Smartphone size={16} />
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h4 className="text-xs font-semibold text-white tracking-tight truncate">
+                    {selectedDeviceToPair.name}
+                  </h4>
+                  <span className="text-[10px] text-linear-text-secondary block font-mono truncate">
+                    {selectedDeviceToPair.model}
+                  </span>
+                </div>
+              </div>
+
+              {/* 6-Digit PIN Verification Code Card */}
+              <div className="bg-black/50 border border-white/[0.08] rounded-xl p-2.5 flex flex-col items-center justify-center gap-1 text-center">
+                <span className="text-[9.5px] uppercase font-mono tracking-wider text-linear-text-tertiary flex items-center gap-1">
+                  <ShieldCheck size={11} className="text-emerald-400" /> Verify SAS Pairing PIN
+                </span>
+                <span className="text-base font-mono font-bold tracking-widest text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-lg border border-emerald-500/25 my-0.5">
+                  {sasPin}
+                </span>
+                <span className="text-[9.5px] text-linear-text-tertiary">
+                  Confirm PIN code matches your companion device
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  onClick={() => setSelectedDeviceToPair(null)}
+                  className="flex-1 py-1.5 px-2 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-linear-text-secondary hover:text-white text-[11px] font-medium border border-white/[0.08] transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirmPair}
+                  disabled={isPairingInFlight}
+                  className="flex-1 py-1.5 px-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black text-[11px] font-semibold shadow-[0_0_16px_rgba(52,211,153,0.35)] active:scale-95 transition-all flex items-center justify-center gap-1.5 disabled:opacity-60"
+                >
+                  {isPairingInFlight ? (
+                    <RefreshCw size={12} className="animate-spin" />
+                  ) : (
+                    <CheckCircle2 size={13} />
+                  )}
+                  <span>Confirm Link</span>
+                </button>
+              </div>
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center py-3.5 gap-2 text-center">
-              <div className="w-8 h-8 rounded-full bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400">
-                <Power size={14} />
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between pb-1.5 border-b border-white/[0.06]">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-semibold text-white tracking-tight">Available Devices</span>
+                  <span className="text-[9.5px] font-mono text-linear-text-tertiary">
+                    ({discoveredDevices.length})
+                  </span>
+                </div>
+                <button
+                  onClick={fetchDiscoveredDevices}
+                  disabled={isScanning}
+                  className="flex items-center gap-1 text-[10.5px] text-[#5E6AD2] hover:text-[#7C88E8] font-mono transition-colors disabled:opacity-50"
+                  title="Rescan nearby devices"
+                >
+                  <RefreshCw size={11} className={isScanning ? 'animate-spin' : ''} />
+                  <span>{isScanning ? 'Scanning...' : 'Scan'}</span>
+                </button>
               </div>
-              <div>
-                <h4 className="text-xs font-semibold text-white">Device Disconnected</h4>
-                <p className="text-[10px] text-linear-text-secondary">
-                  No companion device currently linked.
-                </p>
-              </div>
-              <button
-                onClick={onScanAndConnect}
-                className="mt-1 px-3.5 py-1.5 rounded-lg bg-[#5E6AD2] hover:bg-[#6875E3] text-white text-[11px] font-medium shadow-[0_0_16px_rgba(94,106,210,0.4)] active:scale-95 transition-all duration-150"
-              >
-                Scan & Connect
-              </button>
+
+              {isScanning && discoveredDevices.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-5 gap-2 text-center">
+                  <RefreshCw size={18} className="text-[#5E6AD2] animate-spin" />
+                  <span className="text-xs font-medium text-white">Scanning for nearby devices...</span>
+                  <span className="text-[10px] text-linear-text-tertiary">
+                    Checking Bluetooth peripherals & local Wi-Fi companions
+                  </span>
+                </div>
+              ) : discoveredDevices.length > 0 ? (
+                <div className="flex flex-col gap-1.5 max-h-[160px] overflow-y-auto pr-0.5 custom-scrollbar">
+                  {discoveredDevices.map((dev) => (
+                    <div
+                      key={dev.id}
+                      className="group flex items-center justify-between p-2 rounded-xl bg-black/30 hover:bg-white/[0.06] border border-white/[0.06] hover:border-white/[0.12] transition-all"
+                    >
+                      <div className="flex items-center gap-2 min-w-0 mr-2">
+                        <div className="w-7 h-7 rounded-lg bg-white/[0.05] border border-white/[0.08] flex items-center justify-center text-[#5E6AD2] shrink-0">
+                          {dev.transport === 'ble' ? (
+                            dev.name.toLowerCase().includes('bud') || dev.name.toLowerCase().includes('ear') ? (
+                              <Headphones size={13} />
+                            ) : (
+                              <Bluetooth size={13} />
+                            )
+                          ) : (
+                            <Wifi size={13} className="text-emerald-400" />
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <h5 className="text-[11px] font-semibold text-white truncate">{dev.name}</h5>
+                          <div className="flex items-center gap-1.5 text-[9.5px] text-linear-text-tertiary font-mono">
+                            <span>{dev.transport === 'ble' ? 'BLE 5.3' : 'Wi-Fi LAN'}</span>
+                            <span>•</span>
+                            <span>{dev.rssi} dBm</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => setSelectedDeviceToPair(dev)}
+                        className="px-2.5 py-1 rounded-lg bg-[#5E6AD2] hover:bg-[#6875E3] text-white text-[10.5px] font-semibold shrink-0 shadow-[0_0_12px_rgba(94,106,210,0.3)] active:scale-95 transition-all"
+                      >
+                        Pair
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-4 gap-2 text-center">
+                  <div className="w-8 h-8 rounded-full bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400">
+                    <Power size={14} />
+                  </div>
+                  <div>
+                    <h5 className="text-xs font-semibold text-white">No Devices Detected</h5>
+                    <p className="text-[10px] text-linear-text-secondary mt-0.5">
+                      Turn on Bluetooth or connect companion to local Wi-Fi.
+                    </p>
+                  </div>
+                  <button
+                    onClick={fetchDiscoveredDevices}
+                    className="mt-1 px-3 py-1 rounded-lg bg-[#5E6AD2] hover:bg-[#6875E3] text-white text-[10.5px] font-medium shadow-[0_0_12px_rgba(94,106,210,0.3)] active:scale-95 transition-all"
+                  >
+                    Scan Again
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -261,6 +448,59 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
           className="hidden"
           onChange={handleFileSelect}
         />
+
+        {/* Native AI Token Telemetry Quick Glance */}
+        <div
+          onClick={() => {
+            onClose();
+            onOpenSettings('tokens');
+          }}
+          className="group cursor-pointer bg-white/[0.035] hover:bg-white/[0.06] border border-white/[0.08] hover:border-[#5E6AD2]/40 rounded-xl p-2.5 backdrop-blur-xl transition-all duration-200 flex flex-col gap-1.5 shadow-sm hover:shadow-[0_0_16px_rgba(94,106,210,0.15)]"
+          title="Click to view AI Token Telemetry dashboard"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <div className="w-5 h-5 rounded-md bg-[#5E6AD2]/20 border border-[#5E6AD2]/35 flex items-center justify-center text-[#7C88E8] group-hover:scale-110 transition-transform">
+                <Zap size={11} className="text-[#5E6AD2]" />
+              </div>
+              <span className="text-[11px] font-semibold text-white tracking-tight flex items-center gap-1.5">
+                AI Token Telemetry
+                <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                  Native
+                </span>
+              </span>
+            </div>
+            <span className="text-[10px] text-[#7C88E8] group-hover:text-white font-mono flex items-center gap-0.5 transition-colors">
+              Details &rarr;
+            </span>
+          </div>
+
+          <div className="flex items-center justify-between pt-1 border-t border-white/[0.05] text-[10px] font-mono">
+            <div className="flex flex-col">
+              <span className="text-[8.5px] uppercase text-linear-text-tertiary">Today's Tokens</span>
+              <span className="text-white font-bold text-xs tracking-tight">
+                {tokenSummary ? formatTokens(tokenSummary.todayTokens) : '...'}
+              </span>
+            </div>
+            <div className="flex items-center gap-1 text-[9px] text-linear-text-secondary">
+              {tokenSummary?.byPlatform?.antigravity?.sessionsCount ? (
+                <span className="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-300 border border-blue-500/25">
+                  Antigravity
+                </span>
+              ) : null}
+              {tokenSummary?.byPlatform?.codex?.sessionsCount ? (
+                <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">
+                  Codex
+                </span>
+              ) : null}
+              {tokenSummary?.byPlatform?.claude?.sessionsCount ? (
+                <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/25">
+                  Claude
+                </span>
+              ) : null}
+            </div>
+          </div>
+        </div>
 
         {/* Quick Workstation Actions (Glassmorphic Buttons with Glows) */}
         <div>
@@ -391,7 +631,7 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
         )}
 
         <button
-          onClick={onOpenSettings}
+          onClick={() => onOpenSettings()}
           className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-white bg-white/[0.08] hover:bg-white/[0.14] text-[11px] font-semibold border border-white/[0.12] hover:border-white/20 hover:shadow-[0_0_14px_rgba(255,255,255,0.15)] active:scale-[0.96] transition-all duration-150 ml-auto"
         >
           <span>Open Settings</span>

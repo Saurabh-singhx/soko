@@ -31,6 +31,8 @@ export interface MirroredNotification {
   timestamp: number;
   iconBase64?: string;
   hasReplyAction?: boolean;
+  priority?: 'high' | 'normal' | 'low' | string;
+  isImportant?: boolean;
 }
 
 export interface CliProcessStatus {
@@ -74,6 +76,17 @@ export interface BluetoothDevice {
 export type ConnectionStatus = 'disconnected' | 'scanning' | 'connecting' | 'connected';
 export type TransportProtocol = 'ble' | 'wifi' | 'dual';
 
+export interface DiscoveredDevice {
+  id: string;
+  name: string;
+  model: string;
+  rssi: number;
+  transport: TransportProtocol;
+  isPaired?: boolean;
+  ipAddress?: string;
+  mac?: string;
+}
+
 export interface PairedDevice {
   id: string;
   name: string;
@@ -101,6 +114,8 @@ export interface SokoPacketEnvelope {
     | 'PAIR_DECISION'
     | 'PAIR_CONFIRM'
     | 'PAIR_REJECT'
+    | 'UNPAIR_REQUEST'
+    | 'UNPAIR_CONFIRM'
     | 'REGENERATE_PIN'
     | 'PIN_UPDATED'
     | 'NOTIFICATION_POST'
@@ -114,8 +129,63 @@ export interface SokoPacketEnvelope {
     | 'FILE_CANCEL'
     | 'FILE_FAILED'
     | 'FILE_RETRY'
-    | 'AUDIO_STATUS';
+    | 'AUDIO_STATUS'
+    | 'FETCH_TOKEN_STATS'
+    | 'TOKEN_STATS_UPDATE'
+    | 'FETCH_AGENT_ACTIVITY'
+    | 'AGENT_ACTIVITY_STATUS'
+    | 'SIMULATE_AGENT_ACTIVITY';
   payload: Record<string, any>;
+}
+
+export type CliAgentId = 'antigravity' | 'codex' | 'claude' | null;
+
+export interface AgentActivityStatus {
+  agent: CliAgentId;
+  name: string | null;
+  status: 'working' | 'thinking' | 'completed' | 'idle';
+  detail?: string;
+  message?: string;
+  tokensUsed?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  timestamp: number;
+}
+
+export interface AssistantTokenStats {
+  id: 'antigravity' | 'codex' | 'claude' | 'other';
+  name: string;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  todayTokens: number;
+  sessionsCount: number;
+  color: string;
+}
+
+export interface RecentTokenSession {
+  id: string;
+  assistant: string;
+  model?: string;
+  tokens: number;
+  timestamp: number;
+  summary?: string;
+}
+
+export interface AiTokenSummary {
+  totalTokens: number;
+  todayTokens: number;
+  cachedTokens?: number;
+  totalSessions?: number;
+  byPlatform?: {
+    antigravity?: AssistantTokenStats;
+    codex?: AssistantTokenStats;
+    claude?: AssistantTokenStats;
+  };
+  assistants: AssistantTokenStats[];
+  recentSessions: RecentTokenSession[];
+  lastUpdated: number;
 }
 
 export interface AudioStreamStatus {

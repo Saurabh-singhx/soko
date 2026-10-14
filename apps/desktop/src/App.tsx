@@ -38,9 +38,14 @@ export const App: React.FC = () => {
     };
   }, []);
 
-  const handleOpenSettings = () => {
+  const handleOpenSettings = (tab?: string) => {
+    if (tab) {
+      try {
+        localStorage.setItem('soko_settings_initial_tab', tab);
+      } catch {}
+    }
     if ((window as any).electronAPI?.openSettings) {
-      (window as any).electronAPI.openSettings();
+      (window as any).electronAPI.openSettings(tab);
     } else {
       setCurrentView('settings');
     }

@@ -850,6 +850,56 @@
         </div>
       </div>
 
+      <!-- Native AI Token Telemetry Card -->
+      <div class="card" id="tokenTrackerCard">
+        <div class="card-title">
+          <div class="card-title-left">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6366F1" stroke-width="2">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+            </svg>
+            <span>AI Token Telemetry</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <span class="badge green">Native</span>
+            <button onclick="fetchMobileTokenStats()" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; padding: 4px; display: flex; align-items: center;" title="Refresh Tokens">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <p style="font-size: 12px; color: var(--text-secondary); line-height: 1.4; margin-bottom: 12px;">
+          Native telemetry tracking token usage across Antigravity, OpenAI Codex CLI, and Claude transcripts without external dependencies.
+        </p>
+
+        <!-- Metric Grid -->
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 12px;">
+          <div style="background: rgba(0,0,0,0.35); border: 1px solid var(--border-subtle); border-radius: 12px; padding: 10px 12px;">
+            <div style="font-size: 10px; font-weight: 600; text-transform: uppercase; color: var(--text-tertiary); letter-spacing: 0.5px;">Today's Tokens</div>
+            <div id="mobTodayTokens" style="font-size: 18px; font-weight: 700; color: #fff; font-family: ui-monospace, monospace; margin-top: 2px;">--</div>
+          </div>
+          <div style="background: rgba(0,0,0,0.35); border: 1px solid var(--border-subtle); border-radius: 12px; padding: 10px 12px;">
+            <div style="font-size: 10px; font-weight: 600; text-transform: uppercase; color: var(--text-tertiary); letter-spacing: 0.5px;">All-Time Total</div>
+            <div id="mobTotalTokens" style="font-size: 18px; font-weight: 700; color: #A5B4FC; font-family: ui-monospace, monospace; margin-top: 2px;">--</div>
+          </div>
+          <div style="background: rgba(0,0,0,0.35); border: 1px solid var(--border-subtle); border-radius: 12px; padding: 10px 12px;">
+            <div style="font-size: 10px; font-weight: 600; text-transform: uppercase; color: var(--text-tertiary); letter-spacing: 0.5px;">Cached Prompt</div>
+            <div id="mobCachedTokens" style="font-size: 14px; font-weight: 700; color: #34D399; font-family: ui-monospace, monospace; margin-top: 2px;">--</div>
+          </div>
+          <div style="background: rgba(0,0,0,0.35); border: 1px solid var(--border-subtle); border-radius: 12px; padding: 10px 12px;">
+            <div style="font-size: 10px; font-weight: 600; text-transform: uppercase; color: var(--text-tertiary); letter-spacing: 0.5px;">Total Sessions</div>
+            <div id="mobSessionCount" style="font-size: 14px; font-weight: 700; color: #FBBF24; font-family: ui-monospace, monospace; margin-top: 2px;">--</div>
+          </div>
+        </div>
+
+        <!-- Platform Breakdown List -->
+        <div id="mobPlatformBreakdown" style="display: flex; flex-direction: column; gap: 8px;">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+
     </div>
 
     <!-- ============================================================ -->
@@ -1579,6 +1629,11 @@
           }
 
           startHeartbeat();
+          try {
+            sendPacket('FETCH_TOKEN_STATS', {});
+            sendPacket('FETCH_AGENT_ACTIVITY', {});
+            fetchMobileTokenStats();
+          } catch(e) {}
         };
 
         ws.onmessage = (e) => {
@@ -1720,6 +1775,142 @@
         }
       } else if (packet.packetType === 'AUDIO_STATUS') {
         updateDesktopAudioIndicator(packet.payload);
+      } else if (packet.packetType === 'TOKEN_STATS_UPDATE') {
+        renderTokenStats(packet.payload);
+      } else if (packet.packetType === 'AGENT_ACTIVITY_STATUS') {
+        renderAgentActivity(packet.payload);
+      }
+    }
+
+    // ============================================================
+    // CLI AGENT TASK EYE ANIMATION (Antigravity, Codex, Claude)
+    // ============================================================
+    let currentAgentEyeTimer = null;
+    function renderAgentActivity(activity) {
+      const left = document.getElementById('eyeLeft');
+      const right = document.getElementById('eyeRight');
+      if (!left || !right) return;
+
+      if (currentAgentEyeTimer) {
+        clearTimeout(currentAgentEyeTimer);
+        currentAgentEyeTimer = null;
+      }
+
+      if (!activity || !activity.activeAgent) {
+        // Fallback to normal white
+        left.style.background = '#FFFFFF';
+        left.style.boxShadow = '0 0 6px rgba(255, 255, 255, 0.8)';
+        right.style.background = '#FFFFFF';
+        right.style.boxShadow = '0 0 6px rgba(255, 255, 255, 0.8)';
+        left.style.borderRadius = '2.5px';
+        right.style.borderRadius = '2.5px';
+        return;
+      }
+
+      const agent = activity.activeAgent;
+      let eyeColor = '#FFFFFF';
+      let shadowColor = 'rgba(255, 255, 255, 0.8)';
+
+      if (agent === 'antigravity') {
+        eyeColor = '#38BDF8'; // Electric Cyan
+        shadowColor = 'rgba(56, 189, 248, 0.85)';
+      } else if (agent === 'codex') {
+        eyeColor = '#10A37F'; // Cyber Emerald
+        shadowColor = 'rgba(16, 163, 127, 0.85)';
+      } else if (agent === 'claude') {
+        eyeColor = '#F59E0B'; // Sunset Amber
+        shadowColor = 'rgba(245, 158, 11, 0.85)';
+      }
+
+      left.style.background = eyeColor;
+      left.style.boxShadow = `0 0 8px ${shadowColor}`;
+      right.style.background = eyeColor;
+      right.style.boxShadow = `0 0 8px ${shadowColor}`;
+
+      if (activity.status === 'completed') {
+        left.style.height = '4px';
+        right.style.height = '4px';
+        currentAgentEyeTimer = setTimeout(() => {
+          left.style.height = '10px';
+          right.style.height = '10px';
+          left.style.background = '#FFFFFF';
+          left.style.boxShadow = '0 0 6px rgba(255, 255, 255, 0.8)';
+          right.style.background = '#FFFFFF';
+          right.style.boxShadow = '0 0 6px rgba(255, 255, 255, 0.8)';
+        }, 2500);
+      } else {
+        left.style.height = '10px';
+        right.style.height = '10px';
+      }
+    }
+
+    // ============================================================
+    // NATIVE AI TOKEN TELEMETRY (Antigravity, Codex, Claude)
+    // ============================================================
+    function formatTokenCount(num) {
+      if (typeof num !== 'number' || isNaN(num)) return '0';
+      if (num >= 1_000_000_000) return (num / 1_000_000_000).toFixed(2) + 'B';
+      if (num >= 1_000_000) return (num / 1_000_000).toFixed(2) + 'M';
+      if (num >= 1_000) return (num / 1_000).toFixed(1) + 'k';
+      return num.toLocaleString();
+    }
+
+    function renderTokenStats(stats) {
+      if (!stats) return;
+      const todayEl = document.getElementById('mobTodayTokens');
+      const totalEl = document.getElementById('mobTotalTokens');
+      const cachedEl = document.getElementById('mobCachedTokens');
+      const sessionEl = document.getElementById('mobSessionCount');
+      const container = document.getElementById('mobPlatformBreakdown');
+
+      if (todayEl) todayEl.innerText = formatTokenCount(stats.todayTokens);
+      if (totalEl) totalEl.innerText = formatTokenCount(stats.totalTokens);
+      if (cachedEl) cachedEl.innerText = formatTokenCount(stats.cachedTokens);
+      if (sessionEl) sessionEl.innerText = (stats.totalSessions || 0).toLocaleString();
+
+      if (container && stats.byPlatform) {
+        let html = '';
+        const platforms = [
+          { key: 'antigravity', name: 'Google Antigravity', color: '#60A5FA' },
+          { key: 'codex', name: 'OpenAI Codex CLI', color: '#34D399' },
+          { key: 'claude', name: 'Anthropic Claude', color: '#FBBF24' },
+        ];
+        platforms.forEach(p => {
+          const data = stats.byPlatform[p.key];
+          if (!data || !data.sessionCount) return;
+          const pct = stats.totalTokens > 0 ? Math.round((data.totalTokens / stats.totalTokens) * 100) : 0;
+          html += `
+            <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-subtle); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px;">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <span style="width: 8px; height: 8px; border-radius: 50%; background: ${p.color};"></span>
+                  <span style="font-size: 12px; font-weight: 600; color: #fff;">${p.name}</span>
+                </div>
+                <span style="font-size: 11px; font-weight: 700; color: ${p.color}; font-family: ui-monospace, monospace;">${formatTokenCount(data.totalTokens)}</span>
+              </div>
+              <div style="width: 100%; height: 4px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden;">
+                <div style="width: ${pct}%; height: 100%; background: ${p.color}; border-radius: 2px;"></div>
+              </div>
+              <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-tertiary); font-family: ui-monospace, monospace;">
+                <span>In: ${formatTokenCount(data.inputTokens)} • Out: ${formatTokenCount(data.outputTokens)}</span>
+                <span>${data.sessionCount} sessions (${pct}%)</span>
+              </div>
+            </div>
+          `;
+        });
+        container.innerHTML = html;
+      }
+    }
+
+    async function fetchMobileTokenStats() {
+      try {
+        const res = await fetch(`${getHttpBaseUrl()}/api/tokens`);
+        if (res.ok) {
+          const stats = await res.json();
+          renderTokenStats(stats);
+        }
+      } catch (e) {
+        // ignore network error
       }
     }
 
@@ -2451,6 +2642,8 @@
       });
 
       connectWs();
+      fetchMobileTokenStats();
+      setInterval(fetchMobileTokenStats, 20000);
     });
   </script>
 </body>

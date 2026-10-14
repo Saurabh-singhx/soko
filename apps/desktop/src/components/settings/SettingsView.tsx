@@ -27,17 +27,34 @@ import {
   ArrowDownLeft,
   Clock,
   Sparkles,
+  Bluetooth,
+  Wifi,
+  Headphones,
+  ArrowLeft,
+  Zap,
+  Cpu,
+  Database,
+  Layers,
 } from 'lucide-react';
 import { connectionService } from '../../services/connection.ts';
 import { autoUpdateService, UpdateInfo, CURRENT_VERSION } from '../../services/updater.ts';
-import { ConnectionStatus, PairedDevice, FileTransferStatus, TransferHistoryItem } from '../../types/index.ts';
+import { ConnectionStatus, PairedDevice, DiscoveredDevice, FileTransferStatus, TransferHistoryItem, AiTokenSummary, AgentActivityStatus } from '../../types/index.ts';
 
 interface SettingsViewProps {
   onClose?: () => void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
-  const [activeTab, setActiveTab] = useState<'general' | 'pairing' | 'cli' | 'files' | 'security' | 'mascot' | 'updates'>('pairing');
+  const [activeTab, setActiveTab] = useState<'general' | 'pairing' | 'tokens' | 'cli' | 'files' | 'security' | 'mascot' | 'updates'>(() => {
+    try {
+      const stored = localStorage.getItem('soko_settings_initial_tab');
+      if (stored && ['general', 'pairing', 'tokens', 'cli', 'files', 'security', 'mascot', 'updates'].includes(stored)) {
+        localStorage.removeItem('soko_settings_initial_tab');
+        return stored as any;
+      }
+    } catch {}
+    return 'pairing';
+  });
   const [autoStartEnabled, setAutoStartEnabled] = useState<boolean>(true);
   const [isSavingAutoStart, setIsSavingAutoStart] = useState<boolean>(false);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(autoUpdateService.getCachedUpdateInfo());
@@ -54,6 +71,35 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
     } catch {}
     return 60000;
   });
+
+  useEffect(() => {
+    const cleanup = (window as any).electronAPI?.onSwitchSettingsTab?.((tab: any) => {
+      if (['general', 'pairing', 'tokens', 'cli', 'files', 'security', 'mascot', 'updates'].includes(tab)) {
+        setActiveTab(tab);
+      }
+    });
+    return () => cleanup?.();
+  }, []);
+  const [cursorTrackingEnabled, setCursorTrackingEnabled] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem('soko_cursor_tracking');
+      return stored !== null ? stored !== 'false' : true;
+    } catch {
+      return true;
+    }
+  });
+  const [agentActivity, setAgentActivity] = useState<AgentActivityStatus | null>(() =>
+    connectionService.getAgentActivity()
+  );
+
+  const handleToggleCursorTracking = () => {
+    const nextVal = !cursorTrackingEnabled;
+    setCursorTrackingEnabled(nextVal);
+    try {
+      localStorage.setItem('soko_cursor_tracking', String(nextVal));
+      window.dispatchEvent(new Event('soko:cursor-tracking-changed'));
+    } catch {}
+  };
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>(
     connectionService.getStatus()
   );
@@ -73,6 +119,52 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
     connectionService.getTransferHistory()
   );
   const [historyNotice, setHistoryNotice] = useState<string | null>(null);
+
+  const [discoveredDevices, setDiscoveredDevices] = useState<DiscoveredDevice[]>([]);
+  const [isScanningDevices, setIsScanningDevices] = useState(false);
+  const [selectedDeviceToPair, setSelectedDeviceToPair] = useState<DiscoveredDevice | null>(null);
+  const [isPairingInFlight, setIsPairingInFlight] = useState(false);
+
+  const fetchDiscoveredDevices = async () => {
+    setIsScanningDevices(true);
+    try {
+      const list = await connectionService.scanForDevices();
+      setDiscoveredDevices(list);
+    } catch (e) {
+      console.warn('Failed to scan devices:', e);
+    } finally {
+      setIsScanningDevices(false);
+    }
+  };
+
+  useEffect(() => {
+    if (connectionStatus !== 'connected' && activeTab === 'pairing') {
+      fetchDiscoveredDevices();
+    }
+  }, [connectionStatus, activeTab]);
+
+  const handleConfirmPair = async () => {
+    if (!selectedDeviceToPair) return;
+    setIsPairingInFlight(true);
+    try {
+      await connectionService.pairWithDevice(selectedDeviceToPair, pairingPin);
+      setSelectedDeviceToPair(null);
+    } finally {
+      setIsPairingInFlight(false);
+    }
+  };
+
+  const [tokenSummary, setTokenSummary] = useState<AiTokenSummary | null>(connectionService.getTokenSummary());
+  const [isLoadingTokens, setIsLoadingTokens] = useState(false);
+
+  const refreshTokens = async () => {
+    setIsLoadingTokens(true);
+    try {
+      await connectionService.fetchTokenSummary();
+    } finally {
+      setIsLoadingTokens(false);
+    }
+  };
 
   useEffect(() => {
     const unsubStatus = connectionService.subscribeStatus((status, dev) => {
@@ -94,11 +186,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
       setTransferHistory(history);
     });
 
+    const unsubTokens = connectionService.subscribeTokenStats((stats) => {
+      setTokenSummary(stats);
+    });
+
+    const unsubAgent = connectionService.subscribeAgentActivity((status) => {
+      setAgentActivity(status);
+    });
+
     return () => {
       unsubStatus();
       unsubBridge();
       unsubTransfer();
       unsubHistory();
+      unsubTokens();
+      unsubAgent();
     };
   }, []);
 
@@ -221,6 +323,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 <span>Device Pairing</span>
               </div>
               <span className="linear-kbd">2</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('tokens')}
+              className={`flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs font-medium tracking-tight transition-colors ${
+                activeTab === 'tokens'
+                  ? 'bg-white/[0.08] text-white shadow-hairline'
+                  : 'text-linear-text-secondary hover:text-white hover:bg-white/[0.04]'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Zap size={14} className={activeTab === 'tokens' ? 'text-amber-400' : 'text-linear-text-tertiary'} />
+                <span>AI Token Tracker</span>
+              </div>
+              <span className="text-[10px] font-mono text-emerald-400 font-semibold px-1 rounded bg-emerald-500/10 border border-emerald-500/20">Native</span>
             </button>
 
             <button
@@ -458,10 +575,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
               </p>
             </div>
 
-            {/* Paired Device Card */}
-            <div className="linear-card rounded-lg p-4 flex items-center justify-between">
+            {/* Paired Device or Discovered Devices Card */}
+            <div className="linear-card rounded-lg p-4 flex flex-col gap-3">
               {connectionStatus === 'connected' && pairedDevice ? (
-                <>
+                <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-md bg-[#5E6AD2]/15 border border-[#5E6AD2]/30 flex items-center justify-center text-[#5E6AD2]">
                       <Smartphone size={16} />
@@ -488,47 +605,152 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                   >
                     Unpair
                   </button>
-                </>
-              ) : connectionStatus === 'scanning' || connectionStatus === 'connecting' ? (
-                <div className="flex items-center justify-between w-full">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-md bg-linear-amber/15 border border-linear-amber/30 flex items-center justify-center text-linear-amber">
-                      <RefreshCw size={16} className="animate-spin" />
-                    </div>
-                    <div>
-                      <h3 className="text-xs font-semibold text-white">Scanning for Devices...</h3>
-                      <span className="text-[11px] text-linear-text-secondary font-mono">
-                        Advertising Soko BLE Service (7D2A0001)...
-                      </span>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => connectionService.disconnectDevice()}
-                    className="px-2.5 py-1 rounded-md bg-white/5 text-linear-text-secondary text-xs hover:text-white"
-                  >
-                    Cancel
-                  </button>
                 </div>
-              ) : (
-                <div className="flex items-center justify-between w-full">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-md bg-linear-red/15 border border-linear-red/30 flex items-center justify-center text-linear-red">
-                      <Power size={16} />
-                    </div>
-                    <div>
-                      <h3 className="text-xs font-semibold text-white">No Device Connected</h3>
-                      <span className="text-[11px] text-linear-text-secondary font-mono">
-                        Bluetooth & Hotspot ready for pairing
-                      </span>
-                    </div>
+              ) : selectedDeviceToPair ? (
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center justify-between pb-2 border-b border-white/[0.08]">
+                    <button
+                      onClick={() => setSelectedDeviceToPair(null)}
+                      className="flex items-center gap-1.5 text-xs text-linear-text-secondary hover:text-white transition-colors"
+                    >
+                      <ArrowLeft size={13} />
+                      <span>Back to available devices</span>
+                    </button>
+                    <span className="text-[10px] font-mono font-medium text-amber-400 bg-amber-500/15 px-2 py-0.5 rounded border border-amber-500/30">
+                      SAS Pair Verification
+                    </span>
                   </div>
 
-                  <button
-                    onClick={() => connectionService.scanAndConnect()}
-                    className="linear-button-primary px-3 py-1 text-xs"
-                  >
-                    Scan & Connect
-                  </button>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-lg bg-[#5E6AD2]/20 border border-[#5E6AD2]/40 flex items-center justify-center text-[#5E6AD2]">
+                        {selectedDeviceToPair.transport === 'ble' ? (
+                          selectedDeviceToPair.name.toLowerCase().includes('bud') ||
+                          selectedDeviceToPair.name.toLowerCase().includes('ear') ? (
+                            <Headphones size={18} />
+                          ) : (
+                            <Bluetooth size={18} />
+                          )
+                        ) : (
+                          <Smartphone size={18} />
+                        )}
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-semibold text-white tracking-tight">
+                          {selectedDeviceToPair.name}
+                        </h4>
+                        <span className="text-[11px] text-linear-text-secondary font-mono">
+                          {selectedDeviceToPair.model}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setSelectedDeviceToPair(null)}
+                        className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-linear-text-secondary hover:text-white text-xs font-medium border border-white/10 transition-all"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleConfirmPair}
+                        disabled={isPairingInFlight}
+                        className="px-4 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-semibold shadow-[0_0_16px_rgba(52,211,153,0.35)] active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-60"
+                      >
+                        {isPairingInFlight ? (
+                          <RefreshCw size={13} className="animate-spin" />
+                        ) : (
+                          <CheckCircle2 size={14} />
+                        )}
+                        <span>Confirm Link</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2.5">
+                  <div className="flex items-center justify-between pb-2 border-b border-white/[0.06]">
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-xs font-semibold text-white tracking-tight">Available Devices</h4>
+                      <span className="text-[10px] font-mono text-linear-text-tertiary">
+                        ({discoveredDevices.length} found)
+                      </span>
+                    </div>
+                    <button
+                      onClick={fetchDiscoveredDevices}
+                      disabled={isScanningDevices}
+                      className="flex items-center gap-1.5 text-xs text-[#5E6AD2] hover:text-[#7C88E8] font-mono transition-colors disabled:opacity-50"
+                    >
+                      <RefreshCw size={12} className={isScanningDevices ? 'animate-spin' : ''} />
+                      <span>{isScanningDevices ? 'Scanning...' : 'Scan for Devices'}</span>
+                    </button>
+                  </div>
+
+                  {isScanningDevices && discoveredDevices.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-6 gap-2 text-center">
+                      <RefreshCw size={20} className="text-[#5E6AD2] animate-spin" />
+                      <span className="text-xs font-medium text-white">Scanning for nearby devices...</span>
+                      <span className="text-[11px] text-linear-text-tertiary">
+                        Checking Bluetooth peripherals & local Wi-Fi companions
+                      </span>
+                    </div>
+                  ) : discoveredDevices.length > 0 ? (
+                    <div className="flex flex-col gap-2 max-h-[220px] overflow-y-auto pr-1 custom-scrollbar">
+                      {discoveredDevices.map((dev) => (
+                        <div
+                          key={dev.id}
+                          className="flex items-center justify-between p-2.5 rounded-lg bg-black/30 hover:bg-white/[0.04] border border-white/[0.06] hover:border-white/10 transition-all"
+                        >
+                          <div className="flex items-center gap-3 min-w-0 mr-3">
+                            <div className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-[#5E6AD2] shrink-0">
+                              {dev.transport === 'ble' ? (
+                                dev.name.toLowerCase().includes('bud') || dev.name.toLowerCase().includes('ear') ? (
+                                  <Headphones size={15} />
+                                ) : (
+                                  <Bluetooth size={15} />
+                                )
+                              ) : (
+                                <Wifi size={15} className="text-emerald-400" />
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <h5 className="text-xs font-semibold text-white truncate">{dev.name}</h5>
+                              <div className="flex items-center gap-2 text-[10.5px] text-linear-text-tertiary font-mono">
+                                <span>{dev.transport === 'ble' ? 'Bluetooth Low Energy' : 'Wi-Fi / Hotspot LAN'}</span>
+                                <span>•</span>
+                                <span>{dev.rssi} dBm</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <button
+                            onClick={() => setSelectedDeviceToPair(dev)}
+                            className="linear-button-primary px-3 py-1 text-xs shrink-0"
+                          >
+                            Pair Device
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-6 gap-2 text-center">
+                      <div className="w-9 h-9 rounded-full bg-linear-red/15 border border-linear-red/30 flex items-center justify-center text-linear-red">
+                        <Power size={16} />
+                      </div>
+                      <div>
+                        <h5 className="text-xs font-semibold text-white">No Devices Detected</h5>
+                        <p className="text-[11px] text-linear-text-secondary mt-0.5">
+                          Turn on Bluetooth or ensure your phone is connected to the same Wi-Fi network.
+                        </p>
+                      </div>
+                      <button
+                        onClick={fetchDiscoveredDevices}
+                        className="linear-button-primary px-3 py-1 text-xs mt-1"
+                      >
+                        Scan Again
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -605,6 +827,292 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 </div>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* AI Token Tracker Tab (100% Native) */}
+        {activeTab === 'tokens' && (
+          <div className="max-w-2xl flex flex-col gap-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">AI Token Tracker</h2>
+                  <span className="text-[10px] font-mono font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/25 px-2 py-0.5 rounded-full">
+                    100% Native
+                  </span>
+                </div>
+                <p className="text-xs text-linear-text-secondary mt-1">
+                  Real-time offline telemetry monitoring Google Antigravity, OpenAI Codex CLI, and Claude sessions with zero external dependencies.
+                </p>
+              </div>
+
+              <button
+                onClick={refreshTokens}
+                disabled={isLoadingTokens}
+                className="linear-button-primary px-3 py-1.5 flex items-center gap-1.5 text-xs disabled:opacity-60"
+              >
+                <RefreshCw size={12} className={isLoadingTokens ? 'animate-spin' : ''} />
+                <span>{isLoadingTokens ? 'Scanning...' : 'Refresh Telemetry'}</span>
+              </button>
+            </div>
+
+            {/* 4-Stat Metric Grid */}
+            <div className="grid grid-cols-4 gap-3">
+              <div className="linear-card rounded-lg p-3.5 flex flex-col gap-1 border border-amber-500/20 bg-amber-500/[0.03]">
+                <div className="flex items-center justify-between text-amber-400">
+                  <span className="text-[10px] uppercase font-mono tracking-wider font-semibold">Today's Tokens</span>
+                  <Zap size={14} />
+                </div>
+                <span className="text-xl font-bold font-mono tracking-tight text-white mt-1">
+                  {tokenSummary ? (tokenSummary.todayTokens >= 1000000 ? `${(tokenSummary.todayTokens / 1000000).toFixed(2)}M` : tokenSummary.todayTokens.toLocaleString()) : '...'}
+                </span>
+                <span className="text-[10px] text-linear-text-tertiary">Active coding today</span>
+              </div>
+
+              <div className="linear-card rounded-lg p-3.5 flex flex-col gap-1 border border-indigo-500/20 bg-indigo-500/[0.03]">
+                <div className="flex items-center justify-between text-[#7C88E8]">
+                  <span className="text-[10px] uppercase font-mono tracking-wider font-semibold">All-Time Total</span>
+                  <Cpu size={14} />
+                </div>
+                <span className="text-xl font-bold font-mono tracking-tight text-white mt-1">
+                  {tokenSummary ? `${(tokenSummary.totalTokens / 1000000).toFixed(1)}M` : '...'}
+                </span>
+                <span className="text-[10px] text-linear-text-tertiary">Total lifetime tokens</span>
+              </div>
+
+              <div className="linear-card rounded-lg p-3.5 flex flex-col gap-1 border border-emerald-500/20 bg-emerald-500/[0.03]">
+                <div className="flex items-center justify-between text-emerald-400">
+                  <span className="text-[10px] uppercase font-mono tracking-wider font-semibold">Context Cached</span>
+                  <Database size={14} />
+                </div>
+                <span className="text-xl font-bold font-mono tracking-tight text-white mt-1">
+                  {tokenSummary ? (
+                    (() => {
+                      const totalCached = tokenSummary.assistants.reduce((acc, a) => acc + (a.cachedTokens || 0), 0);
+                      return totalCached >= 1000000000 ? `${(totalCached / 1000000000).toFixed(2)}B` : `${(totalCached / 1000000).toFixed(1)}M`;
+                    })()
+                  ) : '...'}
+                </span>
+                <span className="text-[10px] text-linear-text-tertiary">Context cache reads</span>
+              </div>
+
+              <div className="linear-card rounded-lg p-3.5 flex flex-col gap-1 border border-purple-500/20 bg-purple-500/[0.03]">
+                <div className="flex items-center justify-between text-purple-400">
+                  <span className="text-[10px] uppercase font-mono tracking-wider font-semibold">Total Sessions</span>
+                  <Layers size={14} />
+                </div>
+                <span className="text-xl font-bold font-mono tracking-tight text-white mt-1">
+                  {tokenSummary ? tokenSummary.assistants.reduce((acc, a) => acc + (a.sessionsCount || 0), 0) : '...'}
+                </span>
+                <span className="text-[10px] text-linear-text-tertiary">Across all assistants</span>
+              </div>
+            </div>
+
+            {/* CLI Agent Task Watcher & Eye Animations */}
+            <div className="linear-card rounded-xl p-4 flex flex-col gap-3 border border-white/[0.08] bg-white/[0.02]">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-lg bg-[#5E6AD2]/20 border border-[#5E6AD2]/35 flex items-center justify-center text-[#7C88E8]">
+                    <Zap size={14} />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-semibold text-white tracking-tight flex items-center gap-2">
+                      CLI Agent Task Watcher & Eye Colors
+                      {agentActivity?.agent ? (
+                        <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1 font-semibold">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                          Active: {agentActivity.name}
+                        </span>
+                      ) : (
+                        <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-white/[0.06] text-linear-text-tertiary">
+                          Standby (Idle)
+                        </span>
+                      )}
+                    </h3>
+                    <p className="text-[11px] text-linear-text-secondary mt-0.5">
+                      Monitors active CLI agent turns and dynamically morphs Soko bot eyes with distinctive colors and animations.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {agentActivity?.agent && agentActivity.status !== 'idle' && (
+                <div className="p-2.5 rounded-lg bg-black/40 border border-white/[0.08] flex items-center justify-between text-xs font-mono">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="w-2.5 h-2.5 rounded-full animate-ping"
+                      style={{
+                        backgroundColor:
+                          agentActivity.agent === 'antigravity'
+                            ? '#38BDF8'
+                            : agentActivity.agent === 'codex'
+                            ? '#10A37F'
+                            : '#F59E0B',
+                      }}
+                    />
+                    <span className="text-white font-semibold">{agentActivity.name}:</span>
+                    <span className="text-linear-text-secondary">{agentActivity.detail || 'Working...'}</span>
+                  </div>
+                  <span className="text-[10px] text-linear-text-tertiary">Live Detection</span>
+                </div>
+              )}
+
+              {/* Interactive Test & Preview Controls */}
+              <div className="pt-2 border-t border-white/[0.06] flex flex-col gap-2">
+                <span className="text-[10px] uppercase font-mono tracking-wider text-linear-text-tertiary font-semibold">
+                  Test & Preview Eye Animations
+                </span>
+                <div className="grid grid-cols-4 gap-2">
+                  <button
+                    onClick={() => connectionService.simulateAgentActivity('antigravity', 'Analyzing AST & running tools', 7000)}
+                    className="px-2.5 py-1.5 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/25 text-[11px] font-semibold flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-sm"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-sky-400" />
+                    <span>Antigravity Eyes</span>
+                  </button>
+
+                  <button
+                    onClick={() => connectionService.simulateAgentActivity('codex', 'Streaming code generation', 7000)}
+                    className="px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/25 text-[11px] font-semibold flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-sm"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                    <span>Codex Eyes</span>
+                  </button>
+
+                  <button
+                    onClick={() => connectionService.simulateAgentActivity('claude', 'Reasoning & contemplation', 7000)}
+                    className="px-2.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/25 text-[11px] font-semibold flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-sm"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-amber-400" />
+                    <span>Claude Eyes</span>
+                  </button>
+
+                  <button
+                    onClick={() => connectionService.simulateAgentActivity(null, '', 0)}
+                    className="px-2.5 py-1.5 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] text-linear-text-secondary hover:text-white border border-white/[0.08] text-[11px] font-medium flex items-center justify-center gap-1 active:scale-95 transition-all"
+                  >
+                    <RotateCcw size={11} />
+                    <span>Reset Eyes</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Assistant Platform Cards */}
+            <div className="flex flex-col gap-3">
+              <span className="text-xs font-semibold uppercase tracking-wider font-mono text-linear-text-tertiary">
+                Assistant Telemetry Breakdown
+              </span>
+
+              <div className="grid grid-cols-2 gap-3">
+                {tokenSummary?.assistants.map((assistant) => (
+                  <div
+                    key={assistant.id}
+                    className="linear-card rounded-xl p-4 flex flex-col gap-3 border border-white/[0.08] hover:border-white/[0.15] transition-all"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <div
+                          className="w-3 h-3 rounded-full"
+                          style={{ backgroundColor: assistant.color, boxShadow: `0 0 10px ${assistant.color}66` }}
+                        />
+                        <h4 className="text-xs font-bold text-white tracking-tight">{assistant.name}</h4>
+                      </div>
+                      <span className="text-[10px] font-mono text-linear-text-secondary bg-white/[0.05] px-2 py-0.5 rounded border border-white/5">
+                        {assistant.sessionsCount} session{assistant.sessionsCount !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+
+                    <div className="flex items-baseline justify-between pt-1 border-t border-white/[0.06]">
+                      <span className="text-xs text-linear-text-tertiary font-mono">Total Tokens:</span>
+                      <span className="text-sm font-bold font-mono text-white">
+                        {assistant.totalTokens >= 1000000 ? `${(assistant.totalTokens / 1000000).toFixed(2)}M` : assistant.totalTokens.toLocaleString()}
+                      </span>
+                    </div>
+
+                    {/* Progress Bar of Today / Total */}
+                    <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-500"
+                        style={{
+                          width: `${Math.min(100, Math.max(4, tokenSummary.totalTokens > 0 ? (assistant.totalTokens / tokenSummary.totalTokens) * 100 : 0))}%`,
+                          backgroundColor: assistant.color,
+                        }}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2 pt-1 text-[10px] font-mono text-linear-text-secondary">
+                      <div className="bg-black/40 p-2 rounded border border-white/[0.04]">
+                        <span className="text-linear-text-tertiary block text-[9px]">INPUTS</span>
+                        <span className="text-white font-medium">
+                          {assistant.inputTokens >= 1000000 ? `${(assistant.inputTokens / 1000000).toFixed(1)}M` : assistant.inputTokens.toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="bg-black/40 p-2 rounded border border-white/[0.04]">
+                        <span className="text-linear-text-tertiary block text-[9px]">OUTPUTS</span>
+                        <span className="text-white font-medium">
+                          {assistant.outputTokens >= 1000000 ? `${(assistant.outputTokens / 1000000).toFixed(1)}M` : assistant.outputTokens.toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="bg-black/40 p-2 rounded border border-white/[0.04]">
+                        <span className="text-linear-text-tertiary block text-[9px]">CACHED</span>
+                        <span className="text-white font-medium">
+                          {assistant.cachedTokens >= 1000000000 ? `${(assistant.cachedTokens / 1000000000).toFixed(1)}B` : assistant.cachedTokens >= 1000000 ? `${(assistant.cachedTokens / 1000000).toFixed(1)}M` : assistant.cachedTokens.toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Recent Sessions Feed */}
+            {tokenSummary && tokenSummary.recentSessions.length > 0 && (
+              <div className="flex flex-col gap-2.5">
+                <span className="text-xs font-semibold uppercase tracking-wider font-mono text-linear-text-tertiary">
+                  Recent AI Assistant Activity
+                </span>
+
+                <div className="linear-card rounded-lg overflow-hidden border border-white/[0.08]">
+                  <div className="max-h-[240px] overflow-y-auto custom-scrollbar divide-y divide-white/[0.06]">
+                    {tokenSummary.recentSessions.map((session) => (
+                      <div
+                        key={session.id}
+                        className="p-3 flex items-center justify-between hover:bg-white/[0.03] transition-colors"
+                      >
+                        <div className="flex items-center gap-3 min-w-0 mr-3">
+                          <div
+                            className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 ${
+                              session.assistant.toLowerCase().includes('antigravity')
+                                ? 'bg-[#4285F4]/15 text-[#4285F4] border border-[#4285F4]/30'
+                                : 'bg-[#10A37F]/15 text-[#10A37F] border border-[#10A37F]/30'
+                            }`}
+                          >
+                            {session.assistant[0]}
+                          </div>
+                          <div className="min-w-0">
+                            <h5 className="text-xs font-semibold text-white truncate max-w-[360px]">
+                              {session.summary}
+                            </h5>
+                            <div className="flex items-center gap-2 text-[10px] text-linear-text-tertiary font-mono mt-0.5">
+                              <span>{session.assistant}</span>
+                              <span>•</span>
+                              <span>{session.model || 'AI Model'}</span>
+                              <span>•</span>
+                              <span>{new Date(session.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <span className="text-xs font-mono font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded shrink-0">
+                          {session.tokens >= 1000000 ? `${(session.tokens / 1000000).toFixed(2)}M` : session.tokens.toLocaleString()} tok
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1077,6 +1585,33 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 </div>
               </div>
 
+              {/* Reactive Cursor Eye Tracking Toggle */}
+              <div className="pt-3 border-t border-white/5 flex items-center justify-between">
+                <div>
+                  <h3 className="text-xs font-semibold text-white">Interactive Eye Cursor Tracking</h3>
+                  <p className="text-[11px] text-linear-text-tertiary mt-0.5">
+                    Soko's eyes and head organically follow your cursor as you move across the Island HUD.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleToggleCursorTracking}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    cursorTrackingEnabled ? 'bg-[#5E6AD2]' : 'bg-white/10'
+                  }`}
+                  role="switch"
+                  aria-checked={cursorTrackingEnabled}
+                  title="Toggle reactive cursor eye tracking"
+                >
+                  <span
+                    aria-hidden="true"
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                      cursorTrackingEnabled ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
               <div className="bg-white/[0.02] border border-white/5 rounded-lg p-3 text-[11px] text-linear-text-tertiary flex flex-col gap-1.5 font-mono">
                 <div className="flex items-center gap-1.5 text-white/90 font-sans font-medium">
                   <Sparkles size={12} className="text-emerald-400" />
@@ -1084,6 +1619,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 </div>
                 <p>• After the selected idle duration without mouse interactions, the island contracts to a 68×64px circular orb.</p>
                 <p>• Status indicators & buttons fade away, leaving only Soko's face enlarged to 56px.</p>
+                <p>• Soko's eyes naturally follow your mouse around the island with smooth 3D visor physics and organic blinks.</p>
                 <p>• Hovering your mouse, clicking, or receiving any incoming notification immediately wakes Soko up and restores the full pill.</p>
               </div>
             </div>

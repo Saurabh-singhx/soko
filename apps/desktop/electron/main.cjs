@@ -268,11 +268,16 @@ function createIslandWindow() {
   });
 }
 
-function openSettingsWindow() {
+function openSettingsWindow(initialTab) {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     if (settingsWindow.isMinimized()) settingsWindow.restore();
     settingsWindow.show();
     settingsWindow.focus();
+    if (initialTab) {
+      try {
+        settingsWindow.webContents.send('soko:switch-settings-tab', initialTab);
+      } catch {}
+    }
     return;
   }
 
@@ -304,6 +309,11 @@ function openSettingsWindow() {
     if (settingsWindow.isMinimized()) settingsWindow.restore();
     settingsWindow.show();
     settingsWindow.focus();
+    if (initialTab) {
+      try {
+        settingsWindow.webContents.send('soko:switch-settings-tab', initialTab);
+      } catch {}
+    }
   };
 
   settingsWindow.once('ready-to-show', showSettings);
@@ -444,8 +454,8 @@ ipcMain.handle('soko:get-autostart', () => {
 ipcMain.handle('soko:set-autostart', (_event, enable) => {
   return setAutoStart(Boolean(enable));
 });
-ipcMain.on('soko:open-settings', () => {
-  openSettingsWindow();
+ipcMain.on('soko:open-settings', (_event, tab) => {
+  openSettingsWindow(tab);
 });
 
 ipcMain.on('soko:close-settings', () => {

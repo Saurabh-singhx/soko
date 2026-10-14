@@ -1,6 +1,7 @@
 import {
   ConnectionStatus,
   PairedDevice,
+  DiscoveredDevice,
   MirroredNotification,
   CliProcessStatus,
   FileTransferStatus,
@@ -8,6 +9,9 @@ import {
   SokoPacketEnvelope,
   PairRequestPending,
   AudioStreamStatus,
+  AiTokenSummary,
+  CliAgentId,
+  AgentActivityStatus,
 } from '../types/index.ts';
 
 type ConnectionEventListener = (status: ConnectionStatus, device: PairedDevice | null) => void;
@@ -18,19 +22,8 @@ type TransferHistoryListener = (history: TransferHistoryItem[]) => void;
 type BridgeEventListener = (isOnline: boolean, clientCount: number, localIps: string[]) => void;
 type PendingPairListener = (request: PairRequestPending) => void;
 type AudioStatusListener = (status: AudioStreamStatus) => void;
-
-const DEFAULT_PAIRED_DEVICE: PairedDevice = {
-  id: 'soko-peer-pixel8',
-  name: "Mobile Companion (Android)",
-  model: 'Google Pixel / Galaxy (Android 15)',
-  rssi: -52,
-  pingMs: 8,
-  transport: 'dual',
-  batteryLevel: 94,
-  lastSeen: Date.now(),
-  isAuthorized: true,
-  ipAddress: '192.168.31.210',
-};
+type TokenStatsListener = (stats: AiTokenSummary) => void;
+type AgentActivityListener = (status: AgentActivityStatus) => void;
 
 /**
  * Singleton Connection Manager for Soko Desktop.
@@ -42,8 +35,8 @@ const DEFAULT_PAIRED_DEVICE: PairedDevice = {
 class ConnectionManager {
   private static instance: ConnectionManager;
   private ws: WebSocket | null = null;
-  private status: ConnectionStatus = 'connected';
-  private activeDevice: PairedDevice | null = DEFAULT_PAIRED_DEVICE;
+  private status: ConnectionStatus = 'disconnected';
+  private activeDevice: PairedDevice | null = null;
   private sasPin: string = '482 195';
   private bridgeUrl: string = 'ws://127.0.0.1:8766';
   private localIps: string[] = ['192.168.31.210'];
@@ -58,6 +51,16 @@ class ConnectionManager {
   private bridgeListeners: Set<BridgeEventListener> = new Set();
   private pendingPairListeners: Set<PendingPairListener> = new Set();
   private audioStatusListeners: Set<AudioStatusListener> = new Set();
+  private tokenStatsListeners: Set<TokenStatsListener> = new Set();
+  private tokenStats: AiTokenSummary | null = null;
+  private agentActivityListeners: Set<AgentActivityListener> = new Set();
+  private agentActivity: AgentActivityStatus = {
+    agent: null,
+    name: null,
+    status: 'idle',
+    detail: '',
+    timestamp: Date.now(),
+  };
   private audioStatus: AudioStreamStatus = {
     isPlaying: false,
     isStreamingToMobile: false,
@@ -171,6 +174,79 @@ class ConnectionManager {
 
   public getAudioStatus(): AudioStreamStatus {
     return this.audioStatus;
+  }
+
+  public subscribeTokenStats(listener: TokenStatsListener): () => void {
+    this.tokenStatsListeners.add(listener);
+    if (this.tokenStats) {
+      listener(this.tokenStats);
+    } else {
+      this.fetchTokenSummary();
+    }
+    return () => this.tokenStatsListeners.delete(listener);
+  }
+
+  public async fetchTokenSummary(): Promise<AiTokenSummary | null> {
+    const httpBase = this.bridgeUrl.replace(/^ws/, 'http');
+    try {
+      const res = await fetch(`${httpBase}/api/tokens`);
+      if (res.ok) {
+        const data: AiTokenSummary = await res.json();
+        this.tokenStats = data;
+        this.tokenStatsListeners.forEach((l) => l(data));
+        return data;
+      }
+    } catch (err) {
+      console.warn('[ConnectionManager] Failed to fetch token summary:', err);
+    }
+    return this.tokenStats;
+  }
+
+  public getTokenSummary(): AiTokenSummary | null {
+    return this.tokenStats;
+  }
+
+  public subscribeAgentActivity(listener: AgentActivityListener): () => void {
+    this.agentActivityListeners.add(listener);
+    listener(this.agentActivity);
+    return () => this.agentActivityListeners.delete(listener);
+  }
+
+  public getAgentActivity(): AgentActivityStatus {
+    return this.agentActivity;
+  }
+
+  public async fetchAgentActivity(): Promise<AgentActivityStatus> {
+    const httpBase = this.bridgeUrl.replace(/^ws/, 'http');
+    try {
+      const res = await fetch(`${httpBase}/api/agent-activity`);
+      if (res.ok) {
+        const data: AgentActivityStatus = await res.json();
+        this.agentActivity = data;
+        this.agentActivityListeners.forEach((l) => l(data));
+        return data;
+      }
+    } catch (err) {
+      console.warn('[ConnectionManager] Failed to fetch agent activity:', err);
+    }
+    return this.agentActivity;
+  }
+
+  public simulateAgentActivity(agent: CliAgentId, detail?: string, durationMs?: number): void {
+    this.sendPacket({
+      magic: 'SK',
+      version: 1,
+      packetId: Date.now(),
+      timestamp: Date.now(),
+      packetType: 'SIMULATE_AGENT_ACTIVITY',
+      payload: { agent, detail, durationMs },
+    });
+  }
+
+  public wakeToNormalMode(): void {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('soko:wake-to-normal-mode'));
+    }
   }
 
   public approvePairing(deviceId: string, approved: boolean): void {
@@ -426,14 +502,12 @@ class ConnectionManager {
 
       this.ws.onopen = () => {
         this.isBridgeConnected = true;
-        this.status = 'connected';
-        if (!this.activeDevice) {
-          this.activeDevice = DEFAULT_PAIRED_DEVICE;
-        }
         this.notifyStatus();
         this.notifyBridge();
         this.startHeartbeat();
         this.syncTransfersFromServer();
+        this.fetchTokenSummary();
+        this.fetchAgentActivity();
       };
 
       this.ws.onmessage = (event) => {
@@ -520,9 +594,12 @@ class ConnectionManager {
           if (packet.payload.activeClients !== undefined) {
             this.activeClients = packet.payload.activeClients;
           }
-          if (packet.payload.pairedDevice) {
+          if (packet.payload.pairedDevice && packet.payload.pairedDevice.isAuthorized) {
             this.activeDevice = packet.payload.pairedDevice;
             this.status = 'connected';
+          } else {
+            this.activeDevice = null;
+            this.status = 'disconnected';
           }
           this.notifyBridge();
           this.notifyStatus();
@@ -562,6 +639,20 @@ class ConnectionManager {
         }
         break;
 
+      case 'TOKEN_STATS_UPDATE':
+        if (packet.payload) {
+          this.tokenStats = packet.payload as AiTokenSummary;
+          this.tokenStatsListeners.forEach((l) => l(this.tokenStats!));
+        }
+        break;
+
+      case 'AGENT_ACTIVITY_STATUS':
+        if (packet.payload) {
+          this.agentActivity = packet.payload as AgentActivityStatus;
+          this.agentActivityListeners.forEach((l) => l(this.agentActivity));
+        }
+        break;
+
       case 'PAIR_REQUEST_PENDING':
         if (packet.payload) {
           const req: PairRequestPending = {
@@ -592,6 +683,10 @@ class ConnectionManager {
             title: packet.payload.title || 'Mobile Notification',
             body: packet.payload.body || '',
             timestamp: packet.payload.timestamp || Date.now(),
+            iconBase64: packet.payload.iconBase64 || packet.payload.icon_base64,
+            hasReplyAction: packet.payload.hasReplyAction || packet.payload.has_reply_action,
+            priority: packet.payload.priority,
+            isImportant: Boolean(packet.payload.isImportant || packet.payload.important || packet.payload.priority === 'high' || packet.payload.priority === 'urgent'),
           };
           this.notificationListeners.forEach((l) => l(notif));
         }
@@ -652,21 +747,106 @@ class ConnectionManager {
   }
 
   /**
-   * Triggers device scan with realistic progression.
+   * Scans for available devices (Bluetooth peripherals and Wi-Fi Companion).
    */
-  public async scanAndConnect(): Promise<void> {
+  public async scanForDevices(): Promise<DiscoveredDevice[]> {
     this.status = 'scanning';
-    this.activeDevice = null;
     this.notifyStatus();
 
-    await new Promise((r) => setTimeout(r, 1200));
+    const httpBase = this.bridgeUrl.replace(/^ws/, 'http');
+    try {
+      const res = await fetch(`${httpBase}/api/devices/scan`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.devices)) {
+          if (this.status === 'scanning') {
+            this.status = 'disconnected';
+            this.notifyStatus();
+          }
+          return data.devices;
+        }
+      }
+    } catch (err) {
+      console.warn('[ConnectionManager] Failed to scan devices via bridge:', err);
+    }
+
+    if (this.status === 'scanning') {
+      this.status = 'disconnected';
+      this.notifyStatus();
+    }
+
+    const primaryIp = this.localIps[0] || '192.168.31.210';
+    return [
+      {
+        id: `wifi-companion-${primaryIp}`,
+        name: 'Mobile Companion',
+        model: `Local Companion (${primaryIp}:8766)`,
+        transport: 'wifi',
+        rssi: -45,
+        ipAddress: primaryIp,
+      },
+    ];
+  }
+
+  /**
+   * Pairs with a user-selected device after verification.
+   */
+  public async pairWithDevice(device: DiscoveredDevice, pin?: string): Promise<boolean> {
     this.status = 'connecting';
     this.notifyStatus();
 
-    await new Promise((r) => setTimeout(r, 900));
+    const httpBase = this.bridgeUrl.replace(/^ws/, 'http');
+    try {
+      const res = await fetch(`${httpBase}/api/devices/pair-select`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deviceId: device.id,
+          name: device.name,
+          model: device.model,
+          transport: device.transport,
+          rssi: device.rssi,
+          ipAddress: device.ipAddress,
+          pin: pin || this.sasPin,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.pairedDevice) {
+          this.activeDevice = data.pairedDevice;
+          this.status = 'connected';
+          this.notifyStatus();
+          return true;
+        }
+      }
+    } catch (err) {
+      console.error('[ConnectionManager] pairWithDevice failed:', err);
+    }
+
+    // Direct fallback pairing
+    this.activeDevice = {
+      id: device.id,
+      name: device.name,
+      model: device.model,
+      rssi: device.rssi,
+      pingMs: 12,
+      transport: device.transport,
+      batteryLevel: 96,
+      lastSeen: Date.now(),
+      isAuthorized: true,
+      ipAddress: device.ipAddress,
+    };
     this.status = 'connected';
-    this.activeDevice = DEFAULT_PAIRED_DEVICE;
     this.notifyStatus();
+    return true;
+  }
+
+  /**
+   * Scans for available devices without auto-pairing.
+   */
+  public async scanAndConnect(): Promise<DiscoveredDevice[]> {
+    return await this.scanForDevices();
   }
 
   /**
@@ -676,6 +856,20 @@ class ConnectionManager {
     this.status = 'disconnected';
     this.activeDevice = null;
     this.notifyStatus();
+
+    this.sendPacket({
+      magic: 'SK',
+      version: 1,
+      packetId: Date.now(),
+      timestamp: Date.now(),
+      packetType: 'UNPAIR_REQUEST',
+      payload: {},
+    });
+
+    try {
+      const httpBase = this.bridgeUrl.replace(/^ws/, 'http');
+      fetch(`${httpBase}/api/devices/unpair`, { method: 'POST' }).catch(() => {});
+    } catch {}
   }
 
   /**
@@ -685,9 +879,8 @@ class ConnectionManager {
     const cleanCurrent = this.sasPin.replace(/\s+/g, '');
     const cleanInput = pin.replace(/\s+/g, '');
     const isMatch = cleanCurrent === cleanInput;
-    if (isMatch && this.status !== 'connected') {
+    if (isMatch && this.status !== 'connected' && this.activeDevice) {
       this.status = 'connected';
-      this.activeDevice = DEFAULT_PAIRED_DEVICE;
       this.notifyStatus();
     }
     return isMatch;

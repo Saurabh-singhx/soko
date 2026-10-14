@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { MascotMood } from '../../types/index.ts';
+import { MascotMood, ConnectionStatus, CliAgentId, AgentActivityStatus } from '../../types/index.ts';
 
 interface CharacterAvatarProps {
   mood: MascotMood;
@@ -8,6 +8,10 @@ interface CharacterAvatarProps {
   notificationKey?: string | number;
   isMusicPlaying?: boolean;
   isIdleMascotOnly?: boolean;
+  enableCursorTracking?: boolean;
+  connectionStatus?: ConnectionStatus;
+  activeAgent?: CliAgentId;
+  agentStatus?: AgentActivityStatus | null;
 }
 
 /**
@@ -221,6 +225,10 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
   notificationKey,
   isMusicPlaying = false,
   isIdleMascotOnly = false,
+  enableCursorTracking,
+  connectionStatus = 'disconnected',
+  activeAgent,
+  agentStatus,
 }) => {
   const [currentTarget, setCurrentTarget] = useState<GazeTarget>(NEUTRAL_TARGET);
   const [isBlinking, setIsBlinking] = useState(false);
@@ -229,9 +237,207 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
   const [rightEarTwitch, setRightEarTwitch] = useState(false);
   const [spinAngle, setSpinAngle] = useState(0);
 
+  // Dynamic Connection Eye Color State Machine:
+  // Disconnected -> #EF4444 (red)
+  // Just connected -> #10B981 (green) for 4.5s -> #FFFFFF (normal white)
+  const [eyeColor, setEyeColor] = useState<string>(() => {
+    return connectionStatus === 'connected' ? '#FFFFFF' : '#EF4444';
+  });
+
+  // Agent-driven eye color & animation state
+  const isAgentActive = Boolean(
+    activeAgent &&
+    agentStatus &&
+    (agentStatus.status === 'working' || agentStatus.status === 'thinking' || agentStatus.status === 'completed')
+  );
+
+  const agentColor = activeAgent === 'antigravity'
+    ? '#38BDF8' // Electric Sky Cyan for Google Antigravity
+    : activeAgent === 'codex'
+    ? '#10A37F' // Cyber Emerald for OpenAI Codex
+    : activeAgent === 'claude'
+    ? '#F59E0B' // Sunset Amber for Anthropic Claude
+    : null;
+
+  const effectiveEyeColor = isAgentActive && agentColor ? agentColor : eyeColor;
+
+  const prevStatusRef = useRef<ConnectionStatus>(connectionStatus);
+  const greenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (greenTimerRef.current) {
+      clearTimeout(greenTimerRef.current);
+      greenTimerRef.current = null;
+    }
+
+    if (connectionStatus === 'connected') {
+      if (prevStatusRef.current !== 'connected') {
+        // Transitioned from disconnected/connecting to connected -> turn GREEN for 4.5 seconds!
+        setEyeColor('#10B981');
+        greenTimerRef.current = setTimeout(() => {
+          setEyeColor('#FFFFFF');
+        }, 4500);
+      } else {
+        // Already connected
+        setEyeColor((prev) => (prev === '#EF4444' ? '#FFFFFF' : prev));
+      }
+    } else {
+      // Disconnected, scanning, or connecting -> turn RED!
+      setEyeColor('#EF4444');
+    }
+
+    prevStatusRef.current = connectionStatus;
+
+    return () => {
+      if (greenTimerRef.current) clearTimeout(greenTimerRef.current);
+    };
+  }, [connectionStatus]);
+
+  // Local interactive cursor tracking state
+  const [cursorTrackingActive, setCursorTrackingActive] = useState<boolean>(() => {
+    if (enableCursorTracking !== undefined) return enableCursorTracking;
+    try {
+      return localStorage.getItem('soko_cursor_tracking') !== 'false';
+    } catch {
+      return true;
+    }
+  });
+  const [isTrackingMouse, setIsTrackingMouse] = useState(false);
+
+  const isTrackingMouseRef = useRef(false);
+  const avatarContainerRef = useRef<HTMLDivElement>(null);
+  const pointerRafRef = useRef<number | null>(null);
+  const pointerIdleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const saccadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const blinkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notificationTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  // Listen for dynamic settings toggle from SettingsView
+  useEffect(() => {
+    if (enableCursorTracking !== undefined) {
+      setCursorTrackingActive(enableCursorTracking);
+      return;
+    }
+    const handleSettingChange = () => {
+      try {
+        setCursorTrackingActive(localStorage.getItem('soko_cursor_tracking') !== 'false');
+      } catch {}
+    };
+    window.addEventListener('soko:cursor-tracking-changed', handleSettingChange);
+    return () => window.removeEventListener('soko:cursor-tracking-changed', handleSettingChange);
+  }, [enableCursorTracking]);
+
+  // Local Island Cursor Tracking: Soko organically follows cursor with eyes & head tilt
+  useEffect(() => {
+    if (!cursorTrackingActive || mood !== 'idle' || isMusicPlaying) {
+      if (isTrackingMouseRef.current) {
+        isTrackingMouseRef.current = false;
+        setIsTrackingMouse(false);
+        setCurrentTarget(NEUTRAL_TARGET);
+      }
+      return;
+    }
+
+    const onPointerMove = (e: PointerEvent) => {
+      if (pointerRafRef.current !== null) {
+        cancelAnimationFrame(pointerRafRef.current);
+      }
+
+      pointerRafRef.current = requestAnimationFrame(() => {
+        const avatarEl = avatarContainerRef.current;
+        if (!avatarEl) return;
+
+        const rect = avatarEl.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+
+        const dx = e.clientX - centerX;
+        const dy = e.clientY - centerY;
+        const dist = Math.hypot(dx, dy);
+
+        // Smooth non-linear gaze mapping
+        // dx saturation around 90px (spans the dynamic island body)
+        // dy saturation around 40px
+        const normalizedX = Math.tanh(dx / 90);
+        const normalizedY = Math.tanh(dy / 40);
+
+        const targetGazeX = normalizedX * 3.4;
+        const targetGazeY = normalizedY * 1.9;
+
+        // Subtle 3D perspective distortion (matching visor dome curvature)
+        const leftScaleX = 1.0 + normalizedX * 0.04;
+        const rightScaleX = 1.0 - normalizedX * 0.06;
+
+        // Subtle organic head tilt towards cursor
+        const headTilt = Math.tanh(dx / 110) * 3.2;
+
+        // Proximity micro-morph: alert curious perk when cursor is directly over or near Soko
+        const proximityFactor = Math.max(0, 1 - dist / 36);
+        const topYOffset = proximityFactor * 0.9;
+
+        isTrackingMouseRef.current = true;
+        setIsTrackingMouse(true);
+
+        setCurrentTarget({
+          name: 'mouse_tracking',
+          gazeX: Number(targetGazeX.toFixed(2)),
+          gazeY: Number(targetGazeY.toFixed(2)),
+          leftTopY: 16.0 - topYOffset,
+          leftHeight: 12.0 + topYOffset,
+          leftScaleX: Number(leftScaleX.toFixed(2)),
+          leftTilt: 0,
+          rightTopY: 16.0 - topYOffset,
+          rightHeight: 12.0 + topYOffset,
+          rightScaleX: Number(rightScaleX.toFixed(2)),
+          rightTilt: 0,
+          headTilt: Number(headTilt.toFixed(2)),
+        });
+
+        // Reset inactivity decay timer
+        if (pointerIdleTimeoutRef.current !== null) {
+          clearTimeout(pointerIdleTimeoutRef.current);
+        }
+
+        // If mouse rests stationary for > 3.0s, disengage and return to autonomous saccades
+        pointerIdleTimeoutRef.current = setTimeout(() => {
+          isTrackingMouseRef.current = false;
+          setIsTrackingMouse(false);
+          setCurrentTarget(NEUTRAL_TARGET);
+        }, 3000);
+      });
+    };
+
+    const onPointerExit = () => {
+      if (pointerRafRef.current !== null) {
+        cancelAnimationFrame(pointerRafRef.current);
+        pointerRafRef.current = null;
+      }
+      if (pointerIdleTimeoutRef.current !== null) {
+        clearTimeout(pointerIdleTimeoutRef.current);
+        pointerIdleTimeoutRef.current = null;
+      }
+      if (isTrackingMouseRef.current) {
+        isTrackingMouseRef.current = false;
+        setIsTrackingMouse(false);
+        setCurrentTarget(NEUTRAL_TARGET);
+      }
+    };
+
+    window.addEventListener('pointermove', onPointerMove, { passive: true });
+    window.addEventListener('pointerleave', onPointerExit, { passive: true });
+    document.addEventListener('mouseleave', onPointerExit, { passive: true });
+    window.addEventListener('blur', onPointerExit, { passive: true });
+
+    return () => {
+      if (pointerRafRef.current !== null) cancelAnimationFrame(pointerRafRef.current);
+      if (pointerIdleTimeoutRef.current !== null) clearTimeout(pointerIdleTimeoutRef.current);
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerleave', onPointerExit);
+      document.removeEventListener('mouseleave', onPointerExit);
+      window.removeEventListener('blur', onPointerExit);
+    };
+  }, [cursorTrackingActive, mood, isMusicPlaying]);
 
   const clearNotificationTimers = () => {
     notificationTimersRef.current.forEach((t) => clearTimeout(t));
@@ -466,12 +672,19 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
 
   // 2. Biological Saccade & Variety Controller for Idle State
   useEffect(() => {
-    if (mood !== 'idle') {
+    if (mood !== 'idle' || isAgentActive) {
       setIsScanning(false);
       return;
     }
 
     const performSaccade = () => {
+      // While mouse tracking is active, don't interrupt with random autonomous glances;
+      // check back in 1.2s
+      if (isTrackingMouseRef.current) {
+        saccadeTimerRef.current = setTimeout(performSaccade, 1200);
+        return;
+      }
+
       const roll = Math.random();
 
       // 12% chance to execute an active horizontal scan sweep
@@ -552,7 +765,199 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
     return () => {
       if (saccadeTimerRef.current) clearTimeout(saccadeTimerRef.current);
     };
-  }, [mood]);
+  }, [mood, isAgentActive]);
+
+  // 2b. Agent Task Watcher Ocular Animation Controller
+  useEffect(() => {
+    if (!isAgentActive || !activeAgent || agentStatus?.status === 'idle') {
+      return;
+    }
+
+    let intervalId: any = null;
+    let step = 0;
+
+    if (agentStatus?.status === 'completed') {
+      setCurrentTarget({
+        name: 'agent_completed',
+        gazeX: 0,
+        gazeY: -0.5,
+        leftTopY: 15.0,
+        leftHeight: 13.0,
+        leftScaleX: 1.05,
+        leftTilt: 0,
+        rightTopY: 15.0,
+        rightHeight: 13.0,
+        rightScaleX: 1.05,
+        rightTilt: 0,
+        headTilt: 0,
+      });
+      setLeftEarTwitch(true);
+      setRightEarTwitch(true);
+      const t = setTimeout(() => {
+        setLeftEarTwitch(false);
+        setRightEarTwitch(false);
+      }, 500);
+      return () => clearTimeout(t);
+    }
+
+    if (activeAgent === 'antigravity') {
+      // GOOGLE ANTIGRAVITY ANIMATION:
+      // High-speed cognitive analysis & tool execution:
+      // Eyes rapidly sweep horizontally with analytical squints, reflecting code reasoning & tool execution!
+      intervalId = setInterval(() => {
+        step = (step + 1) % 4;
+        if (step === 0) {
+          setCurrentTarget({
+            name: 'antigravity_inspect_left',
+            gazeX: -2.6,
+            gazeY: -0.3,
+            leftTopY: 16.5,
+            leftHeight: 11.5,
+            leftScaleX: 0.94,
+            leftTilt: 0,
+            rightTopY: 16.5,
+            rightHeight: 11.5,
+            rightScaleX: 1.04,
+            rightTilt: 0,
+            headTilt: -1.5,
+          });
+        } else if (step === 1) {
+          setIsScanning(true);
+          setCurrentTarget({
+            name: 'antigravity_scan_right',
+            gazeX: 2.8,
+            gazeY: -0.2,
+            leftTopY: 15.8,
+            leftHeight: 12.2,
+            leftScaleX: 1.03,
+            leftTilt: 0,
+            rightTopY: 15.8,
+            rightHeight: 12.2,
+            rightScaleX: 0.93,
+            rightTilt: 0,
+            headTilt: 2.0,
+          });
+          setRightEarTwitch(true);
+          setTimeout(() => setRightEarTwitch(false), 200);
+        } else if (step === 2) {
+          setIsScanning(false);
+          setCurrentTarget({
+            name: 'antigravity_squint',
+            gazeX: 0,
+            gazeY: 0.4,
+            leftTopY: 18.2,
+            leftHeight: 9.8,
+            leftScaleX: 1.0,
+            leftTilt: 0,
+            rightTopY: 18.2,
+            rightHeight: 9.8,
+            rightScaleX: 1.0,
+            rightTilt: 0,
+            headTilt: 0,
+          });
+        } else {
+          setCurrentTarget({
+            name: 'antigravity_perk',
+            gazeX: 0,
+            gazeY: -0.8,
+            leftTopY: 14.8,
+            leftHeight: 13.2,
+            leftScaleX: 1.05,
+            leftTilt: 0,
+            rightTopY: 14.8,
+            rightHeight: 13.2,
+            rightScaleX: 1.05,
+            rightTilt: 0,
+            headTilt: -0.5,
+          });
+        }
+      }, 950);
+    } else if (activeAgent === 'codex') {
+      // OPENAI CODEX ANIMATION:
+      // Rhythmic Matrix / Terminal Code-Stream Cadence:
+      // Laser-focused forward gaze with synchronized, sharp code-pulse micro-blinks!
+      intervalId = setInterval(() => {
+        step = (step + 1) % 3;
+        if (step === 0) {
+          setCurrentTarget({
+            name: 'codex_laser_focus',
+            gazeX: 0,
+            gazeY: 0,
+            leftTopY: 16.0,
+            leftHeight: 12.0,
+            leftScaleX: 1.0,
+            leftTilt: 0,
+            rightTopY: 16.0,
+            rightHeight: 12.0,
+            rightScaleX: 1.0,
+            rightTilt: 0,
+            headTilt: 0,
+          });
+        } else if (step === 1) {
+          triggerBlink();
+          setLeftEarTwitch(true);
+          setTimeout(() => setLeftEarTwitch(false), 150);
+        } else {
+          setCurrentTarget({
+            name: 'codex_concentrated',
+            gazeX: 0.8,
+            gazeY: 0.2,
+            leftTopY: 17.5,
+            leftHeight: 10.5,
+            leftScaleX: 1.0,
+            leftTilt: 0,
+            rightTopY: 17.5,
+            rightHeight: 10.5,
+            rightScaleX: 1.0,
+            rightTilt: 0,
+            headTilt: 1.0,
+          });
+        }
+      }, 750);
+    } else if (activeAgent === 'claude') {
+      // ANTHROPIC CLAUDE ANIMATION:
+      // Calm, deep philosophical contemplation & reasoning:
+      // Smooth, wide reflective gaze with slow warm breathing pulses and gentle curious tilts!
+      intervalId = setInterval(() => {
+        step = (step + 1) % 2;
+        if (step === 0) {
+          setCurrentTarget({
+            name: 'claude_thinking_up',
+            gazeX: -1.0,
+            gazeY: -1.2,
+            leftTopY: 15.0,
+            leftHeight: 13.0,
+            leftScaleX: 1.02,
+            leftTilt: 0,
+            rightTopY: 15.0,
+            rightHeight: 13.0,
+            rightScaleX: 1.02,
+            rightTilt: 0,
+            headTilt: -2.0,
+          });
+        } else {
+          setCurrentTarget({
+            name: 'claude_contemplation',
+            gazeX: 1.2,
+            gazeY: -0.4,
+            leftTopY: 15.5,
+            leftHeight: 12.5,
+            leftScaleX: 1.0,
+            leftTilt: 0,
+            rightTopY: 15.5,
+            rightHeight: 12.5,
+            rightScaleX: 1.0,
+            rightTilt: 0,
+            headTilt: 1.5,
+          });
+        }
+      }, 1800);
+    }
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [isAgentActive, activeAgent, agentStatus?.status]);
 
   // 3. Realistic Eyelid Blink Engine (Ballistic Descent, Spring Reopen & Double-Blink)
   const triggerBlink = () => {
@@ -617,6 +1022,13 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
     mass: 0.38,
   };
 
+  const trackingSpring = {
+    type: 'spring',
+    stiffness: 520,
+    damping: 38,
+    mass: 0.32,
+  };
+
   const scanSpring = {
     type: 'spring',
     stiffness: 180,
@@ -667,6 +1079,7 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
 
   return (
     <motion.div
+      ref={avatarContainerRef}
       className="relative flex items-center justify-center select-none cursor-pointer shrink-0 aspect-square"
       style={{
         width: size,
@@ -700,9 +1113,23 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
         }}
         transition={headSpring}
       >
-        {/* Subtle OLED Ambient Halo (Zero vertical bob) - disabled in idle mode */}
+        {/* Subtle OLED Ambient Halo (Zero vertical bob) - dynamic glow matching eye color & active CLI agent */}
         {!isIdleMascotOnly && (
-          <div className="absolute inset-0 rounded-full blur-md bg-white/10 pointer-events-none" />
+          <div
+            className={`absolute inset-0 rounded-full blur-md pointer-events-none transition-colors duration-500 ${
+              isAgentActive && activeAgent === 'antigravity'
+                ? 'bg-sky-400/35 shadow-[0_0_24px_rgba(56,189,248,0.5)]'
+                : isAgentActive && activeAgent === 'codex'
+                ? 'bg-emerald-500/35 shadow-[0_0_24px_rgba(16,163,127,0.5)]'
+                : isAgentActive && activeAgent === 'claude'
+                ? 'bg-amber-500/35 shadow-[0_0_24px_rgba(245,158,11,0.5)]'
+                : effectiveEyeColor === '#EF4444'
+                ? 'bg-red-500/20'
+                : effectiveEyeColor === '#10B981'
+                ? 'bg-emerald-500/25'
+                : 'bg-white/10'
+            }`}
+          />
         )}
 
         <svg
@@ -838,9 +1265,9 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
                 y: activeGazeY,
               }}
               style={{
-                transition: isScanning ? 'transform 0.55s ease-in-out' : 'transform 0.12s cubic-bezier(0.16, 1, 0.3, 1)',
+                transition: isScanning ? 'transform 0.55s ease-in-out' : isTrackingMouse ? 'none' : 'transform 0.12s cubic-bezier(0.16, 1, 0.3, 1)',
               }}
-              transition={isScanning ? scanSpring : saccadeSpring}
+              transition={isScanning ? scanSpring : isTrackingMouse ? trackingSpring : saccadeSpring}
             >
               {isMusicPlaying && (isIdleMascotOnly || mood === 'idle') ? (
                 // Musical Equalizer Dancing Spectrum Eyes (Replaces eyes during music idle mode)
@@ -912,23 +1339,25 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
                     ♪
                   </text>
                 </motion.g>
-              ) : mood === 'happy' ? (
+              ) : mood === 'happy' || (isAgentActive && agentStatus?.status === 'completed') ? (
                 // Joyful Upward Curved Arcs (^^)
                 <>
                   <path
                     d="M13 22C13 18.5 16 17.5 19 21"
-                    stroke="#FFFFFF"
+                    stroke={effectiveEyeColor}
                     strokeWidth="2.6"
                     strokeLinecap="round"
+                    style={{ transition: 'stroke 0.45s ease' }}
                   />
                   <path
                     d="M25 21C28 17.5 31 18.5 31 22"
-                    stroke="#FFFFFF"
+                    stroke={effectiveEyeColor}
                     strokeWidth="2.6"
                     strokeLinecap="round"
+                    style={{ transition: 'stroke 0.45s ease' }}
                   />
                 </>
-              ) : mood === 'working' ? (
+              ) : mood === 'working' && !isAgentActive ? (
                 // Cybernetic Scanning Bars (Laser focus during CLI / APK building)
                 <motion.g
                   animate={{
@@ -946,7 +1375,8 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
                     width="8.8"
                     height="4.5"
                     rx="2.25"
-                    fill="#FFFFFF"
+                    fill={effectiveEyeColor}
+                    style={{ transition: 'fill 0.45s ease' }}
                   />
                   <rect
                     x="24.2"
@@ -954,14 +1384,15 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
                     width="8.8"
                     height="4.5"
                     rx="2.25"
-                    fill="#FFFFFF"
+                    fill={effectiveEyeColor}
+                    style={{ transition: 'fill 0.45s ease' }}
                   />
                 </motion.g>
               ) : mood === 'error' ? (
                 // Error / Slanted Slits (/ \)
                 <>
-                  <line x1="12.5" y1="20" x2="19.5" y2="23.5" stroke="#FFFFFF" strokeWidth="2.4" strokeLinecap="round" />
-                  <line x1="24.5" y1="23.5" x2="31.5" y2="20" stroke="#FFFFFF" strokeWidth="2.4" strokeLinecap="round" />
+                  <line x1="12.5" y1="20" x2="19.5" y2="23.5" stroke={effectiveEyeColor} strokeWidth="2.4" strokeLinecap="round" style={{ transition: 'stroke 0.45s ease' }} />
+                  <line x1="24.5" y1="23.5" x2="31.5" y2="20" stroke={effectiveEyeColor} strokeWidth="2.4" strokeLinecap="round" style={{ transition: 'stroke 0.45s ease' }} />
                 </>
               ) : (
                 // Realistic Grok Bot Morphing Eyes (Alert & Idle states with Top-Down Lid Kinematics)
@@ -982,7 +1413,8 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
                       rx={EYE_RX}
                       width={EYE_WIDTH}
                       height={currentLeftHeight}
-                      fill="#FFFFFF"
+                      fill={effectiveEyeColor}
+                      style={{ transition: 'fill 0.45s ease' }}
                       animate={{
                         attrY: currentLeftTopY,
                         height: currentLeftHeight,
@@ -1008,7 +1440,8 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
                       rx={currentRightRx}
                       width={EYE_WIDTH}
                       height={currentRightHeight}
-                      fill="#FFFFFF"
+                      fill={effectiveEyeColor}
+                      style={{ transition: 'fill 0.45s ease' }}
                       animate={{
                         attrY: currentRightTopY,
                         height: currentRightHeight,
