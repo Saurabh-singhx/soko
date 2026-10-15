@@ -12,6 +12,7 @@ import {
   AiTokenSummary,
   CliAgentId,
   AgentActivityStatus,
+  AgentSessionInfo,
 } from '../types/index.ts';
 
 type ConnectionEventListener = (status: ConnectionStatus, device: PairedDevice | null) => void;
@@ -37,6 +38,7 @@ class ConnectionManager {
   private ws: WebSocket | null = null;
   private status: ConnectionStatus = 'disconnected';
   private activeDevice: PairedDevice | null = null;
+  private discoveredDevice: DiscoveredDevice | null = null;
   private sasPin: string = '482 195';
   private bridgeUrl: string = 'ws://127.0.0.1:8766';
   private localIps: string[] = ['192.168.31.210'];
@@ -98,6 +100,10 @@ class ConnectionManager {
 
   public getActiveDevice(): PairedDevice | null {
     return this.activeDevice;
+  }
+
+  public getDiscoveredDevice(): DiscoveredDevice | null {
+    return this.discoveredDevice;
   }
 
   public getSasPin(): string {
@@ -189,6 +195,10 @@ class ConnectionManager {
           format: data.format,
           bitrate: data.bitrate,
           source: data.source,
+          isSpeakerMuted: Boolean(data.isSpeakerMuted),
+          activeApp: data.activeApp,
+          title: data.title,
+          autoMuteSpeakerOnStream: data.autoMuteSpeakerOnStream !== false,
         };
         this.audioStatusListeners.forEach((l) => l(this.audioStatus));
         return this.audioStatus;
@@ -197,6 +207,95 @@ class ConnectionManager {
       console.warn('[ConnectionManager] Failed to fetch audio status:', err);
     }
     return this.audioStatus;
+  }
+
+  public async controlAudio(action: 'play-pause' | 'next' | 'prev' | 'play' | 'pause'): Promise<boolean> {
+    const httpBase = this.bridgeUrl.replace(/^ws/, 'http');
+    try {
+      const res = await fetch(`${httpBase}/api/audio/control`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return Boolean(data.success);
+      }
+    } catch (err) {
+      console.warn('[ConnectionManager] controlAudio failed:', err);
+    }
+    this.sendPacket({
+      magic: 'SK',
+      version: 1,
+      packetId: Date.now(),
+      timestamp: Date.now(),
+      packetType: 'AUDIO_CONTROL',
+      payload: { action },
+    });
+    return true;
+  }
+
+  public async setSpeakerMute(mute: boolean): Promise<boolean> {
+    const httpBase = this.bridgeUrl.replace(/^ws/, 'http');
+    try {
+      const res = await fetch(`${httpBase}/api/audio/mute-speaker`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mute }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        this.audioStatus = {
+          ...this.audioStatus,
+          isSpeakerMuted: Boolean(data.isMuted),
+        };
+        this.audioStatusListeners.forEach((l) => l(this.audioStatus));
+        return true;
+      }
+    } catch (err) {
+      console.warn('[ConnectionManager] setSpeakerMute failed:', err);
+    }
+    this.sendPacket({
+      magic: 'SK',
+      version: 1,
+      packetId: Date.now(),
+      timestamp: Date.now(),
+      packetType: 'AUDIO_MUTE_SPEAKER',
+      payload: { mute },
+    });
+    return true;
+  }
+
+  public async toggleSpeakerMute(): Promise<boolean> {
+    const httpBase = this.bridgeUrl.replace(/^ws/, 'http');
+    try {
+      const res = await fetch(`${httpBase}/api/audio/mute-speaker`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'toggle' }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        this.audioStatus = {
+          ...this.audioStatus,
+          isSpeakerMuted: Boolean(data.isMuted),
+        };
+        this.audioStatusListeners.forEach((l) => l(this.audioStatus));
+        return Boolean(data.isMuted);
+      }
+    } catch (err) {
+      console.warn('[ConnectionManager] toggleSpeakerMute failed:', err);
+    }
+    const nextMute = !this.audioStatus.isSpeakerMuted;
+    this.sendPacket({
+      magic: 'SK',
+      version: 1,
+      packetId: Date.now(),
+      timestamp: Date.now(),
+      packetType: 'AUDIO_MUTE_SPEAKER',
+      payload: { action: 'toggle' },
+    });
+    return nextMute;
   }
 
   public subscribeTokenStats(listener: TokenStatsListener): () => void {
@@ -237,6 +336,44 @@ class ConnectionManager {
 
   public getAgentActivity(): AgentActivityStatus {
     return this.agentActivity;
+  }
+
+  public getActiveAgentSessions(): AgentSessionInfo[] {
+    return this.agentActivity?.activeSessions || [];
+  }
+
+  private currentPendingPair: PairRequestPending | null = null;
+
+  public getPendingPair(): PairRequestPending | null {
+    return this.currentPendingPair;
+  }
+
+  public async fetchPendingPair(): Promise<PairRequestPending | null> {
+    try {
+      const httpBase = this.bridgeUrl.replace(/^ws/, 'http');
+      const res = await fetch(`${httpBase}/api/devices/pending-pair`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.pending && data.pending.length > 0) {
+          this.currentPendingPair = data.pending[0];
+          return this.currentPendingPair;
+        } else {
+          this.currentPendingPair = null;
+        }
+      }
+    } catch {}
+    return this.currentPendingPair;
+  }
+
+  public setFocusedAgentSession(sessionId: string | null): void {
+    this.sendPacket({
+      magic: 'SK',
+      version: 1,
+      packetId: Date.now(),
+      timestamp: Date.now(),
+      packetType: 'SET_FOCUSED_AGENT_SESSION',
+      payload: { sessionId },
+    });
   }
 
   public async fetchAgentActivity(): Promise<AgentActivityStatus> {
@@ -621,28 +758,29 @@ class ConnectionManager {
           }
           if (packet.payload.pairedDevice && packet.payload.pairedDevice.isAuthorized) {
             this.activeDevice = packet.payload.pairedDevice;
+            this.discoveredDevice = null;
             this.status = 'connected';
+          } else if (packet.payload.discoveredDevice) {
+            this.activeDevice = null;
+            this.discoveredDevice = packet.payload.discoveredDevice;
+            this.status = 'discovered';
           } else if (this.activeClients >= 2) {
-            if (!this.activeDevice) {
-              const primaryIp = this.localIps[0] || '192.168.31.210';
-              this.activeDevice = {
-                id: `wifi-companion-${primaryIp}`,
-                name: 'Mobile Companion (Android)',
-                model: `Local Companion (${primaryIp}:8766)`,
-                transport: 'wifi',
-                rssi: -45,
-                pingMs: 10,
-                batteryLevel: 94,
-                lastSeen: Date.now(),
-                isAuthorized: true,
-                ipAddress: primaryIp,
-              };
-            }
-            this.status = 'connected';
-          } else if (this.activeDevice && this.status === 'connected' && this.activeClients > 0) {
-            // Keep connected if device was already communicating
+            // Unpaired client connected on LAN: show discovered/present with pairing option, NOT connected!
+            this.activeDevice = null;
+            const primaryIp = this.localIps[0] || '192.168.31.210';
+            this.discoveredDevice = {
+              id: `wifi-companion-${primaryIp}`,
+              name: 'Mobile Companion (Android)',
+              model: `Local Companion (${primaryIp}:8766)`,
+              transport: 'wifi',
+              rssi: -45,
+              ipAddress: primaryIp,
+              isPaired: false,
+            };
+            this.status = 'discovered';
           } else {
             this.activeDevice = null;
+            this.discoveredDevice = null;
             this.status = 'disconnected';
           }
           this.notifyBridge();
@@ -678,6 +816,10 @@ class ConnectionManager {
             format: packet.payload.format,
             bitrate: packet.payload.bitrate,
             source: packet.payload.source,
+            isSpeakerMuted: Boolean(packet.payload.isSpeakerMuted),
+            activeApp: packet.payload.activeApp,
+            title: packet.payload.title,
+            autoMuteSpeakerOnStream: packet.payload.autoMuteSpeakerOnStream !== false,
           };
           this.audioStatusListeners.forEach((l) => l(this.audioStatus));
         }
@@ -707,12 +849,14 @@ class ConnectionManager {
             ip: packet.payload.ip,
             timestamp: Date.now(),
           };
+          this.currentPendingPair = req;
           this.pendingPairListeners.forEach((l) => l(req));
         }
         break;
 
       case 'PAIR_CONFIRM':
         if (packet.payload) {
+          this.currentPendingPair = null;
           this.status = 'connected';
           this.notifyStatus();
         }
@@ -720,26 +864,8 @@ class ConnectionManager {
 
       case 'NOTIFICATION_POST':
         if (packet.payload) {
-          if (!this.activeDevice) {
-            const primaryIp = this.localIps[0] || '192.168.31.210';
-            this.activeDevice = {
-              id: packet.payload.deviceId || `wifi-companion-${primaryIp}`,
-              name: packet.payload.deviceName || (packet.payload.appName ? `${packet.payload.appName} Device` : 'Mobile Companion (Android)'),
-              model: packet.payload.model || `Local Companion (${primaryIp}:8766)`,
-              transport: 'wifi',
-              rssi: -45,
-              pingMs: 8,
-              batteryLevel: packet.payload.batteryLevel || 95,
-              lastSeen: Date.now(),
-              isAuthorized: true,
-              ipAddress: primaryIp,
-            };
-          } else {
+          if (this.activeDevice) {
             this.activeDevice.lastSeen = Date.now();
-          }
-          if (this.status !== 'connected') {
-            this.status = 'connected';
-            this.notifyStatus();
           }
 
           const notif: MirroredNotification = {
@@ -865,7 +991,10 @@ class ConnectionManager {
   /**
    * Pairs with a user-selected device after verification.
    */
-  public async pairWithDevice(device: DiscoveredDevice, pin?: string): Promise<boolean> {
+  public async pairWithDevice(
+    device: DiscoveredDevice,
+    pin?: string
+  ): Promise<{ success: boolean; error?: string; message?: string }> {
     this.status = 'connecting';
     this.notifyStatus();
 
@@ -885,35 +1014,37 @@ class ConnectionManager {
         }),
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.pairedDevice) {
-          this.activeDevice = data.pairedDevice;
-          this.status = 'connected';
-          this.notifyStatus();
-          return true;
-        }
-      }
-    } catch (err) {
-      console.error('[ConnectionManager] pairWithDevice failed:', err);
-    }
+      const data = await res.json().catch(() => ({}));
 
-    // Direct fallback pairing
-    this.activeDevice = {
-      id: device.id,
-      name: device.name,
-      model: device.model,
-      rssi: device.rssi,
-      pingMs: 12,
-      transport: device.transport,
-      batteryLevel: 96,
-      lastSeen: Date.now(),
-      isAuthorized: true,
-      ipAddress: device.ipAddress,
-    };
-    this.status = 'connected';
-    this.notifyStatus();
-    return true;
+      if (res.ok && data.success && data.pairedDevice) {
+        this.activeDevice = data.pairedDevice;
+        this.status = 'connected';
+        this.currentPendingPair = null;
+        this.notifyStatus();
+        return { success: true };
+      }
+
+      const errorMsg =
+        data.message ||
+        data.error ||
+        'Verification required: Mobile companion has not entered the 6-digit PIN yet.';
+      this.status = 'discovered';
+      this.notifyStatus();
+      return {
+        success: false,
+        error: data.error || 'PIN_NOT_VERIFIED',
+        message: errorMsg,
+      };
+    } catch (err: any) {
+      console.error('[ConnectionManager] pairWithDevice failed:', err);
+      this.status = 'discovered';
+      this.notifyStatus();
+      return {
+        success: false,
+        error: 'NETWORK_ERROR',
+        message: `Failed to connect to bridge daemon: ${err?.message || 'Network error'}`,
+      };
+    }
   }
 
   /**
@@ -924,11 +1055,13 @@ class ConnectionManager {
   }
 
   /**
-   * Disconnects mobile link.
+   * Disconnects mobile link and completely forgets device credentials.
    */
   public disconnectDevice(): void {
+    const devId = this.activeDevice?.id;
     this.status = 'disconnected';
     this.activeDevice = null;
+    this.discoveredDevice = null;
     this.notifyStatus();
 
     this.sendPacket({
@@ -937,12 +1070,16 @@ class ConnectionManager {
       packetId: Date.now(),
       timestamp: Date.now(),
       packetType: 'UNPAIR_REQUEST',
-      payload: {},
+      payload: { deviceId: devId, forget: true, reason: 'desktop_disconnect' },
     });
 
     try {
       const httpBase = this.bridgeUrl.replace(/^ws/, 'http');
-      fetch(`${httpBase}/api/devices/unpair`, { method: 'POST' }).catch(() => {});
+      fetch(`${httpBase}/api/devices/unpair`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId: devId, forget: true }),
+      }).catch(() => {});
     } catch {}
   }
 

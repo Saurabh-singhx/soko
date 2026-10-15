@@ -73,7 +73,7 @@ export interface BluetoothDevice {
   isConnected: boolean;
 }
 
-export type ConnectionStatus = 'disconnected' | 'scanning' | 'connecting' | 'connected';
+export type ConnectionStatus = 'disconnected' | 'scanning' | 'connecting' | 'connected' | 'discovered';
 export type TransportProtocol = 'ble' | 'wifi' | 'dual';
 
 export interface DiscoveredDevice {
@@ -130,26 +130,51 @@ export interface SokoPacketEnvelope {
     | 'FILE_FAILED'
     | 'FILE_RETRY'
     | 'AUDIO_STATUS'
+    | 'AUDIO_CONTROL'
+    | 'AUDIO_MUTE_SPEAKER'
     | 'FETCH_TOKEN_STATS'
     | 'TOKEN_STATS_UPDATE'
     | 'FETCH_AGENT_ACTIVITY'
     | 'AGENT_ACTIVITY_STATUS'
+    | 'FETCH_AGENT_SESSIONS'
+    | 'SET_FOCUSED_AGENT_SESSION'
     | 'SIMULATE_AGENT_ACTIVITY';
   payload: Record<string, any>;
 }
 
 export type CliAgentId = 'antigravity' | 'codex' | 'claude' | null;
 
-export interface AgentActivityStatus {
+export interface AgentSessionInfo {
+  sessionId: string;
   agent: CliAgentId;
-  name: string | null;
-  status: 'working' | 'thinking' | 'completed' | 'idle';
+  name: string;
+  status: 'working' | 'thinking' | 'completed' | 'idle' | 'waiting';
   detail?: string;
   message?: string;
+  taskSummary?: string;
+  tokensUsed?: number;
+  workspace?: string;
+  workspaceName?: string;
+  timestamp: number;
+}
+
+export interface AgentActivityStatus {
+  agent: CliAgentId;
+  activeAgent?: CliAgentId;
+  name: string | null;
+  status: 'working' | 'thinking' | 'completed' | 'idle' | 'waiting';
+  detail?: string;
+  message?: string;
+  taskSummary?: string;
   tokensUsed?: number;
   inputTokens?: number;
   outputTokens?: number;
   timestamp: number;
+  sessionId?: string;
+  workspace?: string;
+  workspaceName?: string;
+  activeCount?: number;
+  activeSessions?: AgentSessionInfo[];
 }
 
 export interface AssistantTokenStats {
@@ -202,6 +227,10 @@ export interface AudioStreamStatus {
   format?: string;
   bitrate?: string;
   source?: string;
+  isSpeakerMuted?: boolean;
+  activeApp?: string;
+  title?: string;
+  autoMuteSpeakerOnStream?: boolean;
 }
 
 declare global {

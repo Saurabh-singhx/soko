@@ -21,9 +21,11 @@ import {
   ArrowLeft,
   CheckCircle2,
   Zap,
+  AlertTriangle,
 } from 'lucide-react';
-import { ConnectionStatus, PairedDevice, DiscoveredDevice, AiTokenSummary } from '../../types/index.ts';
+import { ConnectionStatus, PairedDevice, DiscoveredDevice, AiTokenSummary, AgentActivityStatus, FileTransferStatus } from '../../types/index.ts';
 import { connectionService } from '../../services/connection.ts';
+import { getAgentProjectTheme } from '../../utils/agentTheme.ts';
 
 interface ConnectionPopoverProps {
   status: ConnectionStatus;
@@ -68,7 +70,7 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
   const [isPairingInFlight, setIsPairingInFlight] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const isConnected = status === 'connected' || Boolean(device);
+  const isConnected = status === 'connected' && Boolean(device?.isAuthorized);
   const isScanning = isScanningDevices || status === 'scanning' || status === 'connecting';
   const localIps = connectionService.getLocalIps();
   const primaryIp = localIps[0] || '192.168.31.210';
@@ -78,6 +80,10 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
     setIsScanningDevices(true);
     try {
       const list = await connectionService.scanForDevices();
+      const disc = connectionService.getDiscoveredDevice();
+      if (disc && !list.some((d) => d.id === disc.id)) {
+        list.unshift(disc);
+      }
       setDiscoveredDevices(list);
     } catch (e) {
       console.warn('Failed to scan devices:', e);
@@ -88,20 +94,36 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
 
   React.useEffect(() => {
     if (!isConnected) {
+      const disc = connectionService.getDiscoveredDevice();
+      if (disc) {
+        setDiscoveredDevices((prev) => (prev.some((d) => d.id === disc.id) ? prev : [disc, ...prev]));
+      }
       fetchDiscoveredDevices();
     }
-  }, [isConnected]);
+  }, [isConnected, status]);
 
   const [tokenSummary, setTokenSummary] = useState<AiTokenSummary | null>(() => connectionService.getTokenSummary());
+  const [agentActivity, setAgentActivity] = useState<AgentActivityStatus | null>(() => connectionService.getAgentActivity());
+  const [activeTransfer, setActiveTransfer] = useState<FileTransferStatus | null>(() => connectionService.getCurrentTransfer());
 
   React.useEffect(() => {
     const unsubTokens = connectionService.subscribeTokenStats((stats) => {
       setTokenSummary(stats);
     });
+    const unsubAgent = connectionService.subscribeAgentActivity((status) => {
+      setAgentActivity(status);
+    });
+    const unsubTransfer = connectionService.onTransfer((transfer) => {
+      setActiveTransfer(transfer);
+    });
     if (!connectionService.getTokenSummary()) {
       connectionService.fetchTokenSummary().catch(() => {});
     }
-    return unsubTokens;
+    return () => {
+      unsubTokens();
+      unsubAgent();
+      unsubTransfer();
+    };
   }, []);
 
   const formatTokens = (num: number) => {
@@ -111,12 +133,52 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
     return num.toLocaleString();
   };
 
+  const [pairError, setPairError] = useState<string | null>(null);
+  const [pendingVerified, setPendingVerified] = useState<boolean>(false);
+
+  React.useEffect(() => {
+    if (selectedDeviceToPair) {
+      setPairError(null);
+      connectionService.fetchPendingPair().then((p) => {
+        if (p && (p.deviceId === selectedDeviceToPair.id || (selectedDeviceToPair.ipAddress && p.ip?.includes(selectedDeviceToPair.ipAddress)))) {
+          setPendingVerified(true);
+        } else {
+          setPendingVerified(false);
+        }
+      });
+    } else {
+      setPairError(null);
+      setPendingVerified(false);
+    }
+  }, [selectedDeviceToPair]);
+
+  React.useEffect(() => {
+    const unsubPending = connectionService.onPendingPair((pairReq) => {
+      if (selectedDeviceToPair) {
+        if (pairReq.deviceId === selectedDeviceToPair.id || (selectedDeviceToPair.ipAddress && pairReq.ip?.includes(selectedDeviceToPair.ipAddress))) {
+          setPendingVerified(true);
+          setPairError(null);
+        }
+      }
+    });
+    return () => unsubPending();
+  }, [selectedDeviceToPair]);
+
   const handleConfirmPair = async () => {
     if (!selectedDeviceToPair) return;
     setIsPairingInFlight(true);
+    setPairError(null);
     try {
-      await connectionService.pairWithDevice(selectedDeviceToPair, sasPin);
-      setSelectedDeviceToPair(null);
+      const result = await connectionService.pairWithDevice(selectedDeviceToPair, sasPin);
+      if (result.success) {
+        setSelectedDeviceToPair(null);
+        setPairError(null);
+        setPendingVerified(false);
+      } else {
+        setPairError(result.message || 'Mobile companion has not entered or verified the 6-digit PIN yet.');
+      }
+    } catch (e: any) {
+      setPairError(e?.message || 'Pairing verification failed. Please check Wi-Fi connection.');
     } finally {
       setIsPairingInFlight(false);
     }
@@ -127,7 +189,6 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
     if (file) {
       connectionService.sendRealFile(file);
       e.target.value = '';
-      onClose();
     }
   };
 
@@ -194,7 +255,7 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
                 </div>
 
                 <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[10px] font-medium font-mono shadow-[0_0_10px_rgba(52,211,153,0.25)]">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                   Active Link
                 </div>
               </div>
@@ -273,14 +334,38 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
                 <span className="text-base font-mono font-bold tracking-widest text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-lg border border-emerald-500/25 my-0.5">
                   {sasPin}
                 </span>
-                <span className="text-[9.5px] text-linear-text-tertiary">
-                  Confirm PIN code matches your companion device
+                <span className="text-[9.5px] text-linear-text-secondary">
+                  Enter this 6-digit PIN on your phone in the Soko companion app
                 </span>
               </div>
 
+              {/* Live Verification Status & Error Alert */}
+              {pairError ? (
+                <div className="flex items-start gap-2 p-2 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-[10.5px]">
+                  <AlertTriangle size={13} className="shrink-0 mt-0.5 text-rose-400" />
+                  <div className="min-w-0">
+                    <span className="font-semibold block text-rose-200">Verification Required</span>
+                    <span className="text-white/80 leading-tight block">{pairError}</span>
+                  </div>
+                </div>
+              ) : pendingVerified ? (
+                <div className="flex items-center gap-2 p-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[10.5px]">
+                  <CheckCircle2 size={13} className="shrink-0 text-emerald-400" />
+                  <span>✓ 6-Digit PIN verified on phone! Click Confirm Link to connect.</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 p-2 rounded-xl bg-white/[0.04] border border-white/[0.08] text-linear-text-secondary text-[10.5px]">
+                  <RefreshCw size={12} className="animate-spin text-[#5E6AD2]" />
+                  <span>Waiting for phone to enter PIN {sasPin}...</span>
+                </div>
+              )}
+
               <div className="flex items-center gap-2 pt-1">
                 <button
-                  onClick={() => setSelectedDeviceToPair(null)}
+                  onClick={() => {
+                    setSelectedDeviceToPair(null);
+                    setPairError(null);
+                  }}
                   className="flex-1 py-1.5 px-2 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-linear-text-secondary hover:text-white text-[11px] font-medium border border-white/[0.08] transition-all"
                 >
                   Cancel
@@ -288,14 +373,18 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
                 <button
                   onClick={handleConfirmPair}
                   disabled={isPairingInFlight}
-                  className="flex-1 py-1.5 px-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black text-[11px] font-semibold shadow-[0_0_16px_rgba(52,211,153,0.35)] active:scale-95 transition-all flex items-center justify-center gap-1.5 disabled:opacity-60"
+                  className={`flex-1 py-1.5 px-2 rounded-xl text-black text-[11px] font-semibold active:scale-95 transition-all flex items-center justify-center gap-1.5 disabled:opacity-60 ${
+                    pendingVerified
+                      ? 'bg-emerald-400 hover:bg-emerald-300 shadow-[0_0_20px_rgba(52,211,153,0.5)]'
+                      : 'bg-emerald-500 hover:bg-emerald-400 shadow-[0_0_16px_rgba(52,211,153,0.35)]'
+                  }`}
                 >
                   {isPairingInFlight ? (
                     <RefreshCw size={12} className="animate-spin" />
                   ) : (
                     <CheckCircle2 size={13} />
                   )}
-                  <span>Confirm Link</span>
+                  <span>{pendingVerified ? 'Approve & Link' : 'Confirm Link'}</span>
                 </button>
               </div>
             </div>
@@ -440,14 +529,117 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
           </div>
         </div>
 
-        {/* Hidden file input for native file selection */}
+        {/* Hidden file input for native file selection (All files) */}
         <input
           ref={fileInputRef}
           type="file"
-          accept=".apk,application/vnd.android.package-archive,*"
           className="hidden"
           onChange={handleFileSelect}
         />
+
+        {/* Active CLI Agent Sessions Section */}
+        {agentActivity?.activeSessions && agentActivity.activeSessions.length > 0 && (
+          <div className="bg-white/[0.035] border border-white/[0.08] rounded-xl p-2.5 backdrop-blur-xl flex flex-col gap-2 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <div className="w-5 h-5 rounded-md bg-cyan-500/20 border border-cyan-500/35 flex items-center justify-center text-cyan-400">
+                  <Terminal size={11} className="text-cyan-400" />
+                </div>
+                <span className="text-[11px] font-semibold text-white tracking-tight flex items-center gap-1.5">
+                  Active CLI Sessions
+                  <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
+                    {agentActivity.activeCount || agentActivity.activeSessions.length} active
+                  </span>
+                </span>
+              </div>
+              <span className="text-[9.5px] font-mono text-linear-text-tertiary">
+                Real-Time Watcher
+              </span>
+            </div>
+
+            <div className="flex flex-col gap-1.5 pt-1 border-t border-white/[0.05]">
+              {agentActivity.activeSessions.map((s, idx) => {
+                const isWorking = s.status === 'working' || s.status === 'thinking';
+                const isWaiting = s.status === 'waiting';
+                const isCompleted = s.status === 'completed';
+                const isFocused = agentActivity.sessionId === s.sessionId;
+
+                const sessionTheme = getAgentProjectTheme(s.agent, s.sessionId, s.workspaceName, idx);
+
+                const agentBadgeColor = s.agent === 'antigravity'
+                  ? 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30'
+                  : s.agent === 'codex'
+                  ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                  : 'bg-amber-500/15 text-amber-300 border-amber-500/30';
+
+                return (
+                  <div
+                    key={s.sessionId}
+                    onClick={() => {
+                      connectionService.setFocusedAgentSession(s.sessionId);
+                    }}
+                    className={`group/session flex flex-col gap-1 p-2 rounded-lg border transition-all cursor-pointer ${
+                      isFocused
+                        ? 'bg-cyan-500/10 border-cyan-500/35 shadow-[0_0_12px_rgba(6,182,212,0.15)]'
+                        : 'bg-white/[0.02] hover:bg-white/[0.05] border-white/[0.06] hover:border-white/15'
+                    }`}
+                    title="Click to focus this session on Dynamic Island HUD"
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className={`text-[9px] font-mono font-medium px-1.5 py-0.2 rounded border ${agentBadgeColor}`}>
+                          {s.name || s.agent}
+                        </span>
+                        {s.workspaceName && (
+                          <span
+                            className={`text-[9.5px] font-mono px-1.5 py-0.2 rounded border truncate max-w-[110px] shrink-0 transition-colors ${sessionTheme.bg} ${sessionTheme.text} ${sessionTheme.border}`}
+                            title={`Project: ${s.workspaceName}\nPath: ${s.workspace || s.workspaceName}`}
+                          >
+                            📁 {s.workspaceName}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0 text-[9.5px] font-mono">
+                        {isWorking && (
+                          <span className="flex items-center gap-1 text-cyan-300">
+                            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
+                            working
+                          </span>
+                        )}
+                        {isWaiting && (
+                          <span className="flex items-center gap-1 text-amber-300">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                            waiting
+                          </span>
+                        )}
+                        {isCompleted && (
+                          <span className="flex items-center gap-1 text-emerald-300">
+                            <Check size={10} className="text-emerald-400" />
+                            done
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="text-[10px] text-linear-text-secondary truncate font-sans">
+                      {s.detail || s.message || s.taskSummary || 'Session active'}
+                    </div>
+
+                    <div className="flex items-center justify-between text-[9px] font-mono text-linear-text-tertiary pt-0.5 border-t border-white/[0.03]">
+                      <span>⚡ {formatTokens(s.tokensUsed || 0)} tokens</span>
+                      {isFocused && (
+                        <span className="text-cyan-400 font-semibold tracking-wide">
+                          FOCUSED HUD
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Native AI Token Telemetry Quick Glance */}
         <div
@@ -535,6 +727,70 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
               <FolderDown size={12} /> Storage
             </button>
           </div>
+
+          {/* Active File Transfer Visualizer */}
+          {activeTransfer && (
+            <div className="mt-2 bg-black/40 border border-white/[0.08] rounded-xl p-2.5 flex flex-col gap-1.5 font-mono">
+              <div className="flex items-center justify-between text-[10px]">
+                <div className="flex items-center gap-1.5 truncate max-w-[200px]">
+                  <FolderDown
+                    size={11}
+                    className={`shrink-0 ${
+                      activeTransfer.status === 'completed'
+                        ? 'text-emerald-400'
+                        : activeTransfer.status === 'failed' || activeTransfer.status === 'cancelled'
+                        ? 'text-rose-400'
+                        : 'text-[#7C88E8]'
+                    }`}
+                  />
+                  <span className="text-white font-medium truncate">{activeTransfer.filename}</span>
+                </div>
+                <span
+                  className={`text-[9.5px] font-semibold ${
+                    activeTransfer.status === 'completed'
+                      ? 'text-emerald-400'
+                      : activeTransfer.status === 'failed' || activeTransfer.status === 'cancelled'
+                      ? 'text-rose-400'
+                      : 'text-[#7C88E8]'
+                  }`}
+                >
+                  {activeTransfer.status === 'active'
+                    ? `${Math.round((activeTransfer.bytesDownloaded / Math.max(activeTransfer.totalBytes, 1)) * 100)}%`
+                    : activeTransfer.status.toUpperCase()}
+                </span>
+              </div>
+              <div className="w-full bg-white/10 rounded-full h-1 overflow-hidden">
+                <div
+                  className={`h-full transition-all duration-150 ${
+                    activeTransfer.status === 'completed'
+                      ? 'bg-emerald-400'
+                      : activeTransfer.status === 'failed' || activeTransfer.status === 'cancelled'
+                      ? 'bg-rose-400'
+                      : 'bg-[#5E6AD2]'
+                  }`}
+                  style={{
+                    width: `${Math.min(
+                      100,
+                      Math.round((activeTransfer.bytesDownloaded / Math.max(activeTransfer.totalBytes, 1)) * 100)
+                    )}%`,
+                  }}
+                />
+              </div>
+              <div className="flex items-center justify-between text-[9px] text-linear-text-tertiary">
+                <span>
+                  {(activeTransfer.bytesDownloaded / 1_048_576).toFixed(1)} / {(activeTransfer.totalBytes / 1_048_576).toFixed(1)} MB
+                </span>
+                {activeTransfer.status === 'active' && (
+                  <button
+                    onClick={() => connectionService.cancelTransfer(activeTransfer.id, activeTransfer.filename)}
+                    className="text-rose-400 hover:text-rose-300 font-semibold"
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Ambient Mascot Orb Settings & Instant Preview */}
@@ -624,7 +880,7 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
             onClick={onDisconnect}
             className="px-3 py-1.5 rounded-xl text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 text-[11px] font-semibold border border-rose-500/25 hover:border-rose-500/40 hover:shadow-[0_0_12px_rgba(244,63,94,0.25)] active:scale-[0.96] transition-all duration-150"
           >
-            Disconnect Link
+            Disconnect & Forget
           </button>
         ) : (
           <span className="text-[10px] text-linear-text-tertiary font-mono">Status: Offline</span>

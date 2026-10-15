@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Music, Check, Zap } from 'lucide-react';
+import { Check, Zap, Play, Pause, SkipBack, SkipForward, Volume2, VolumeX } from 'lucide-react';
 import { CharacterAvatar } from './CharacterAvatar.tsx';
 import { NotificationBanner } from './NotificationBanner.tsx';
 import { CliStatusWidget } from './CliStatusWidget.tsx';
 import { TransferProgress } from './TransferProgress.tsx';
 import { ConnectionPopover } from './ConnectionPopover.tsx';
 import { connectionService } from '../../services/connection.ts';
+import { getAgentProjectTheme } from '../../utils/agentTheme.ts';
 import {
   IslandMode,
   MascotMood,
@@ -62,6 +63,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
   const [agentStatus, setAgentStatus] = useState<AgentActivityStatus | null>(() =>
     connectionService.getAgentActivity()
   );
+  const [activeSessionIndex, setActiveSessionIndex] = useState(0);
 
   // Completed Agent task notice state (holds message & highlighted tokens)
   const [completedTaskNotice, setCompletedTaskNotice] = useState<{
@@ -69,6 +71,9 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     tokensUsed?: number;
     agent?: string | null;
     name?: string | null;
+    workspace?: string;
+    workspaceName?: string;
+    sessionId?: string;
     timestamp: number;
   } | null>(null);
   const completedTaskTimerRef = useRef<any>(null);
@@ -76,6 +81,73 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
   const [isBotClicked, setIsBotClicked] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
+
+  // Graceful player control persistence for 10s when playback is paused
+  const [showRecentAudioControls, setShowRecentAudioControls] = useState(false);
+  const recentAudioTimerRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (audioStatus.isPlaying) {
+      setShowRecentAudioControls(true);
+      if (recentAudioTimerRef.current) {
+        clearTimeout(recentAudioTimerRef.current);
+        recentAudioTimerRef.current = null;
+      }
+    } else if (showRecentAudioControls) {
+      recentAudioTimerRef.current = setTimeout(() => {
+        setShowRecentAudioControls(false);
+      }, 10000);
+    }
+    return () => {
+      if (recentAudioTimerRef.current) {
+        clearTimeout(recentAudioTimerRef.current);
+      }
+    };
+  }, [audioStatus.isPlaying]);
+
+  // Auto-carousel through concurrent active agent sessions when multiple are active
+  useEffect(() => {
+    if (!agentStatus?.activeSessions || agentStatus.activeSessions.length <= 1 || isHovered) {
+      return;
+    }
+    const interval = setInterval(() => {
+      setActiveSessionIndex((prev) => (prev + 1) % agentStatus.activeSessions!.length);
+    }, 4500);
+    return () => clearInterval(interval);
+  }, [agentStatus?.activeSessions, isHovered]);
+
+  const currentSession = useMemo(() => {
+    if (agentStatus?.activeSessions && agentStatus.activeSessions.length > 0) {
+      const idx = activeSessionIndex % agentStatus.activeSessions.length;
+      return agentStatus.activeSessions[idx] || agentStatus;
+    }
+    return agentStatus;
+  }, [agentStatus, activeSessionIndex]);
+
+  const isAgentRunning = Boolean(
+    currentSession &&
+    currentSession.agent &&
+    (currentSession.status === 'working' || currentSession.status === 'thinking' || currentSession.status === 'waiting')
+  );
+
+  const currentSessionTheme = useMemo(() => {
+    if (!currentSession) return null;
+    return getAgentProjectTheme(
+      currentSession.agent,
+      currentSession.sessionId,
+      currentSession.workspaceName,
+      activeSessionIndex
+    );
+  }, [currentSession, activeSessionIndex]);
+
+  const completedTaskTheme = useMemo(() => {
+    if (!completedTaskNotice) return null;
+    return getAgentProjectTheme(
+      completedTaskNotice.agent || undefined,
+      completedTaskNotice.sessionId,
+      completedTaskNotice.workspaceName
+    );
+  }, [completedTaskNotice]);
   const [isIdleMascotOnly, setIsIdleMascotOnly] = useState(false);
   const idleTimerRef = useRef<any>(null);
   const islandRef = useRef<HTMLDivElement>(null);
@@ -121,7 +193,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
 
       if (status.status === 'completed') {
         // Agent task is done! If in idle mode, wake Soko to normal mode immediately
-        wakeToNormalMode(25000);
+        wakeToNormalMode(20000);
         setMood('happy');
         setTimeout(() => {
           setMood((prev) => (prev === 'happy' ? 'idle' : prev));
@@ -133,6 +205,9 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
           tokensUsed: status.tokensUsed,
           agent: status.agent,
           name: status.name,
+          workspace: status.workspace,
+          workspaceName: status.workspaceName,
+          sessionId: status.sessionId,
           timestamp: Date.now(),
         });
 
@@ -142,8 +217,8 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         completedTaskTimerRef.current = setTimeout(() => {
           setCompletedTaskNotice(null);
         }, 20000);
-      } else if (status.status === 'working' || status.status === 'thinking') {
-        // Active agent running: wake Soko to normal mode
+      } else if (status.status === 'working' || status.status === 'thinking' || status.status === 'waiting') {
+        // Active agent running or waiting: wake Soko to normal mode
         wakeToNormalMode(10000);
         setMood(status.status === 'working' ? 'working' : 'thinking');
         setCompletedTaskNotice(null);
@@ -170,21 +245,27 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     }
 
     // 3b. Active CLI Agent execution (Google Antigravity, OpenAI Codex, Anthropic Claude)
-    if (agentStatus && agentStatus.agent && (agentStatus.status === 'working' || agentStatus.status === 'thinking')) {
-      const prefix = agentStatus.agent === 'antigravity'
+    if (currentSession && currentSession.agent && (currentSession.status === 'working' || currentSession.status === 'thinking' || currentSession.status === 'waiting')) {
+      const prefix = currentSession.agent === 'antigravity'
         ? '⚡ Antigravity'
-        : agentStatus.agent === 'codex'
+        : currentSession.agent === 'codex'
         ? '⚡ Codex'
         : '⚡ Claude';
-      return `${prefix}: ${agentStatus.detail || 'Thinking...'}`;
+      if (currentSession.status === 'waiting') {
+        return `${prefix}: ${currentSession.detail || 'Waiting...'}`;
+      }
+      return `${prefix}: ${currentSession.detail || 'Thinking...'}`;
     }
-    if (agentStatus && agentStatus.agent && agentStatus.status === 'completed') {
-      return `${agentStatus.name || 'Agent'}: Done ✓`;
+    if (currentSession && currentSession.agent && currentSession.status === 'completed') {
+      return `${currentSession.name || 'Agent'}: Done ✓`;
     }
 
-    // 4. Audio streaming to phone
+    // 4. Audio playing / streaming (player controls rendered directly in HUD)
+    if (audioStatus.isPlaying) {
+      return audioStatus.title || (audioStatus.isStreamingToMobile ? 'Streaming to Phone' : `${audioStatus.activeApp || 'Audio'} Playing`);
+    }
     if (audioStatus.isStreamingToMobile) {
-      return audioStatus.isPlaying ? 'Streaming music to phone' : 'Streaming audio to phone';
+      return 'Streaming audio to phone';
     }
 
     // 5. Connection states
@@ -193,6 +274,9 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     }
     if (connectionStatus === 'connecting') {
       return 'Connecting...';
+    }
+    if (connectionStatus === 'discovered') {
+      return 'Wi-Fi Device Present • Pair';
     }
     if (connectionStatus === 'disconnected') {
       return 'Not Connected';
@@ -205,7 +289,10 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     activeTransfer,
     activeCli,
     agentStatus,
+    currentSession,
+    audioStatus.isPlaying,
     audioStatus.isStreamingToMobile,
+    audioStatus.title,
     connectionStatus,
     pairedDevice,
   ]);
@@ -267,6 +354,9 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
 
     const unsubAudio = connectionService.onAudioStatus((status) => {
       setAudioStatus(status);
+      if (status.isPlaying) {
+        wakeToNormalMode();
+      }
     });
 
     const handleWakeEvent = () => {
@@ -382,13 +472,15 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     };
   }, [mode]);
 
-  // Arm, disarm, or reset idle timer based on mode, popover, hover state, completedTaskNotice, and active agent
+  // Arm, disarm, or reset idle timer based on mode, popover, hover state, completedTaskNotice, music playback, and active agent
   useEffect(() => {
     if (
       mode !== 'compact' ||
       isConnectionPopoverOpen ||
       isHovered ||
       completedTaskNotice !== null ||
+      audioStatus.isPlaying ||
+      showRecentAudioControls ||
       (agentStatus && agentStatus.agent && agentStatus.status !== 'idle')
     ) {
       if (idleTimerRef.current) {
@@ -399,6 +491,8 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         mode !== 'compact' ||
         isConnectionPopoverOpen ||
         completedTaskNotice !== null ||
+        audioStatus.isPlaying ||
+        showRecentAudioControls ||
         (agentStatus && agentStatus.agent && agentStatus.status !== 'idle')
       ) {
         setIsIdleMascotOnly(false);
@@ -413,7 +507,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         idleTimerRef.current = null;
       }
     };
-  }, [mode, isConnectionPopoverOpen, isHovered, completedTaskNotice, agentStatus?.status, agentStatus?.agent]);
+  }, [mode, isConnectionPopoverOpen, isHovered, completedTaskNotice, agentStatus?.status, agentStatus?.agent, audioStatus.isPlaying, showRecentAudioControls]);
 
   // Synchronize with settings updates or instant preview triggers
   useEffect(() => {
@@ -484,7 +578,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     let targetH = 68;
 
     if (isConnectionPopoverOpen) {
-      targetH = 520;
+      targetH = 560;
     } else if (isIdleMascotOnly) {
       targetH = 76;
     } else if (mode === 'notification') {
@@ -581,7 +675,41 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
             width = 395;
           }
           if (isBotClicked) width = Math.min(430, width + 20);
-          return { width: Math.min(420, width), height: isBotClicked ? 62 : 54 };
+          return { width: Math.min(420, width), height: isBotClicked ? 64 : 58 };
+        }
+
+        if (isAgentRunning && currentSession && currentSession.agent) {
+          const detailLen = (currentSession.detail || currentSession.message || '').length;
+          const hasWorkspace = Boolean(currentSession.workspaceName);
+          let width = hasWorkspace ? 380 : 330;
+          if (detailLen > 30) {
+            width = 420;
+          } else if (detailLen > 16) {
+            width = 395;
+          }
+          if (isBotClicked) width = Math.min(430, width + 20);
+          return { width: Math.min(420, width), height: isBotClicked ? 64 : 58 };
+        }
+
+        if (audioStatus.isPlaying || audioStatus.isStreamingToMobile || showRecentAudioControls) {
+          const titleLen = (audioStatus.title || audioStatus.activeApp || '').length;
+          let width = 380;
+          if (titleLen > 25) {
+            width = 420;
+          } else if (titleLen > 15) {
+            width = 400;
+          } else if (audioStatus.isStreamingToMobile) {
+            width = 390;
+          }
+          if (isBotClicked) width = Math.min(430, width + 20);
+          return { width: Math.min(420, width), height: isBotClicked ? 64 : 58 };
+        }
+
+        if (currentSession && currentSession.agent && currentSession.status === 'completed') {
+          const hasWorkspace = Boolean(currentSession.workspaceName);
+          let width = hasWorkspace ? 370 : 320;
+          if (isBotClicked) width = Math.min(430, width + 20);
+          return { width: Math.min(420, width), height: isBotClicked ? 64 : 58 };
         }
 
         const textLen = dynamicStatusText?.length || 0;
@@ -882,118 +1010,357 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
               >
                 {completedTaskNotice ? (
                   <motion.div
-                    key={`completed-${completedTaskNotice.timestamp}`}
+                    key={`completed-${completedTaskNotice.sessionId || completedTaskNotice.agent || 'agent'}-${completedTaskNotice.workspaceName || ''}`}
                     initial={{ opacity: 0, y: 3, filter: 'blur(2px)' }}
                     animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
                     exit={{ opacity: 0, y: -3, filter: 'blur(2px)' }}
                     transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
-                    className="w-full flex items-center justify-between min-w-0 gap-2 pr-0.5"
+                    className="w-full flex flex-col justify-center min-w-0 pr-0.5 cursor-pointer group/msg"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsConnectionPopoverOpen((prev) => !prev);
+                    }}
+                    title={`${completedTaskNotice.message} • Click to manage`}
                   >
-                    {/* Left: Message with completion checkmark (strictly truncated, never overlaps right badge) */}
-                    <div
-                      className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden cursor-pointer group/msg"
-                      title={`${completedTaskNotice.message} (Click to manage)`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setIsConnectionPopoverOpen((prev) => !prev);
-                      }}
-                    >
-                      <div className="w-4 h-4 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0">
-                        <Check size={10} className="text-emerald-400 stroke-[2.5]" />
+                    {/* Header Row: Done Check + Agent + Themed Project Badge + Tokens */}
+                    <div className="flex items-center justify-between gap-1.5 w-full min-w-0 leading-none h-[18px]">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <div className="w-3.5 h-3.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0">
+                          <Check size={9} className="text-emerald-400 stroke-[3]" />
+                        </div>
+                        <span className="text-[10px] font-semibold text-emerald-400 tracking-wide uppercase shrink-0">
+                          {completedTaskNotice.name || completedTaskNotice.agent || 'Agent'}
+                        </span>
+                        {completedTaskNotice.workspaceName && completedTaskTheme && (
+                          <span
+                            className={`text-[9px] font-mono font-medium px-1.5 py-[1px] rounded border shrink-0 truncate max-w-[120px] transition-colors ${completedTaskTheme.bg} ${completedTaskTheme.text} ${completedTaskTheme.border}`}
+                            title={`Project: ${completedTaskNotice.workspaceName}\nPath: ${completedTaskNotice.workspace || completedTaskNotice.workspaceName}`}
+                          >
+                            📁 {completedTaskNotice.workspaceName}
+                          </span>
+                        )}
                       </div>
-                      <span className="text-[12px] text-white font-medium tracking-tight truncate min-w-0 flex-1 group-hover/msg:text-emerald-200 transition-colors">
-                        {completedTaskNotice.message}
-                      </span>
+
+                      {/* Right: Highlighted Tokens Used Badge */}
+                      {completedTaskNotice.tokensUsed !== undefined && completedTaskNotice.tokensUsed > 0 && (
+                        <div
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onOpenSettings('tokens');
+                          }}
+                          className="shrink-0 flex items-center gap-1 px-1.5 py-[1px] rounded-full bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-400/40 text-emerald-300 font-mono text-[9.5px] font-semibold tracking-tight whitespace-nowrap ml-auto cursor-pointer active:scale-95 transition-all"
+                          title={`Tokens used in this agent task: ${completedTaskNotice.tokensUsed.toLocaleString()} • Click to view Token Telemetry`}
+                        >
+                          <Zap size={9} className="text-emerald-300 fill-emerald-300 shrink-0" />
+                          <span>{formatTokens(completedTaskNotice.tokensUsed)}</span>
+                        </div>
+                      )}
                     </div>
 
-                    {/* Right: Highlighted Tokens Used Badge (strictly shrink-0, perfectly positioned on right) */}
-                    {completedTaskNotice.tokensUsed !== undefined && completedTaskNotice.tokensUsed > 0 && (
-                      <motion.div
-                        initial={{ opacity: 0, scale: 0.85 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        transition={{ duration: 0.22, delay: 0.05 }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onOpenSettings('tokens');
-                        }}
-                        className="shrink-0 flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-gradient-to-r from-emerald-500/20 via-teal-500/25 to-emerald-500/20 hover:from-emerald-500/30 hover:to-teal-500/35 border border-emerald-400/50 hover:border-emerald-300 text-emerald-300 shadow-[0_0_12px_rgba(52,211,153,0.35)] font-mono text-[11px] font-semibold tracking-tight whitespace-nowrap ml-auto cursor-pointer active:scale-95 transition-all"
-                        title={`Tokens used in this agent task: ${completedTaskNotice.tokensUsed.toLocaleString()} • Click to view Token Telemetry`}
-                      >
-                        <Zap size={10} className="text-emerald-300 fill-emerald-300 shrink-0 animate-pulse" />
-                        <span>{formatTokens(completedTaskNotice.tokensUsed)}</span>
-                      </motion.div>
-                    )}
-                  </motion.div>
-                ) : (
-                  /* Centered Status and Music Indicator */
-                  <div className="flex-1 flex items-center justify-center gap-2 min-w-0 px-1">
-                    <div
-                      className="flex items-center text-xs text-linear-text-primary font-medium tracking-tight whitespace-nowrap cursor-pointer hover:text-white transition-colors min-w-0"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setIsConnectionPopoverOpen((prev) => !prev);
-                      }}
-                      title={
-                        connectionStatus === 'connected'
-                          ? `Connected to ${pairedDevice?.name || 'Phone'} • Click to manage`
-                          : 'Click to connect a device'
-                      }
-                    >
+                    {/* Message Row: Full Width Clear Text */}
+                    <div className="flex items-center gap-1.5 w-full min-w-0 mt-0.5 h-[18px] overflow-hidden">
                       <AnimatePresence mode="wait" initial={false}>
                         <motion.span
+                          key={completedTaskNotice.message}
+                          initial={{ opacity: 0, y: 2 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -2 }}
+                          transition={{ duration: 0.16, ease: 'easeOut' }}
+                          className="text-[12px] text-white/95 font-medium tracking-tight truncate min-w-0 flex-1 group-hover/msg:text-emerald-200 transition-colors"
+                        >
+                          {completedTaskNotice.message}
+                        </motion.span>
+                      </AnimatePresence>
+                    </div>
+                  </motion.div>
+                ) : (
+                  /* Two-Tier Dynamic Island Status or Centered Connection */
+                  <div
+                    className="flex-1 flex flex-col justify-center min-w-0 px-1 cursor-pointer"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsConnectionPopoverOpen((prev) => !prev);
+                    }}
+                    title={
+                      isAgentRunning && currentSession
+                        ? `${currentSession.name || currentSession.agent}: ${currentSession.detail || 'In progress'} (${currentSession.workspaceName || 'root'}) • Click to manage`
+                        : connectionStatus === 'connected'
+                        ? `Connected to ${pairedDevice?.name || 'Phone'} • Click to manage`
+                        : connectionStatus === 'discovered'
+                        ? 'Wi-Fi Device Available • Click to Start Pairing'
+                        : 'Click to connect a device'
+                    }
+                  >
+                    <AnimatePresence mode="wait" initial={false}>
+                      {isAgentRunning && currentSession && currentSession.agent ? (
+                        <motion.div
+                          key={`agent-${currentSession.sessionId || currentSession.agent}-${currentSession.workspaceName || ''}`}
+                          initial={{ opacity: 0, y: 3, filter: 'blur(2px)' }}
+                          animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                          exit={{ opacity: 0, y: -3, filter: 'blur(2px)' }}
+                          transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                          className="w-full flex flex-col justify-center min-w-0"
+                        >
+                          {/* Header Row: Agent Title + Project Badge + Multi-Agent Pill */}
+                          <div className="flex items-center justify-between gap-1.5 w-full min-w-0 leading-none h-[18px]">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className={`text-[10px] font-semibold tracking-wide uppercase shrink-0 flex items-center gap-1 ${currentSessionTheme?.agentText || 'text-indigo-400'}`}>
+                                <span>{currentSession.agent === 'antigravity' ? '⚡ Antigravity' : currentSession.agent === 'codex' ? '⚡ Codex' : '⚡ Claude'}</span>
+                              </span>
+
+                              {currentSession.workspaceName && currentSessionTheme && (
+                                <span
+                                  className={`text-[9px] font-mono font-medium px-1.5 py-[1px] rounded border shrink-0 truncate max-w-[120px] transition-colors ${currentSessionTheme.bg} ${currentSessionTheme.text} ${currentSessionTheme.border}`}
+                                  title={`Project: ${currentSession.workspaceName}\nPath: ${currentSession.workspace || currentSession.workspaceName}`}
+                                >
+                                  📁 {currentSession.workspaceName}
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Multi-Agent Concurrent Session Switcher Pill */}
+                            {agentStatus && agentStatus.activeCount !== undefined && agentStatus.activeCount > 1 && (
+                              <motion.button
+                                initial={{ opacity: 0, scale: 0.8 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                exit={{ opacity: 0, scale: 0.8 }}
+                                whileTap={{ scale: 0.94 }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (agentStatus.activeSessions && agentStatus.activeSessions.length > 0) {
+                                    setActiveSessionIndex((prev) => (prev + 1) % agentStatus.activeSessions!.length);
+                                  }
+                                }}
+                                className="flex items-center gap-1 px-1.5 py-[1px] rounded-full bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/35 text-cyan-300 text-[9px] font-mono tracking-tight shrink-0 transition-all cursor-pointer active:scale-95"
+                                title={`${agentStatus.activeCount} CLI Agents Active • Click to switch displayed session`}
+                              >
+                                <span className="w-1 h-1 rounded-full bg-cyan-400 shrink-0" />
+                                <span>{agentStatus.activeCount} agents</span>
+                                <span className="text-cyan-400/60 text-[8.5px]">
+                                  {(activeSessionIndex % (agentStatus.activeSessions?.length || 1)) + 1}/{(agentStatus.activeSessions?.length || agentStatus.activeCount)}
+                                </span>
+                              </motion.button>
+                            )}
+                          </div>
+
+                          {/* Message Row: Full Width Clear Agent Action / Detail */}
+                          <div className="flex items-center gap-1.5 w-full min-w-0 mt-0.5 h-[18px] overflow-hidden">
+                            <AnimatePresence mode="wait" initial={false}>
+                              <motion.span
+                                key={currentSession.detail || currentSession.message || currentSession.status || 'running'}
+                                initial={{ opacity: 0, y: 2 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: -2 }}
+                                transition={{ duration: 0.16, ease: 'easeOut' }}
+                                className="text-[12px] text-white/95 font-medium tracking-tight truncate min-w-0 flex-1 hover:text-white transition-colors"
+                                title={currentSession.detail || currentSession.message || (currentSession.status === 'waiting' ? 'Waiting for background task...' : 'Working on task...')}
+                              >
+                                {currentSession.detail || currentSession.message || (currentSession.status === 'waiting' ? 'Waiting for background task...' : 'Working on task...')}
+                              </motion.span>
+                            </AnimatePresence>
+                          </div>
+                        </motion.div>
+                      ) : (audioStatus.isPlaying || audioStatus.isStreamingToMobile || showRecentAudioControls) ? (
+                        <motion.div
+                          key="audio-player-controls"
+                          initial={{ opacity: 0, y: 3, filter: 'blur(2px)' }}
+                          animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                          exit={{ opacity: 0, y: -3, filter: 'blur(2px)' }}
+                          transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                          className="w-full flex items-center justify-between gap-1.5 min-w-0 pr-0.5"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {/* Left: Waveform Visualizer & Source Info */}
+                          <div
+                            className="flex items-center gap-1.5 min-w-0 overflow-hidden cursor-pointer group/audio flex-1"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setIsConnectionPopoverOpen((prev) => !prev);
+                            }}
+                            title={`${audioStatus.title ? `${audioStatus.title} • ` : ''}${audioStatus.activeApp || 'Desktop Audio'}${audioStatus.isStreamingToMobile ? ' • Streaming to Phone' : ''} • Click to manage`}
+                          >
+                            {/* Animated Equalizer Waveform Bars */}
+                            <div className="flex items-end gap-[2px] h-3 pb-[1px] shrink-0">
+                              <motion.span
+                                className="w-[2px] rounded-full bg-emerald-400"
+                                animate={audioStatus.isPlaying ? { height: ['3px', '11px', '4px', '10px', '3px'] } : { height: '3px' }}
+                                transition={{ duration: 0.65, repeat: Infinity, ease: 'easeInOut' }}
+                              />
+                              <motion.span
+                                className="w-[2px] rounded-full bg-emerald-400"
+                                animate={audioStatus.isPlaying ? { height: ['8px', '3px', '12px', '5px', '8px'] } : { height: '5px' }}
+                                transition={{ duration: 0.52, repeat: Infinity, ease: 'easeInOut' }}
+                              />
+                              <motion.span
+                                className="w-[2px] rounded-full bg-emerald-400"
+                                animate={audioStatus.isPlaying ? { height: ['4px', '12px', '3px', '9px', '4px'] } : { height: '3px' }}
+                                transition={{ duration: 0.72, repeat: Infinity, ease: 'easeInOut' }}
+                              />
+                              <motion.span
+                                className="w-[2px] rounded-full bg-emerald-400"
+                                animate={audioStatus.isPlaying ? { height: ['10px', '4px', '11px', '2px', '10px'] } : { height: '4px' }}
+                                transition={{ duration: 0.48, repeat: Infinity, ease: 'easeInOut' }}
+                              />
+                            </div>
+
+                            {/* App / Stream Name / Song Title */}
+                            <div className="flex flex-col min-w-0 leading-none">
+                              <span
+                                className="text-[11px] font-semibold text-white/95 truncate tracking-tight max-w-[125px] group-hover/audio:text-emerald-300 transition-colors"
+                                title={audioStatus.title || audioStatus.activeApp || 'Music'}
+                              >
+                                {audioStatus.title || audioStatus.activeApp || 'Music'}
+                              </span>
+                              <span className="text-[8.5px] font-mono text-emerald-400/80 truncate mt-0.5">
+                                {audioStatus.isStreamingToMobile
+                                  ? '📱 To Phone'
+                                  : audioStatus.isPlaying
+                                  ? (audioStatus.title ? `♫ ${audioStatus.activeApp || 'Playing'}` : '♫ Now Playing')
+                                  : '⏸ Paused'}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Center: Playback Transport Controls (Prev, Play/Pause, Next) */}
+                          <div className="flex items-center gap-0.5 shrink-0 bg-white/[0.06] border border-white/[0.08] px-1 py-0.5 rounded-full">
+                            <button
+                              data-no-drag="true"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                connectionService.controlAudio('prev');
+                              }}
+                              className="p-1 rounded-full text-white/70 hover:text-white hover:bg-white/10 active:scale-90 transition-all cursor-pointer"
+                              title="Previous Track"
+                            >
+                              <SkipBack size={10} className="fill-current" />
+                            </button>
+
+                            <button
+                              data-no-drag="true"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                connectionService.controlAudio('play-pause');
+                              }}
+                              className="p-1 rounded-full bg-emerald-500 hover:bg-emerald-400 text-black active:scale-90 transition-all cursor-pointer shadow-[0_0_8px_rgba(52,211,153,0.35)]"
+                              title={audioStatus.isPlaying ? 'Pause' : 'Play'}
+                            >
+                              {audioStatus.isPlaying ? (
+                                <Pause size={10} className="fill-current stroke-[2.5]" />
+                              ) : (
+                                <Play size={10} className="fill-current stroke-[2.5] ml-[0.5px]" />
+                              )}
+                            </button>
+
+                            <button
+                              data-no-drag="true"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                connectionService.controlAudio('next');
+                              }}
+                              className="p-1 rounded-full text-white/70 hover:text-white hover:bg-white/10 active:scale-90 transition-all cursor-pointer"
+                              title="Next Track"
+                            >
+                              <SkipForward size={10} className="fill-current" />
+                            </button>
+                          </div>
+
+                          {/* Right: Speaker Mute / Unmute Toggle */}
+                          <div className="flex items-center shrink-0">
+                            <button
+                              data-no-drag="true"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                connectionService.toggleSpeakerMute();
+                              }}
+                              className={`flex items-center gap-1 px-1.5 py-[3px] rounded-full text-[9.5px] font-mono font-medium transition-all active:scale-95 border cursor-pointer ${
+                                audioStatus.isSpeakerMuted
+                                  ? 'bg-rose-500/15 border-rose-500/35 text-rose-300 shadow-[0_0_8px_rgba(244,63,94,0.25)]'
+                                  : 'bg-white/5 border-white/10 text-white/70 hover:text-white hover:bg-white/10'
+                              }`}
+                              title={
+                                audioStatus.isSpeakerMuted
+                                  ? 'PC Speaker Muted • Click to Unmute'
+                                  : audioStatus.isStreamingToMobile
+                                  ? 'Mute PC Speaker (Audio plays on Phone)'
+                                  : 'Mute PC Speaker'
+                              }
+                            >
+                              {audioStatus.isSpeakerMuted ? (
+                                <>
+                                  <VolumeX size={11} className="text-rose-400 shrink-0" />
+                                  <span>Muted</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Volume2 size={11} className="text-emerald-400 shrink-0" />
+                                  <span>Mute</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </motion.div>
+                      ) : currentSession && currentSession.agent && currentSession.status === 'completed' ? (
+                        <motion.div
+                          key={`done-${currentSession.sessionId || currentSession.agent}-${currentSession.workspaceName || ''}`}
+                          initial={{ opacity: 0, y: 3, filter: 'blur(2px)' }}
+                          animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                          exit={{ opacity: 0, y: -3, filter: 'blur(2px)' }}
+                          transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                          className="w-full flex flex-col justify-center min-w-0"
+                        >
+                          {/* Header Row: Agent Name + Project Badge */}
+                          <div className="flex items-center justify-between gap-1.5 w-full min-w-0 leading-none h-[18px]">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="text-[10px] font-semibold text-emerald-400 tracking-wide uppercase shrink-0 flex items-center gap-1">
+                                <Check size={9} className="stroke-[3]" />
+                                <span>{currentSession.name || 'Agent'}</span>
+                              </span>
+
+                              {currentSession.workspaceName && currentSessionTheme && (
+                                <span
+                                  className={`text-[9px] font-mono font-medium px-1.5 py-[1px] rounded border shrink-0 truncate max-w-[120px] transition-colors ${currentSessionTheme.bg} ${currentSessionTheme.text} ${currentSessionTheme.border}`}
+                                  title={`Project: ${currentSession.workspaceName}\nPath: ${currentSession.workspace || currentSession.workspaceName}`}
+                                >
+                                  📁 {currentSession.workspaceName}
+                                </span>
+                              )}
+                            </div>
+
+                            <span className="text-[9.5px] font-mono text-emerald-400/90 font-medium shrink-0">Done ✓</span>
+                          </div>
+
+                          {/* Message Row */}
+                          <div className="flex items-center gap-1.5 w-full min-w-0 mt-0.5 h-[18px] overflow-hidden">
+                            <AnimatePresence mode="wait" initial={false}>
+                              <motion.span
+                                key={currentSession.message || currentSession.taskSummary || currentSession.detail || 'done'}
+                                initial={{ opacity: 0, y: 2 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: -2 }}
+                                transition={{ duration: 0.16, ease: 'easeOut' }}
+                                className="text-[12px] text-white/95 font-medium tracking-tight truncate min-w-0 flex-1"
+                                title={currentSession.message || currentSession.taskSummary || currentSession.detail || 'Task completed successfully'}
+                              >
+                                {currentSession.message || currentSession.taskSummary || currentSession.detail || 'Task completed successfully'}
+                              </motion.span>
+                            </AnimatePresence>
+                          </div>
+                        </motion.div>
+                      ) : (
+                        <motion.div
                           key={dynamicStatusText}
                           initial={{ opacity: 0, y: 3, filter: 'blur(2px)' }}
                           animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
                           exit={{ opacity: 0, y: -3, filter: 'blur(2px)' }}
-                          transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
-                          className="text-[12px] text-linear-text-primary font-medium tracking-tight whitespace-nowrap truncate max-w-[260px] flex items-center gap-1.5"
+                          transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                          className="w-full flex items-center justify-center"
                         >
-                          {connectionStatus === 'connected' && (
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0 animate-pulse" />
-                          )}
-                          <span>{dynamicStatusText}</span>
-                        </motion.span>
-                      </AnimatePresence>
-                    </div>
-
-                    {/* Animated Dynamic Island Music Sign */}
-                    {audioStatus.isPlaying && (
-                      <motion.div
-                        initial={{ opacity: 0, scale: 0.8 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.8 }}
-                        className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[10px] font-mono tracking-tight mx-1 shrink-0"
-                        title={
-                          audioStatus.isStreamingToMobile
-                            ? `Streaming Desktop Audio to Mobile (${audioStatus.activeListeners || 1} connected)`
-                            : 'Desktop Music / Audio Active'
-                        }
-                      >
-                        <Music size={10} className="text-emerald-400 animate-pulse shrink-0" />
-                        <div className="flex items-end gap-[2px] h-2.5 pb-[0.5px]">
-                          <motion.span
-                            className="w-[2px] bg-emerald-400 rounded-full"
-                            animate={{ height: ['3px', '10px', '4px', '9px', '3px'] }}
-                            transition={{ duration: 0.65, repeat: Infinity, ease: 'easeInOut' }}
-                          />
-                          <motion.span
-                            className="w-[2px] bg-emerald-400 rounded-full"
-                            animate={{ height: ['8px', '3px', '10px', '5px', '8px'] }}
-                            transition={{ duration: 0.52, repeat: Infinity, ease: 'easeInOut' }}
-                          />
-                          <motion.span
-                            className="w-[2px] bg-emerald-400 rounded-full"
-                            animate={{ height: ['4px', '10px', '3px', '8px', '4px'] }}
-                            transition={{ duration: 0.72, repeat: Infinity, ease: 'easeInOut' }}
-                          />
-                          <motion.span
-                            className="w-[2px] bg-emerald-400 rounded-full"
-                            animate={{ height: ['9px', '4px', '9px', '2px', '9px'] }}
-                            transition={{ duration: 0.48, repeat: Infinity, ease: 'easeInOut' }}
-                          />
-                        </div>
-                      </motion.div>
-                    )}
+                          <span className="text-[12px] text-linear-text-primary font-medium tracking-tight whitespace-nowrap truncate max-w-[280px]">
+                            {dynamicStatusText}
+                          </span>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                 )}
               </motion.div>

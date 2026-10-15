@@ -54,6 +54,13 @@ function getLocalIps() {
   return addresses;
 }
 
+function normalizeIp(ip) {
+  if (!ip) return '';
+  let s = String(ip).trim();
+  if (s.startsWith('::ffff:')) s = s.slice(7);
+  return s;
+}
+
 function scanAvailableDevices() {
   const devices = [];
 
@@ -87,7 +94,28 @@ function scanAvailableDevices() {
     transport: 'wifi',
     rssi: -42,
     ipAddress: primaryIp,
+    isAuthorized: false,
+    requiresPairing: true,
   });
+
+  // 3. Include connected but unauthenticated sockets
+  if (typeof getDiscoveredUnpairedDevices === 'function') {
+    const discovered = getDiscoveredUnpairedDevices();
+    for (const d of discovered) {
+      if (!devices.some((x) => x.id === d.id)) {
+        devices.unshift({
+          id: d.id,
+          name: d.name || 'Discovered Wi-Fi Device',
+          model: d.model || 'Nearby Mobile Client',
+          transport: 'wifi',
+          rssi: -45,
+          ipAddress: d.ip,
+          isAuthorized: false,
+          requiresPairing: true,
+        });
+      }
+    }
+  }
 
   return devices;
 }
@@ -754,35 +782,30 @@ function saveTrustStore(store) {
 }
 
 const trustedDevices = loadTrustStore();
-if (trustedDevices.size > 0 && !pairedDevice) {
-  const [firstId, firstRecord] = Array.from(trustedDevices.entries())[0];
-  pairedDevice = {
-    id: firstId,
-    name: firstRecord.name || 'Mobile Companion (Android)',
-    model: firstRecord.model || 'Soko Mobile Companion v1.0.0',
-    rssi: -50,
-    pingMs: 12,
-    transport: 'dual',
-    batteryLevel: 98,
-    lastSeen: firstRecord.pairedAt || Date.now(),
-    isAuthorized: true,
-  };
-} else if (!pairedDevice) {
-  const localIps = getLocalIps();
-  const primaryIp = localIps[0] || '192.168.31.210';
-  pairedDevice = {
-    id: `wifi-companion-${primaryIp}`,
-    name: 'Mobile Companion (Android)',
-    model: `Local Companion (${primaryIp}:8766)`,
-    rssi: -45,
-    pingMs: 8,
-    transport: 'dual',
-    batteryLevel: 96,
-    lastSeen: Date.now(),
-    isAuthorized: true,
-    ipAddress: primaryIp,
-  };
+// Note: pairedDevice represents an actively connected and verified companion device.
+// Stored devices in trustedDevices must connect and present their valid token before pairedDevice is set.
+// A freshly installed app has no token and must pair via SAS PIN first.
+pairedDevice = null;
+
+function getDiscoveredUnpairedDevices() {
+  const list = [];
+  for (const client of activeClients) {
+    if (!client.isLocalDesktop && !client.isAuthorized) {
+      const cleanIp = client.remoteAddress?.replace(/^.*:/, '') || 'Wi-Fi Client';
+      list.push({
+        id: client.deviceId || `wifi-companion-${cleanIp}`,
+        name: client.deviceName || 'Mobile Companion (Android)',
+        model: client.deviceModel || `Local Companion (${cleanIp})`,
+        ipAddress: cleanIp,
+        transport: 'wifi',
+        rssi: -45,
+        isPaired: false,
+      });
+    }
+  }
+  return list;
 }
+
 const pendingPairRequests = new Map();
 
 // ------------------------------------------------------------------------------
@@ -827,6 +850,103 @@ function getDefaultMonitorSource() {
   return '@DEFAULT_MONITOR@';
 }
 
+let autoMuteSpeakerOnStream = true;
+let previousSpeakerMuteState = null;
+let detectedActiveAudioApp = 'Music';
+let detectedActiveAudioTitle = '';
+
+function getSpeakerMuteState() {
+  if (os.platform() === 'linux') {
+    try {
+      const out = execSync('wpctl get-volume @DEFAULT_AUDIO_SINK@', { encoding: 'utf8', timeout: 600, stdio: ['ignore', 'pipe', 'ignore'] });
+      return /MUTED/i.test(out);
+    } catch {}
+    try {
+      const out = execSync('pactl get-sink-mute @DEFAULT_SINK@', { encoding: 'utf8', timeout: 600, stdio: ['ignore', 'pipe', 'ignore'] });
+      return /yes/i.test(out);
+    } catch {}
+    try {
+      const out = execSync('amixer get Master', { encoding: 'utf8', timeout: 600, stdio: ['ignore', 'pipe', 'ignore'] });
+      return /\[off\]/i.test(out);
+    } catch {}
+  }
+  return false;
+}
+
+function setSpeakerMute(mute) {
+  if (os.platform() === 'linux') {
+    try {
+      const arg = mute ? '1' : '0';
+      execSync(`wpctl set-mute @DEFAULT_AUDIO_SINK@ ${arg}`, { timeout: 600, stdio: ['ignore', 'ignore', 'ignore'] });
+      console.log(`[Bridge Audio] Speaker mute set to ${mute} via wpctl`);
+      return true;
+    } catch {}
+    try {
+      const arg = mute ? '1' : '0';
+      execSync(`pactl set-sink-mute @DEFAULT_SINK@ ${arg}`, { timeout: 600, stdio: ['ignore', 'ignore', 'ignore'] });
+      return true;
+    } catch {}
+    try {
+      const arg = mute ? 'mute' : 'unmute';
+      execSync(`amixer set Master ${arg}`, { timeout: 600, stdio: ['ignore', 'ignore', 'ignore'] });
+      return true;
+    } catch {}
+  } else if (os.platform() === 'darwin') {
+    try {
+      execSync(`osascript -e "set volume output muted ${mute ? 'true' : 'false'}"`, { timeout: 600, stdio: ['ignore', 'ignore', 'ignore'] });
+      return true;
+    } catch {}
+  }
+  return false;
+}
+
+function toggleSpeakerMute() {
+  const current = getSpeakerMuteState();
+  const next = !current;
+  setSpeakerMute(next);
+  return next;
+}
+
+function controlMediaPlayback(action) {
+  const platform = os.platform();
+  if (platform === 'linux') {
+    let key = '';
+    if (action === 'play-pause' || action === 'play' || action === 'pause') {
+      key = 'XF86AudioPlay';
+    } else if (action === 'next') {
+      key = 'XF86AudioNext';
+    } else if (action === 'prev') {
+      key = 'XF86AudioPrev';
+    }
+    if (key) {
+      try {
+        execSync(`xdotool key ${key}`, { timeout: 1000, stdio: ['ignore', 'ignore', 'ignore'] });
+        console.log(`[Bridge Audio] Dispatched media key: ${key}`);
+        return true;
+      } catch (err) {
+        console.warn(`[Bridge Audio] Failed to dispatch media key via xdotool:`, err.message);
+      }
+    }
+  } else if (platform === 'darwin') {
+    try {
+      if (action === 'play-pause' || action === 'play' || action === 'pause') {
+        execSync(`osascript -e 'tell application "System Events" to key code 16'`, { timeout: 1000, stdio: ['ignore', 'ignore', 'ignore'] });
+      }
+      return true;
+    } catch {}
+  } else if (platform === 'win32') {
+    try {
+      let vk = 0xB3;
+      if (action === 'next') vk = 0xB0;
+      if (action === 'prev') vk = 0xB1;
+      const psCmd = `powershell -command "$wscript = New-Object -ComObject Wscript.Shell; $wscript.SendKeys([char]${vk})"`;
+      execSync(psCmd, { timeout: 1000, stdio: ['ignore', 'ignore', 'ignore'] });
+      return true;
+    } catch {}
+  }
+  return false;
+}
+
 function checkIsAudioPlaying() {
   if (os.platform() === 'win32') {
     return activeAudioStreams.size > 0;
@@ -849,15 +969,17 @@ function checkIsAudioPlaying() {
         if (!line) continue;
         const appMatch = line.match(/^\d+\.\s+(.+)$/);
         if (appMatch) {
-          currentApp = appMatch[1].toLowerCase();
+          currentApp = appMatch[1];
           continue;
         }
         // Filter out dummy/accessibility audio daemons (e.g. speech-dispatcher-dummy)
-        if (currentApp.includes('speech-dispatcher') || currentApp.includes('dummy')) {
+        const appLower = currentApp.toLowerCase();
+        if (appLower.includes('speech-dispatcher') || appLower.includes('dummy')) {
           continue;
         }
         // Playback output streams have '>' directed to a sink and '[active]' state
         if (line.includes('>') && /\[active\]/i.test(line)) {
+          if (currentApp) detectedActiveAudioApp = currentApp;
           return true;
         }
       }
@@ -877,9 +999,20 @@ function checkIsAudioPlaying() {
       const props = item.info?.props || {};
       const state = item.info?.state;
       const mediaClass = props['media.class'];
-      const appName = (props['application.name'] || props['node.name'] || '').toLowerCase();
-      if (appName.includes('speech-dispatcher') || appName.includes('dummy')) return false;
-      return mediaClass === 'Stream/Output/Audio' && state === 'running';
+      const appName = props['application.name'] || props['node.name'] || '';
+      const appLower = appName.toLowerCase();
+      if (appLower.includes('speech-dispatcher') || appLower.includes('dummy')) return false;
+      if (mediaClass === 'Stream/Output/Audio') {
+        const rawTitle = props['media.name'] || props['media.title'] || '';
+        if (rawTitle && !rawTitle.toLowerCase().includes('playback')) {
+          detectedActiveAudioTitle = rawTitle.replace(/^\(\d+\)\s*/, '').replace(/\s*-\s*YouTube$/i, '').trim();
+        }
+        if (appName) detectedActiveAudioApp = appName;
+        if (state === 'running') {
+          return true;
+        }
+      }
+      return false;
     });
     if (hasRunningPlayback) return true;
   } catch (err) {}
@@ -892,6 +1025,12 @@ function checkIsAudioPlaying() {
       stdio: ['ignore', 'pipe', 'ignore'],
     });
     if (/State:\s*RUNNING/i.test(pactlOut) && !/speech-dispatcher/i.test(pactlOut)) {
+      const match = pactlOut.match(/application\.name\s*=\s*"([^"]+)"/i);
+      if (match && match[1]) detectedActiveAudioApp = match[1];
+      const titleMatch = pactlOut.match(/media\.name\s*=\s*"([^"]+)"/i);
+      if (titleMatch && titleMatch[1]) {
+        detectedActiveAudioTitle = titleMatch[1].replace(/^\(\d+\)\s*/, '').replace(/\s*-\s*YouTube$/i, '').trim();
+      }
       return true;
     }
   } catch (err) {}
@@ -902,6 +1041,7 @@ function checkIsAudioPlaying() {
 function broadcastAudioStatus() {
   const isPlaying = checkIsAudioPlaying();
   lastAudioPlayingState = isPlaying;
+  const isMuted = getSpeakerMuteState();
   broadcastPacket({
     magic: 'SK',
     version: 1,
@@ -915,6 +1055,10 @@ function broadcastAudioStatus() {
       bitrate: '192 kbps',
       format: 'MP3 (48 kHz Stereo)',
       source: getAudioSourceDescription(),
+      isSpeakerMuted: isMuted,
+      activeApp: detectedActiveAudioApp || 'Music',
+      title: detectedActiveAudioTitle || '',
+      autoMuteSpeakerOnStream,
     },
   });
 }
@@ -1019,9 +1163,305 @@ let simulatedAgentActivity = null;
 let simulationTimeout = null;
 let lastAgentStateKey = '';
 
-// Persistence cache for completed real agent tasks
+// Persistence cache for completed real agent tasks & multi-session registry
 let realAgentCompletionCache = null;
 let lastObservedWorkingAgent = null;
+let focusedSessionId = null;
+const AGENT_COMPLETION_RETENTION_MS = 20000; // 20s retention for completed agent tasks on HUD
+
+// Multi-session registry: key -> session state
+const agentSessionRegistry = new Map();
+// Cache for parsed transcripts: path -> { mtimeMs, size, data }
+const transcriptParseCache = new Map();
+
+/**
+ * Extracts clean user request from content.
+ */
+function extractUserGoal(content) {
+  if (!content || typeof content !== 'string') return '';
+  const match = content.match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/i);
+  if (match) {
+    const clean = match[1].trim();
+    if (clean) return clean.slice(0, 80);
+  }
+  const stripped = content.replace(/<[^>]+>/g, '').trim();
+  return stripped ? stripped.slice(0, 80) : '';
+}
+
+/**
+ * Extracts a concrete, human-readable action description from a tool call.
+ */
+function formatToolCallAction(tc) {
+  if (!tc) return '';
+  const args = tc.args || {};
+  let action = args.toolAction || args.toolSummary;
+  if (typeof action === 'string') {
+    action = action.replace(/^\"|\"$/g, '').trim();
+    if (action) return action;
+  }
+  const name = tc.name || '';
+  if (name === 'run_command') {
+    let cmd = (args.CommandLine || args.command || '').replace(/^\"|\"$/g, '').trim();
+    if (cmd) {
+      if (cmd.length > 50) cmd = cmd.slice(0, 47) + '...';
+      return `$ ${cmd}`;
+    }
+    return 'Running command';
+  }
+  if (name === 'view_file' || name === 'read_file') {
+    let file = (args.AbsolutePath || args.TargetFile || args.path || '').replace(/^\"|\"$/g, '').trim();
+    if (file) return `Reading ${path.basename(file)}`;
+    return 'Reading source file';
+  }
+  if (name === 'replace_file_content' || name === 'edit_file') {
+    let file = (args.TargetFile || args.AbsolutePath || args.path || '').replace(/^\"|\"$/g, '').trim();
+    const inst = (args.Instruction || args.Description || '').replace(/^\"|\"$/g, '').trim();
+    if (inst) return inst.slice(0, 50);
+    if (file) return `Editing ${path.basename(file)}`;
+    return 'Modifying code file';
+  }
+  if (name === 'write_to_file') {
+    let file = (args.TargetFile || args.AbsolutePath || '').replace(/^\"|\"$/g, '').trim();
+    if (file) return `Writing ${path.basename(file)}`;
+    return 'Creating new file';
+  }
+  if (name === 'search_web') {
+    let q = (args.query || '').replace(/^\"|\"$/g, '').trim();
+    return q ? `Searching: "${q.slice(0, 30)}"` : 'Searching web';
+  }
+  if (name === 'read_url_content') {
+    let u = (args.Url || args.url || '').replace(/^\"|\"$/g, '').trim();
+    try {
+      const p = new URL(u);
+      return `Fetching ${p.hostname}${p.pathname.slice(0, 20)}`;
+    } catch {
+      return 'Fetching webpage';
+    }
+  }
+  if (name === 'ask_question') {
+    return 'Clarifying requirements';
+  }
+  if (name === 'manage_task') {
+    const act = (args.Action || '').replace(/^\"|\"$/g, '');
+    return act ? `Task: ${act}` : 'Managing task';
+  }
+  return name ? `Executing ${name}` : 'Executing task';
+}
+
+/**
+ * Parses an Antigravity session transcript into structured session state.
+ */
+function parseAntigravitySession(tPath, stat, now) {
+  const cached = transcriptParseCache.get(tPath);
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    return cached.data;
+  }
+
+  let detail = 'Working on task';
+  let isDone = false;
+  let isWaiting = false;
+  let waitingDetail = '';
+  let turnTokens = 0;
+  let taskSummary = '';
+  let workspace = '';
+
+  try {
+    const bufferSize = Math.min(stat.size, 262144);
+    const buffer = Buffer.alloc(bufferSize);
+    const fd = fs.openSync(tPath, 'r');
+    fs.readSync(fd, buffer, 0, bufferSize, Math.max(0, stat.size - bufferSize));
+    fs.closeSync(fd);
+
+    const lines = buffer.toString('utf8').trim().split('\n');
+    const parsed = [];
+    let lastUserIdx = -1;
+
+    for (let i = 0; i < lines.length; i++) {
+      if (!lines[i].trim()) continue;
+      try {
+        const item = JSON.parse(lines[i]);
+        parsed.push(item);
+        if (item.type === 'USER_INPUT') {
+          lastUserIdx = parsed.length - 1;
+          const goal = extractUserGoal(item.content);
+          if (goal) taskSummary = goal;
+        }
+        if (!workspace && item.tool_calls) {
+          for (const tc of item.tool_calls) {
+            const cwd = tc.args?.Cwd || tc.args?.cwd;
+            if (cwd && typeof cwd === 'string') {
+              workspace = cwd.replace(/^\"|\"$/g, '');
+              break;
+            }
+          }
+        }
+      } catch {}
+    }
+
+    if (parsed.length > 0) {
+      const startIdx = lastUserIdx >= 0 ? lastUserIdx : 0;
+      for (let i = startIdx; i < parsed.length; i++) {
+        turnTokens += (parsed[i].input_tokens || 0) + (parsed[i].output_tokens || 0);
+      }
+
+      const last = parsed[parsed.length - 1];
+      isWaiting = false;
+      waitingDetail = '';
+
+      if (last.type !== 'GENERIC' && (!last.tool_calls || last.tool_calls.length === 0)) {
+        const scanStart = lastUserIdx >= 0 ? lastUserIdx : 0;
+        for (let i = parsed.length - 1; i >= scanStart; i--) {
+          const item = parsed[i];
+          if (item.status === 'RUNNING') {
+            let taskResolved = false;
+            for (let j = i + 1; j < parsed.length; j++) {
+              if (parsed[j].type === 'SYSTEM_MESSAGE' || (parsed[j].tool_calls && parsed[j].tool_calls.length > 0)) {
+                taskResolved = true;
+                break;
+              }
+            }
+            if (!taskResolved) {
+              isWaiting = true;
+              if (item.content && typeof item.content === 'string') {
+                const match = item.content.match(/Task Description:\s*([^,\n]+)/i);
+                if (match) {
+                  waitingDetail = match[1].trim();
+                } else if (item.content.includes('background task')) {
+                  waitingDetail = taskSummary ? `Running: ${taskSummary}` : 'Background task running';
+                }
+              }
+              break;
+            }
+          }
+          if (item.tool_calls && Array.isArray(item.tool_calls)) {
+            for (const tc of item.tool_calls) {
+              if (tc.name === 'schedule') {
+                let timerFired = false;
+                for (let j = i + 1; j < parsed.length; j++) {
+                  if (parsed[j].type === 'SYSTEM_MESSAGE' || (parsed[j].content && parsed[j].content.includes('task-'))) {
+                    timerFired = true;
+                    break;
+                  }
+                }
+                if (!timerFired) {
+                  isWaiting = true;
+                  const p = tc.args?.Prompt ? String(tc.args.Prompt).replace(/^\"|\"$/g, '') : '';
+                  waitingDetail = p ? `Waiting: ${p.slice(0, 36)}` : 'Waiting for scheduled task';
+                  break;
+                }
+              }
+            }
+          }
+          if (isWaiting) break;
+        }
+      }
+
+      if (isWaiting) {
+        detail = waitingDetail || (taskSummary ? `Running: ${taskSummary}` : 'Waiting for background task');
+        isDone = false;
+      } else if (last.tool_calls && last.tool_calls.length > 0) {
+        const call = last.tool_calls[last.tool_calls.length - 1];
+        detail = formatToolCallAction(call);
+        isDone = false;
+      } else if (last.type === 'GENERIC') {
+        let prevToolAction = '';
+        for (let i = parsed.length - 2; i >= 0; i--) {
+          const item = parsed[i];
+          if (item.tool_calls && Array.isArray(item.tool_calls) && item.tool_calls.length > 0) {
+            prevToolAction = formatToolCallAction(item.tool_calls[item.tool_calls.length - 1]);
+            if (prevToolAction) break;
+          }
+        }
+        if (last.content && typeof last.content === 'string' && /exit(ed)?\s+with\s+code\s+[1-9]/i.test(last.content)) {
+          detail = prevToolAction ? `Failed: ${prevToolAction}` : 'Action failed';
+        } else if (prevToolAction) {
+          detail = `Completed: ${prevToolAction}`;
+        } else {
+          detail = taskSummary ? `Working on: ${taskSummary}` : 'Reasoning next step';
+        }
+        isDone = false;
+      } else if (last.type === 'PLANNER_RESPONSE') {
+        isDone = true;
+        let summary = '';
+        if (last.content && typeof last.content === 'string') {
+          const lines = last.content.split('\n');
+          for (const rawLine of lines) {
+            const clean = rawLine.replace(/^[#*`>\s-]+/, '').replace(/^\[!.*?\]/, '').trim();
+            if (clean && clean.length > 5 && !clean.toLowerCase().startsWith('task id')) {
+              summary = clean.slice(0, 80);
+              break;
+            }
+          }
+        }
+        if (summary) {
+          taskSummary = summary;
+        }
+        detail = taskSummary ? `Finished: ${taskSummary}` : 'Task completed successfully';
+      } else if (last.type === 'USER_INPUT') {
+        detail = taskSummary ? `Reviewing: ${taskSummary}` : 'Reviewing prompt';
+        isDone = false;
+      }
+    }
+  } catch {}
+
+  // If taskSummary or workspace is missing, inspect head of file
+  if (!taskSummary || !workspace) {
+    try {
+      const headSize = Math.min(stat.size, 16384);
+      const headBuf = Buffer.alloc(headSize);
+      const fd = fs.openSync(tPath, 'r');
+      fs.readSync(fd, headBuf, 0, headSize, 0);
+      fs.closeSync(fd);
+      const headLines = headBuf.toString('utf8').trim().split('\n');
+      for (const hLine of headLines) {
+        if (!hLine.trim()) continue;
+        try {
+          const item = JSON.parse(hLine);
+          if (!taskSummary && item.type === 'USER_INPUT' && item.content) {
+            const goal = extractUserGoal(item.content);
+            if (goal) taskSummary = goal;
+          }
+          if (!workspace) {
+            if (item.content && typeof item.content === 'string') {
+              const wsMatch = item.content.match(/Active Workspaces:\s*\n\s*-\s*([^\n\r]+)/i) ||
+                              item.content.match(/Command Working Directory:\s*([^\n\r]+)/i);
+              if (wsMatch) workspace = wsMatch[1].trim();
+            }
+            if (!workspace && item.tool_calls) {
+              for (const tc of item.tool_calls) {
+                const cwd = tc.args?.Cwd || tc.args?.cwd;
+                if (cwd && typeof cwd === 'string') {
+                  workspace = cwd.replace(/^\"|\"$/g, '');
+                  break;
+                }
+              }
+            }
+          }
+        } catch {}
+      }
+    } catch {}
+  }
+
+  const workspaceName = workspace ? path.basename(workspace) : '';
+  const sessionData = {
+    detail,
+    isDone,
+    isWaiting,
+    turnTokens,
+    taskSummary,
+    workspace,
+    workspaceName,
+    mtimeMs: stat.mtimeMs,
+  };
+
+  transcriptParseCache.set(tPath, {
+    mtimeMs: stat.mtimeMs,
+    size: stat.size,
+    data: sessionData,
+  });
+
+  return sessionData;
+}
 
 function simulateAgent(agentId, detail, durationMs = 6000) {
   if (simulationTimeout) {
@@ -1054,11 +1494,29 @@ function simulateAgent(agentId, detail, durationMs = 6000) {
 
   simulatedAgentActivity = {
     agent: agentId,
+    activeAgent: agentId,
     name: names[agentId] || agentId,
     status: 'working',
     detail: detail || defaultDetails[agentId] || 'Agent task in progress',
     message: detail || 'Agent task in progress',
+    taskSummary: detail || 'Agent task in progress',
     tokensUsed: tokenCount,
+    workspace: '/home/saurabh/coding/soko',
+    workspaceName: 'soko',
+    activeCount: 1,
+    activeSessions: [{
+      sessionId: 'simulated-' + agentId,
+      agent: agentId,
+      name: names[agentId] || agentId,
+      status: 'working',
+      detail: detail || defaultDetails[agentId] || 'Agent task in progress',
+      message: detail || 'Agent task in progress',
+      taskSummary: detail || 'Agent task in progress',
+      tokensUsed: tokenCount,
+      workspace: '/home/saurabh/coding/soko',
+      workspaceName: 'soko',
+      timestamp: Date.now(),
+    }],
     timestamp: Date.now(),
   };
   broadcastAgentActivity();
@@ -1067,11 +1525,29 @@ function simulateAgent(agentId, detail, durationMs = 6000) {
     // Show completed status with message and tokens used
     simulatedAgentActivity = {
       agent: agentId,
+      activeAgent: agentId,
       name: names[agentId] || agentId,
       status: 'completed',
       detail: 'Task completed',
       message: detail ? `Finished: ${detail}` : 'Task completed successfully',
+      taskSummary: detail ? `Finished: ${detail}` : 'Task completed successfully',
       tokensUsed: tokenCount,
+      workspace: '/home/saurabh/coding/soko',
+      workspaceName: 'soko',
+      activeCount: 0,
+      activeSessions: [{
+        sessionId: 'simulated-' + agentId,
+        agent: agentId,
+        name: names[agentId] || agentId,
+        status: 'completed',
+        detail: 'Task completed',
+        message: detail ? `Finished: ${detail}` : 'Task completed successfully',
+        taskSummary: detail ? `Finished: ${detail}` : 'Task completed successfully',
+        tokensUsed: tokenCount,
+        workspace: '/home/saurabh/coding/soko',
+        workspaceName: 'soko',
+        timestamp: Date.now(),
+      }],
       timestamp: Date.now(),
     };
     broadcastAgentActivity();
@@ -1091,350 +1567,395 @@ function checkActiveAgentActivity() {
   const now = Date.now();
   const home = os.homedir();
 
-  // 1. Check Google Antigravity
-  // Transcripts in ~/.gemini/antigravity-cli/brain/*/
+  // 1. Google Antigravity Sessions Scan
   try {
-    const brainDir = path.join(home, '.gemini/antigravity-cli/brain');
-    if (fs.existsSync(brainDir)) {
-      const entries = fs.readdirSync(brainDir, { withFileTypes: true });
-      let newestTime = 0;
-      let newestDir = null;
-      for (const e of entries) {
-        if (e.isDirectory() && !e.name.startsWith('.')) {
+    const brainDirs = [
+      path.join(home, '.gemini/antigravity-cli/brain'),
+      path.join(home, '.gemini/antigravity/brain'),
+      path.join(home, '.gemini/antigravity-ide/brain'),
+    ];
+
+    for (const bDir of brainDirs) {
+      if (!fs.existsSync(bDir)) continue;
+      try {
+        const entries = fs.readdirSync(bDir, { withFileTypes: true });
+        for (const e of entries) {
+          if (!e.isDirectory() || e.name.startsWith('.')) continue;
+          const sessionId = e.name;
+          const regKey = `antigravity:${sessionId}`;
+          const tPath = path.join(bDir, sessionId, '.system_generated/logs/transcript.jsonl');
+
+          let stat = null;
           try {
-            const s = fs.statSync(path.join(brainDir, e.name));
-            if (s.mtimeMs > newestTime) {
-              newestTime = s.mtimeMs;
-              newestDir = path.join(brainDir, e.name);
-            }
+            stat = fs.statSync(tPath);
           } catch {}
-        }
-      }
 
-      if (newestDir) {
-        const transcriptPath = path.join(newestDir, '.system_generated/logs/transcript.jsonl');
-        if (fs.existsSync(transcriptPath)) {
-          const stat = fs.statSync(transcriptPath);
+          if (!stat) continue;
+
+          // Only scan transcripts modified recently (last 15 mins) or already active in registry
           const ageMs = now - stat.mtimeMs;
-          if (ageMs <= 60000) {
-            let detail = 'Working on task';
-            let isDone = false;
-            let turnTokens = 0;
-            let taskSummary = '';
+          if (ageMs > 15 * 60 * 1000 && !agentSessionRegistry.has(regKey)) {
+            continue;
+          }
 
-            try {
-              const bufferSize = Math.min(stat.size, 262144);
-              const buffer = Buffer.alloc(bufferSize);
-              const fd = fs.openSync(transcriptPath, 'r');
-              fs.readSync(fd, buffer, 0, bufferSize, Math.max(0, stat.size - bufferSize));
-              fs.closeSync(fd);
+          const parsed = parseAntigravitySession(tPath, stat, now);
+          const existing = agentSessionRegistry.get(regKey);
 
-              const lines = buffer.toString('utf8').trim().split('\n');
-              const parsed = [];
-              let lastUserIdx = -1;
-
-              for (let i = 0; i < lines.length; i++) {
-                if (!lines[i].trim()) continue;
-                try {
-                  const item = JSON.parse(lines[i]);
-                  parsed.push(item);
-                  if (item.type === 'USER_INPUT') {
-                    lastUserIdx = parsed.length - 1;
-                    if (item.content) {
-                      const clean = item.content.replace(/<[^>]+>/g, '').trim();
-                      if (clean) taskSummary = clean.slice(0, 70);
-                    }
-                  }
-                } catch {}
-              }
-
-              if (parsed.length > 0) {
-                const startIdx = lastUserIdx >= 0 ? lastUserIdx : 0;
-                for (let i = startIdx; i < parsed.length; i++) {
-                  turnTokens += (parsed[i].input_tokens || 0) + (parsed[i].output_tokens || 0);
-                }
-
-                const last = parsed[parsed.length - 1];
-                if (last.tool_calls && last.tool_calls.length > 0) {
-                  const call = last.tool_calls[last.tool_calls.length - 1];
-                  const action = call.args?.toolAction || call.args?.toolSummary || call.name;
-                  detail = typeof action === 'string' ? action.replace(/^"|"$/g, '') : 'Executing tool';
-                  isDone = false;
-                } else if (last.type === 'GENERIC') {
-                  detail = 'Processing tool results';
-                  isDone = false;
-                } else if (last.type === 'PLANNER_RESPONSE') {
-                  detail = 'Task completed';
-                  isDone = true;
-                  if (last.content && typeof last.content === 'string') {
-                    const firstLine = last.content.split('\n')[0].replace(/^[#*>\s]+/, '').replace(/^\[!.*?\]/, '').trim();
-                    if (firstLine && firstLine.length > 3) {
-                      taskSummary = firstLine.slice(0, 80);
-                    }
-                  }
-                } else if (last.type === 'USER_INPUT') {
-                  detail = 'Analyzing user prompt';
-                  isDone = false;
-                }
-              }
-            } catch {}
-
-            if (isDone) {
-              const comp = {
+          if (parsed.isWaiting) {
+            // Waiting session (active up to 5 minutes without transcript writes)
+            if (ageMs <= 300000) {
+              agentSessionRegistry.set(regKey, {
+                sessionId,
+                agent: 'antigravity',
+                name: 'Google Antigravity',
+                status: 'waiting',
+                detail: parsed.detail,
+                message: parsed.taskSummary || parsed.detail,
+                taskSummary: parsed.taskSummary,
+                tokensUsed: parsed.turnTokens || 1400,
+                workspace: parsed.workspace,
+                workspaceName: parsed.workspaceName,
+                timestamp: stat.mtimeMs,
+                mtimeMs: stat.mtimeMs,
+              });
+            } else {
+              agentSessionRegistry.delete(regKey);
+            }
+          } else if (parsed.isDone) {
+            // Completed task
+            if (now - stat.mtimeMs <= AGENT_COMPLETION_RETENTION_MS) {
+              agentSessionRegistry.set(regKey, {
+                sessionId,
                 agent: 'antigravity',
                 name: 'Google Antigravity',
                 status: 'completed',
-                detail: 'Task completed',
-                message: taskSummary || 'Task completed successfully',
-                tokensUsed: turnTokens || 1650,
+                detail: parsed.detail || (parsed.taskSummary ? `Done: ${parsed.taskSummary}` : 'Task completed successfully'),
+                message: parsed.taskSummary || parsed.detail || 'Task completed successfully',
+                taskSummary: parsed.taskSummary,
+                tokensUsed: parsed.turnTokens || 1650,
+                workspace: parsed.workspace,
+                workspaceName: parsed.workspaceName,
                 timestamp: stat.mtimeMs,
-                expiresAt: now + 45000,
-              };
-              realAgentCompletionCache = comp;
-              lastObservedWorkingAgent = null;
-              return comp;
+                mtimeMs: stat.mtimeMs,
+                expiresAt: stat.mtimeMs + AGENT_COMPLETION_RETENTION_MS,
+              });
             } else {
-              realAgentCompletionCache = null;
-              lastObservedWorkingAgent = {
-                agent: 'antigravity',
-                name: 'Google Antigravity',
-                tokens: turnTokens,
-                summary: taskSummary,
-                timestamp: stat.mtimeMs,
-              };
-              return {
-                agent: 'antigravity',
-                name: 'Google Antigravity',
-                status: 'working',
-                detail,
-                tokensUsed: turnTokens,
-                timestamp: stat.mtimeMs,
-              };
+              agentSessionRegistry.delete(regKey);
             }
+          } else if (ageMs <= 60000) {
+            // Actively working
+            agentSessionRegistry.set(regKey, {
+              sessionId,
+              agent: 'antigravity',
+              name: 'Google Antigravity',
+              status: 'working',
+              detail: parsed.detail,
+              message: parsed.taskSummary || parsed.detail,
+              taskSummary: parsed.taskSummary,
+              tokensUsed: parsed.turnTokens || 1200,
+              workspace: parsed.workspace,
+              workspaceName: parsed.workspaceName,
+              timestamp: stat.mtimeMs,
+              mtimeMs: stat.mtimeMs,
+            });
+          } else if (existing && existing.status === 'working' && (now - existing.timestamp) <= 60000) {
+            // Transition from active working to completed when file write stops
+            agentSessionRegistry.set(regKey, {
+              sessionId,
+              agent: 'antigravity',
+              name: 'Google Antigravity',
+              status: 'completed',
+              detail: existing.taskSummary ? `Done: ${existing.taskSummary}` : 'Task completed successfully',
+              message: existing.taskSummary || 'Task completed successfully',
+              taskSummary: existing.taskSummary,
+              tokensUsed: existing.tokensUsed || 1400,
+              workspace: existing.workspace,
+              workspaceName: existing.workspaceName,
+              timestamp: now,
+              mtimeMs: stat.mtimeMs,
+              expiresAt: now + AGENT_COMPLETION_RETENTION_MS,
+            });
           }
         }
-      }
+      } catch {}
     }
   } catch {}
 
-  // Transition from working to completed if active agent transcript stopped updating
-  if (lastObservedWorkingAgent && (now - lastObservedWorkingAgent.timestamp) <= 60000) {
-    const comp = {
-      agent: lastObservedWorkingAgent.agent,
-      name: lastObservedWorkingAgent.name,
-      status: 'completed',
-      detail: 'Task completed',
-      message: lastObservedWorkingAgent.summary || 'Task completed successfully',
-      tokensUsed: lastObservedWorkingAgent.tokens || 1400,
-      timestamp: now,
-      expiresAt: now + 45000,
-    };
-    realAgentCompletionCache = comp;
-    lastObservedWorkingAgent = null;
-    return comp;
-  }
-
-  // 2. Check OpenAI Codex CLI
-  // Active rollout in ~/.codex/sessions/**
+  // 2. OpenAI Codex Sessions Scan
   try {
     const codexBase = path.join(home, '.codex/sessions');
     if (fs.existsSync(codexBase)) {
-      let newestRollout = null;
-      let newestTime = 0;
-
-      function findNewest(dir, depth) {
+      function scanCodexDir(dir, depth) {
         if (depth > 5) return;
         try {
           const files = fs.readdirSync(dir, { withFileTypes: true });
           for (const f of files) {
             const full = path.join(dir, f.name);
             if (f.isDirectory()) {
-              findNewest(full, depth + 1);
+              scanCodexDir(full, depth + 1);
             } else if (f.name.startsWith('rollout-') && f.name.endsWith('.jsonl')) {
               try {
                 const s = fs.statSync(full);
-                if (s.mtimeMs > newestTime) {
-                  newestTime = s.mtimeMs;
-                  newestRollout = full;
+                const ageMs = now - s.mtimeMs;
+                const sessionId = f.name.replace(/^rollout-/, '').replace(/\.jsonl$/, '');
+                const regKey = `codex:${sessionId}`;
+
+                if (ageMs > 15 * 60 * 1000 && !agentSessionRegistry.has(regKey)) {
+                  continue;
+                }
+
+                // Parse tail buffer
+                const tailBuf = Buffer.alloc(Math.min(s.size, 32768));
+                const fd = fs.openSync(full, 'r');
+                const readBytes = Math.min(s.size, 32768);
+                fs.readSync(fd, tailBuf, 0, readBytes, Math.max(0, s.size - readBytes));
+                fs.closeSync(fd);
+                const raw = tailBuf.toString('utf8');
+                const lines = raw.trim().split('\n');
+
+                let isDone = false;
+                let codexTokens = 1200;
+                let taskSummary = 'Codex task';
+                let detail = 'Generating code solution';
+                let cwd = '';
+
+                for (let i = lines.length - 1; i >= 0; i--) {
+                  if (!lines[i].trim()) continue;
+                  try {
+                    const item = JSON.parse(lines[i]);
+                    if (item.type === 'event_msg' && (item.payload?.type === 'task_complete' || item.payload?.type === 'turn_complete')) {
+                      isDone = true;
+                    }
+                    if (item.type === 'token_count' && item.payload?.info?.total_token_usage?.total_tokens) {
+                      codexTokens = item.payload.info.total_token_usage.total_tokens;
+                    } else if (item.type === 'token_usage_record' && item.payload?.usage?.total_tokens) {
+                      codexTokens = item.payload.usage.total_tokens;
+                    }
+                    if (item.type === 'response_item' && item.payload?.type === 'message' && item.payload?.content) {
+                      const txt = item.payload.content[0]?.text;
+                      if (txt && typeof txt === 'string') {
+                        taskSummary = txt.split('\n')[0].slice(0, 75);
+                      }
+                    }
+                    if (!cwd && item.payload?.cwd) {
+                      cwd = item.payload.cwd;
+                    }
+                  } catch {}
+                }
+
+                if (!cwd) {
+                  const m = raw.match(/"cwd":"([^"]+)"/);
+                  if (m) cwd = m[1];
+                }
+
+                const workspaceName = cwd ? path.basename(cwd) : '';
+
+                if (isDone) {
+                  if (now - s.mtimeMs <= AGENT_COMPLETION_RETENTION_MS) {
+                    agentSessionRegistry.set(regKey, {
+                      sessionId,
+                      agent: 'codex',
+                      name: 'OpenAI Codex',
+                      status: 'completed',
+                      detail: taskSummary ? `Done: ${taskSummary}` : 'OpenAI Codex: Task completed',
+                      message: taskSummary || 'OpenAI Codex: Task completed',
+                      taskSummary,
+                      tokensUsed: codexTokens,
+                      workspace: cwd,
+                      workspaceName,
+                      timestamp: s.mtimeMs,
+                      mtimeMs: s.mtimeMs,
+                      expiresAt: s.mtimeMs + AGENT_COMPLETION_RETENTION_MS,
+                    });
+                  } else {
+                    agentSessionRegistry.delete(regKey);
+                  }
+                } else if (ageMs <= 60000) {
+                  agentSessionRegistry.set(regKey, {
+                    sessionId,
+                    agent: 'codex',
+                    name: 'OpenAI Codex',
+                    status: 'working',
+                    detail: detail || (taskSummary ? `Working: ${taskSummary}` : 'Generating code solution'),
+                    message: taskSummary || 'Generating code solution',
+                    taskSummary,
+                    tokensUsed: codexTokens,
+                    workspace: cwd,
+                    workspaceName,
+                    timestamp: s.mtimeMs,
+                    mtimeMs: s.mtimeMs,
+                  });
                 }
               } catch {}
             }
           }
         } catch {}
       }
-
-      findNewest(codexBase, 0);
-
-      if (newestRollout && (now - newestTime) <= 60000) {
-        let codexTokens = 1200;
-        let isDone = false;
-        let taskSummary = 'Codex task completed';
-        let detail = 'Generating code solution';
-
-        try {
-          const tailBuf = Buffer.alloc(32768);
-          const stat = fs.statSync(newestRollout);
-          const fd = fs.openSync(newestRollout, 'r');
-          const readBytes = Math.min(stat.size, 32768);
-          fs.readSync(fd, tailBuf, 0, readBytes, Math.max(0, stat.size - readBytes));
-          fs.closeSync(fd);
-          const lines = tailBuf.toString('utf8').trim().split('\n');
-
-          for (let i = lines.length - 1; i >= 0; i--) {
-            if (!lines[i].trim()) continue;
-            try {
-              const item = JSON.parse(lines[i]);
-              if (item.type === 'event_msg' && (item.payload?.type === 'task_complete' || item.payload?.type === 'turn_complete')) {
-                isDone = true;
-              }
-              if (item.type === 'token_count' && item.payload?.info?.total_token_usage?.total_tokens) {
-                codexTokens = item.payload.info.total_token_usage.total_tokens;
-              } else if (item.type === 'token_usage_record' && item.payload?.usage?.total_tokens) {
-                codexTokens = item.payload.usage.total_tokens;
-              }
-              if (item.type === 'response_item' && item.payload?.type === 'message' && item.payload?.content) {
-                const txt = item.payload.content[0]?.text;
-                if (txt && typeof txt === 'string') {
-                  taskSummary = txt.split('\n')[0].slice(0, 75);
-                }
-              }
-            } catch {}
-          }
-        } catch {}
-
-        if (isDone) {
-          const comp = {
-            agent: 'codex',
-            name: 'OpenAI Codex',
-            status: 'completed',
-            detail: 'Task completed',
-            message: taskSummary || 'OpenAI Codex: Task completed',
-            tokensUsed: codexTokens,
-            timestamp: newestTime,
-            expiresAt: now + 45000,
-          };
-          realAgentCompletionCache = comp;
-          lastObservedWorkingAgent = null;
-          return comp;
-        } else {
-          realAgentCompletionCache = null;
-          lastObservedWorkingAgent = {
-            agent: 'codex',
-            name: 'OpenAI Codex',
-            tokens: codexTokens,
-            summary: taskSummary,
-            timestamp: newestTime,
-          };
-          return {
-            agent: 'codex',
-            name: 'OpenAI Codex',
-            status: 'working',
-            detail,
-            tokensUsed: codexTokens,
-            timestamp: newestTime,
-          };
-        }
-      }
+      scanCodexDir(codexBase, 0);
     }
   } catch {}
 
-  // 3. Check Anthropic Claude
+  // 3. Anthropic Claude Sessions Scan
   try {
     const claudeDir = path.join(home, '.claude');
     if (fs.existsSync(claudeDir)) {
-      let newestFile = null;
-      let newestTime = 0;
-      function findClaudeNewest(dir, depth) {
+      function scanClaudeDir(dir, depth) {
         if (depth > 3) return;
         try {
           const entries = fs.readdirSync(dir, { withFileTypes: true });
           for (const e of entries) {
             const full = path.join(dir, e.name);
             if (e.isDirectory()) {
-              findClaudeNewest(full, depth + 1);
+              scanClaudeDir(full, depth + 1);
             } else if (e.name.endsWith('.json') || e.name.endsWith('.jsonl')) {
               try {
                 const s = fs.statSync(full);
-                if (s.mtimeMs > newestTime) {
-                  newestTime = s.mtimeMs;
-                  newestFile = full;
+                const ageMs = now - s.mtimeMs;
+                const sessionId = path.basename(e.name, path.extname(e.name));
+                const regKey = `claude:${sessionId}`;
+
+                if (ageMs > 15 * 60 * 1000 && !agentSessionRegistry.has(regKey)) continue;
+
+                let claudeTokens = 2100;
+                let isDone = false;
+                let summary = 'Claude completed task';
+
+                const tailBuf = Buffer.alloc(Math.min(s.size, 16384));
+                const fd = fs.openSync(full, 'r');
+                const readBytes = Math.min(s.size, 16384);
+                fs.readSync(fd, tailBuf, 0, readBytes, Math.max(0, s.size - readBytes));
+                fs.closeSync(fd);
+                const raw = tailBuf.toString('utf8');
+                if (raw.includes('"completed"') || raw.includes('"status":"done"') || raw.includes('"finish_reason"')) {
+                  isDone = true;
+                }
+
+                if (isDone) {
+                  if (now - s.mtimeMs <= AGENT_COMPLETION_RETENTION_MS) {
+                    agentSessionRegistry.set(regKey, {
+                      sessionId,
+                      agent: 'claude',
+                      name: 'Anthropic Claude',
+                      status: 'completed',
+                      detail: summary ? `Done: ${summary}` : 'Anthropic Claude: Task completed',
+                      message: summary,
+                      taskSummary: summary,
+                      tokensUsed: claudeTokens,
+                      workspace: '',
+                      workspaceName: '',
+                      timestamp: s.mtimeMs,
+                      mtimeMs: s.mtimeMs,
+                      expiresAt: s.mtimeMs + AGENT_COMPLETION_RETENTION_MS,
+                    });
+                  } else {
+                    agentSessionRegistry.delete(regKey);
+                  }
+                } else if (ageMs <= 60000) {
+                  agentSessionRegistry.set(regKey, {
+                    sessionId,
+                    agent: 'claude',
+                    name: 'Anthropic Claude',
+                    status: 'working',
+                    detail: summary ? `Working: ${summary}` : 'Reasoning and synthesizing context',
+                    message: summary,
+                    taskSummary: summary,
+                    tokensUsed: claudeTokens,
+                    workspace: '',
+                    workspaceName: '',
+                    timestamp: s.mtimeMs,
+                    mtimeMs: s.mtimeMs,
+                  });
                 }
               } catch {}
             }
           }
         } catch {}
       }
-      findClaudeNewest(claudeDir, 0);
-
-      if (newestFile && (now - newestTime) <= 60000) {
-        let claudeTokens = 2100;
-        let isDone = false;
-        let summary = 'Claude completed task';
-
-        try {
-          const tailBuf = Buffer.alloc(16384);
-          const stat = fs.statSync(newestFile);
-          const fd = fs.openSync(newestFile, 'r');
-          const readBytes = Math.min(stat.size, 16384);
-          fs.readSync(fd, tailBuf, 0, readBytes, Math.max(0, stat.size - readBytes));
-          fs.closeSync(fd);
-          const raw = tailBuf.toString('utf8');
-          if (raw.includes('"completed"') || raw.includes('"status":"done"') || raw.includes('"finish_reason"')) {
-            isDone = true;
-          }
-        } catch {}
-
-        if (isDone) {
-          const comp = {
-            agent: 'claude',
-            name: 'Anthropic Claude',
-            status: 'completed',
-            detail: 'Task completed',
-            message: summary,
-            tokensUsed: claudeTokens,
-            timestamp: newestTime,
-            expiresAt: now + 45000,
-          };
-          realAgentCompletionCache = comp;
-          lastObservedWorkingAgent = null;
-          return comp;
-        } else {
-          realAgentCompletionCache = null;
-          lastObservedWorkingAgent = {
-            agent: 'claude',
-            name: 'Anthropic Claude',
-            tokens: claudeTokens,
-            summary,
-            timestamp: newestTime,
-          };
-          return {
-            agent: 'claude',
-            name: 'Anthropic Claude',
-            status: 'working',
-            detail: 'Reasoning and synthesizing',
-            tokensUsed: claudeTokens,
-            timestamp: newestTime,
-          };
-        }
-      }
+      scanClaudeDir(claudeDir, 0);
     }
   } catch {}
 
-  // If a recent task completed within the retention window, keep returning it
-  if (realAgentCompletionCache && realAgentCompletionCache.expiresAt > now) {
-    return realAgentCompletionCache;
-  } else if (realAgentCompletionCache && realAgentCompletionCache.expiresAt <= now) {
-    realAgentCompletionCache = null;
+  // 4. Prune expired sessions from registry
+  for (const [key, session] of agentSessionRegistry.entries()) {
+    if (session.status === 'completed' && session.expiresAt && now > session.expiresAt) {
+      agentSessionRegistry.delete(key);
+    } else if (session.status === 'working' && now - session.timestamp > 90000) {
+      agentSessionRegistry.delete(key);
+    } else if (session.status === 'waiting' && now - session.timestamp > 360000) {
+      agentSessionRegistry.delete(key);
+    }
+  }
+
+  // 5. Categorize & Sort Sessions
+  const allSessions = Array.from(agentSessionRegistry.values());
+  const workingSessions = allSessions.filter((s) => s.status === 'working' || s.status === 'thinking')
+    .sort((a, b) => b.timestamp - a.timestamp);
+  const waitingSessions = allSessions.filter((s) => s.status === 'waiting')
+    .sort((a, b) => b.timestamp - a.timestamp);
+  const completedSessions = allSessions.filter((s) => s.status === 'completed')
+    .sort((a, b) => b.timestamp - a.timestamp);
+
+  const activeSessions = [...workingSessions, ...waitingSessions];
+  const visibleSessions = [...workingSessions, ...waitingSessions, ...completedSessions];
+  const activeCount = activeSessions.length;
+
+  // 6. Select Primary Active Session
+  let primary = null;
+  if (focusedSessionId) {
+    primary = visibleSessions.find((s) => s.sessionId === focusedSessionId) || null;
+  }
+  if (!primary) {
+    if (workingSessions.length > 0) {
+      primary = workingSessions[0];
+    } else if (waitingSessions.length > 0) {
+      primary = waitingSessions[0];
+    } else if (completedSessions.length > 0) {
+      primary = completedSessions[0];
+    }
+  }
+
+  if (!primary) {
+    return {
+      agent: null,
+      activeAgent: null,
+      name: null,
+      status: 'idle',
+      detail: '',
+      message: '',
+      tokensUsed: 0,
+      timestamp: now,
+      activeCount: 0,
+      activeSessions: [],
+    };
   }
 
   return {
-    agent: null,
-    name: null,
-    status: 'idle',
-    detail: '',
-    message: '',
-    tokensUsed: 0,
-    timestamp: now,
+    agent: primary.agent,
+    activeAgent: primary.agent,
+    name: primary.name,
+    status: primary.status,
+    detail: primary.detail,
+    message: primary.message || primary.taskSummary || primary.detail,
+    taskSummary: primary.taskSummary,
+    tokensUsed: primary.tokensUsed || 0,
+    timestamp: primary.timestamp,
+    sessionId: primary.sessionId,
+    workspace: primary.workspace,
+    workspaceName: primary.workspaceName,
+    activeCount,
+    activeSessions: visibleSessions.map((s) => ({
+      sessionId: s.sessionId,
+      agent: s.agent,
+      name: s.name,
+      status: s.status,
+      detail: s.detail,
+      message: s.message || s.taskSummary || s.detail,
+      taskSummary: s.taskSummary,
+      tokensUsed: s.tokensUsed || 0,
+      workspace: s.workspace,
+      workspaceName: s.workspaceName,
+      timestamp: s.timestamp,
+    })),
   };
 }
 
@@ -1454,7 +1975,8 @@ function broadcastAgentActivity() {
 // Background CLI agent watcher loop (every 1.5s)
 setInterval(() => {
   const active = checkActiveAgentActivity();
-  const key = `${active.agent}-${active.status}-${active.detail}-${active.tokensUsed}-${active.message}`;
+  const sessionIds = (active.activeSessions || []).map((s) => `${s.sessionId}:${s.status}:${s.detail}`).join('|');
+  const key = `${active.agent}-${active.status}-${active.detail}-${active.tokensUsed}-${active.message}-${active.activeCount}-${sessionIds}`;
   if (key !== lastAgentStateKey) {
     lastAgentStateKey = key;
     broadcastAgentActivity();
@@ -1505,11 +2027,11 @@ const CLI_WHITELIST = {
   },
   'test': {
     title: 'Integration Test Suite',
-    cmd: 'node scripts/test_integration.js',
+    cmd: 'node tests/test_integration.js',
   },
   'agy-test': {
     title: 'Integration Test Suite',
-    cmd: 'node scripts/test_integration.js',
+    cmd: 'node tests/test_integration.js',
   },
 };
 
@@ -1607,6 +2129,10 @@ function getMimeType(filename) {
 }
 
 function openFileOrFolder(targetPath) {
+  if (process.env.NODE_ENV === 'test' || process.env.CI || process.env.SOKO_SUPPRESS_OPEN === '1') {
+    console.log(`[Bridge] (Test mode) Suppressed file manager launch for: ${targetPath}`);
+    return;
+  }
   const platform = process.platform;
   let cmd = null;
   if (platform === 'linux') {
@@ -1635,7 +2161,7 @@ let activeTransferSession = {
   bytesTransferred: 0,
 };
 
-function cancelActiveTransfer(reason = 'Cancelled by user') {
+function cancelActiveTransfer(reason = 'Cancelled by user', broadcast = true) {
   if (activeTransferSession.timer) {
     clearInterval(activeTransferSession.timer);
     activeTransferSession.timer = null;
@@ -1658,22 +2184,24 @@ function cancelActiveTransfer(reason = 'Cancelled by user') {
     }
   }
 
-  const cancelledPacket = {
-    magic: 'SK',
-    version: 1,
-    packetId: Date.now(),
-    timestamp: Date.now(),
-    packetType: 'FILE_CANCEL',
-    payload: {
-      id: activeTransferSession.id || 'transfer-1',
-      filename: activeTransferSession.filename || 'mobile-transfer.apk',
-      status: 'cancelled',
-      error: reason,
-    },
-  };
+  if (broadcast) {
+    const cancelledPacket = {
+      magic: 'SK',
+      version: 1,
+      packetId: Date.now(),
+      timestamp: Date.now(),
+      packetType: 'FILE_CANCEL',
+      payload: {
+        id: activeTransferSession.id || 'transfer-1',
+        filename: activeTransferSession.filename || 'mobile-transfer.apk',
+        status: 'cancelled',
+        error: reason,
+      },
+    };
 
-  broadcastPacket(cancelledPacket);
-  console.log(`[Bridge Transfer] Transfer cancelled: ${reason}`);
+    broadcastPacket(cancelledPacket);
+    console.log(`[Bridge Transfer] Transfer cancelled: ${reason}`);
+  }
 
   activeTransferSession.id = null;
   activeTransferSession.filename = null;
@@ -1836,31 +2364,18 @@ function createWebSocketServer(server) {
 
     socket.write(responseHeaders.join('\r\n') + '\r\n\r\n');
 
-    socket.isLocalDesktop = (socket.remoteAddress === '127.0.0.1' || socket.remoteAddress === '::1' || socket.remoteAddress === '::ffff:127.0.0.1');
+    const simRemote = req.headers['x-simulate-remote-ip'];
+    const isLoopback = (socket.remoteAddress === '127.0.0.1' || socket.remoteAddress === '::1' || socket.remoteAddress === '::ffff:127.0.0.1');
+    socket.isLocalDesktop = Boolean(isLoopback && !simRemote);
     socket.isAuthorized = socket.isLocalDesktop;
     socket.deviceId = null;
     socket.deviceName = null;
 
     activeClients.add(socket);
-    console.log(`[Bridge WS] Client connected from ${socket.remoteAddress} (local: ${socket.isLocalDesktop}). Total active: ${activeClients.size}`);
+    console.log(`[Bridge WS] Client connected from ${socket.remoteAddress} (local: ${socket.isLocalDesktop}, simRemote: ${Boolean(simRemote)}). Total active: ${activeClients.size}`);
 
-    // If mobile companion connects and pairedDevice is not set, initialize companion record
-    if (!socket.isLocalDesktop && !pairedDevice) {
-      const localIps = getLocalIps();
-      const primaryIp = localIps[0] || '192.168.31.210';
-      pairedDevice = {
-        id: `wifi-companion-${primaryIp}`,
-        name: 'Mobile Companion (Android)',
-        model: `Local Companion (${primaryIp}:8766)`,
-        rssi: -45,
-        pingMs: 8,
-        transport: 'dual',
-        batteryLevel: 96,
-        lastSeen: Date.now(),
-        isAuthorized: true,
-        ipAddress: primaryIp,
-      };
-    }
+    // Clean up discovered devices
+    const discovered = getDiscoveredUnpairedDevices();
 
     // Send Welcome / Handshake packet
     sendWsPacket(socket, {
@@ -1872,17 +2387,19 @@ function createWebSocketServer(server) {
       payload: {
         status: 'online',
         service: 'Soko Connection Bridge',
-        version: '1.0.0',
+        version: appVersion,
         activeClients: activeClients.size,
         localIps: getLocalIps(),
         port: PORT,
         sasPin: socket.isLocalDesktop ? activeSasPin : undefined,
         requiresPairing: !socket.isAuthorized,
-        pairedDevice,
+        pairedDevice: pairedDevice && pairedDevice.isAuthorized ? pairedDevice : null,
+        discoveredDevice: discovered[0] || null,
+        discoveredDevices: discovered,
       },
     });
 
-    // Notify other clients (e.g. desktop) about active client count & paired device
+    // Notify other clients (e.g. desktop) about active client count & discovered devices
     broadcastPacket({
       magic: 'SK',
       version: 1,
@@ -1892,11 +2409,13 @@ function createWebSocketServer(server) {
       payload: {
         status: 'online',
         service: 'Soko Connection Bridge',
-        version: '1.0.0',
+        version: appVersion,
         activeClients: activeClients.size,
         localIps: getLocalIps(),
         port: PORT,
-        pairedDevice,
+        pairedDevice: pairedDevice && pairedDevice.isAuthorized ? pairedDevice : null,
+        discoveredDevice: discovered[0] || null,
+        discoveredDevices: discovered,
       },
     }, socket);
 
@@ -1907,6 +2426,14 @@ function createWebSocketServer(server) {
     socket.on('close', () => {
       activeClients.delete(socket);
       console.log(`[Bridge WS] Client disconnected. Total active: ${activeClients.size}`);
+
+      // Check if any authorized mobile companion client remains active
+      const remainingAuthorized = Array.from(activeClients).some((c) => !c.isLocalDesktop && c.isAuthorized);
+      if (!remainingAuthorized) {
+        pairedDevice = null;
+      }
+
+      const remainingDiscovered = getDiscoveredUnpairedDevices();
       broadcastPacket({
         magic: 'SK',
         version: 1,
@@ -1916,11 +2443,13 @@ function createWebSocketServer(server) {
         payload: {
           status: 'online',
           service: 'Soko Connection Bridge',
-          version: '1.0.0',
+          version: appVersion,
           activeClients: activeClients.size,
           localIps: getLocalIps(),
           port: PORT,
-          pairedDevice: activeClients.size > 1 ? pairedDevice : (trustedDevices.size > 0 ? pairedDevice : null),
+          pairedDevice: pairedDevice && pairedDevice.isAuthorized ? pairedDevice : null,
+          discoveredDevice: remainingDiscovered[0] || null,
+          discoveredDevices: remainingDiscovered,
         },
       });
     });
@@ -1980,6 +2509,52 @@ function handleWsFrame(socket, buffer) {
       });
       return;
     }
+
+    // Auto-authorize socket if packet presents a valid Bearer token matching trustedDevices
+    const presentedToken = packet.token || (packet.payload && packet.payload.token);
+    const presentedDeviceId = packet.deviceId || (packet.payload && packet.payload.deviceId);
+    if (!socket.isAuthorized && presentedToken) {
+      let matchedDev = null;
+      let matchedId = presentedDeviceId;
+      if (presentedDeviceId && trustedDevices.has(presentedDeviceId)) {
+        const candidate = trustedDevices.get(presentedDeviceId);
+        if (candidate && candidate.token === presentedToken) {
+          matchedDev = candidate;
+        }
+      }
+      if (!matchedDev) {
+        for (const [id, dev] of trustedDevices.entries()) {
+          if (dev && dev.token === presentedToken) {
+            matchedDev = dev;
+            matchedId = id;
+            break;
+          }
+        }
+      }
+      if (matchedDev) {
+        socket.isAuthorized = true;
+        socket.deviceId = matchedId;
+        socket.deviceName = matchedDev.name;
+        socket.token = presentedToken;
+        if (!pairedDevice) {
+          pairedDevice = {
+            id: matchedId,
+            name: matchedDev.name || 'Mobile Phone',
+            model: matchedDev.model || 'Mobile Companion',
+            rssi: packet.payload?.rssi || -48,
+            pingMs: 10,
+            transport: 'dual',
+            batteryLevel: packet.payload?.batteryLevel || 95,
+            lastSeen: Date.now(),
+            isAuthorized: true,
+          };
+        } else {
+          pairedDevice.isAuthorized = true;
+          pairedDevice.lastSeen = Date.now();
+        }
+        console.log(`[Security] Socket automatically authorized via valid bearer token for device: ${matchedId}`);
+      }
+    }
     
     // Heartbeat ping/pong response
     if (packet.packetType === 'HEARTBEAT_PING') {
@@ -2003,53 +2578,80 @@ function handleWsFrame(socket, buffer) {
       const token = packet.payload?.token;
 
       // Check if already in persistent trusted devices
-      if (token && trustedDevices.has(deviceId)) {
-        const trusted = trustedDevices.get(deviceId);
-        if (trusted.token === token) {
-          socket.isAuthorized = true;
-          socket.deviceId = deviceId;
-          socket.deviceName = trusted.name || packet.payload?.deviceName;
-          if (!pairedDevice) {
-            pairedDevice = {
-              id: deviceId,
-              name: packet.payload?.deviceName || trusted.name || 'Mobile Phone',
-              model: packet.payload?.model || 'Mobile Companion',
-              rssi: -52,
-              pingMs: 8,
-              transport: 'dual',
-              batteryLevel: packet.payload?.batteryLevel || 100,
-              lastSeen: Date.now(),
-              isAuthorized: true,
-            };
-          } else {
-            if (packet.payload?.deviceName) pairedDevice.name = packet.payload.deviceName;
-            if (packet.payload?.model) pairedDevice.model = packet.payload.model;
-            if (packet.payload?.batteryLevel) pairedDevice.batteryLevel = packet.payload.batteryLevel;
-            if (packet.payload?.rssi) pairedDevice.rssi = packet.payload.rssi;
-            pairedDevice.lastSeen = Date.now();
-            pairedDevice.isAuthorized = true;
+      let trusted = token && deviceId ? trustedDevices.get(deviceId) : null;
+      let matchedDevId = deviceId;
+      if (token && (!trusted || trusted.token !== token)) {
+        for (const [id, dev] of trustedDevices.entries()) {
+          if (dev && dev.token === token) {
+            matchedDevId = id;
+            trusted = dev;
+            break;
           }
-
-          console.log(`[Security] Recognized trusted companion: ${pairedDevice.name} (${deviceId})`);
-          sendWsPacket(socket, {
-            magic: 'SK',
-            version: 1,
-            packetId: Date.now(),
-            timestamp: Date.now(),
-            packetType: 'PAIR_CONFIRM',
-            payload: { status: 'authorized', paired: true, token, deviceId },
-          });
-
-          broadcastPacket({
-            magic: 'SK',
-            version: 1,
-            packetId: Date.now(),
-            timestamp: Date.now(),
-            packetType: 'BRIDGE_STATUS',
-            payload: { status: 'online', pairedDevice },
-          });
-          return;
         }
+      }
+
+      if (token && trusted && trusted.token === token) {
+        socket.isAuthorized = true;
+        socket.deviceId = matchedDevId;
+        socket.deviceName = trusted.name || packet.payload?.deviceName;
+        if (!pairedDevice) {
+          pairedDevice = {
+            id: matchedDevId,
+            name: packet.payload?.deviceName || trusted.name || 'Mobile Phone',
+            model: packet.payload?.model || 'Mobile Companion',
+            rssi: -52,
+            pingMs: 8,
+            transport: 'dual',
+            batteryLevel: packet.payload?.batteryLevel || 100,
+            lastSeen: Date.now(),
+            isAuthorized: true,
+          };
+        } else {
+          if (packet.payload?.deviceName) pairedDevice.name = packet.payload.deviceName;
+          if (packet.payload?.model) pairedDevice.model = packet.payload.model;
+          if (packet.payload?.batteryLevel) pairedDevice.batteryLevel = packet.payload.batteryLevel;
+          if (packet.payload?.rssi) pairedDevice.rssi = packet.payload.rssi;
+          pairedDevice.lastSeen = Date.now();
+          pairedDevice.isAuthorized = true;
+        }
+
+        console.log(`[Security] Recognized trusted companion: ${pairedDevice.name} (${matchedDevId})`);
+        sendWsPacket(socket, {
+          magic: 'SK',
+          version: 1,
+          packetId: Date.now(),
+          timestamp: Date.now(),
+          packetType: 'PAIR_CONFIRM',
+          payload: { status: 'authorized', paired: true, token, deviceId: matchedDevId, isAuthorized: true },
+        });
+
+        broadcastPacket({
+          magic: 'SK',
+          version: 1,
+          packetId: Date.now(),
+          timestamp: Date.now(),
+          packetType: 'BRIDGE_STATUS',
+          payload: { status: 'online', pairedDevice, requiresPairing: false },
+        });
+        return;
+      }
+
+      // If a token was supplied but not found in trustedDevices, session has expired / was reset
+      if (token && (!trusted || trusted.token !== token)) {
+        console.warn(`[Security Alert] Reconnect attempt with unrecognized token from ${socket.remoteAddress}`);
+        sendWsPacket(socket, {
+          magic: 'SK',
+          version: 1,
+          packetId: Date.now(),
+          timestamp: Date.now(),
+          packetType: 'PAIR_REJECT',
+          payload: {
+            status: 'rejected',
+            error: 'SESSION_EXPIRED',
+            message: 'Pairing session expired or desktop was reinstalled. Please enter the 6-digit PIN displayed on your Desktop screen to re-pair.',
+          },
+        });
+        return;
       }
 
       // New device: must provide matching active PIN
@@ -2064,7 +2666,11 @@ function handleWsFrame(socket, buffer) {
           packetId: Date.now(),
           timestamp: Date.now(),
           packetType: 'PAIR_REJECT',
-          payload: { status: 'rejected', error: 'PIN mismatch. Please enter the 6-digit PIN displayed on your Desktop Dynamic Island.' },
+          payload: {
+            status: 'rejected',
+            error: 'PIN_MISMATCH',
+            message: 'PIN mismatch. Please enter the 6-digit PIN displayed on your Desktop Dynamic Island.',
+          },
         });
         return;
       }
@@ -2079,6 +2685,7 @@ function handleWsFrame(socket, buffer) {
         pin: packet.payload?.pin || activeSasPin,
         token: newToken,
         timestamp: Date.now(),
+        ip: socket.remoteAddress,
       };
 
       pendingPairRequests.set(deviceId, pendingInfo);
@@ -2097,6 +2704,7 @@ function handleWsFrame(socket, buffer) {
           model: pendingInfo.model,
           pin: pendingInfo.pin,
           ip: socket.remoteAddress,
+          verified: true,
         },
       });
       return;
@@ -2105,26 +2713,64 @@ function handleWsFrame(socket, buffer) {
     // Desktop approval decision
     if (packet.packetType === 'PAIR_DECISION') {
       const { deviceId, approved } = packet.payload || {};
-      const pending = pendingPairRequests.get(deviceId);
+      let pending = pendingPairRequests.get(deviceId);
+      if (!pending && pendingPairRequests.size === 1) {
+        pending = Array.from(pendingPairRequests.values())[0];
+      }
       if (pending) {
-        pendingPairRequests.delete(deviceId);
+        pendingPairRequests.delete(pending.deviceId);
+        if (deviceId && deviceId !== pending.deviceId) {
+          pendingPairRequests.delete(deviceId);
+        }
         if (approved) {
-          if (pending.socket) {
-            pending.socket.isAuthorized = true;
-            pending.socket.deviceId = deviceId;
-            pending.socket.deviceName = pending.deviceName;
+          const normPendingIp = normalizeIp(pending.ip);
+          const matchedSockets = new Set();
+          if (pending.socket && !pending.socket.destroyed) {
+            matchedSockets.add(pending.socket);
+          }
+          for (const client of activeClients) {
+            if (!client.isLocalDesktop) {
+              const clientIp = normalizeIp(client.remoteAddress);
+              if (
+                (client.deviceId && (client.deviceId === pending.deviceId || client.deviceId === deviceId)) ||
+                (normPendingIp && clientIp === normPendingIp)
+              ) {
+                matchedSockets.add(client);
+              }
+            }
+          }
+          if (matchedSockets.size === 0) {
+            const remoteClients = Array.from(activeClients).filter((c) => !c.isLocalDesktop);
+            if (remoteClients.length === 1) {
+              matchedSockets.add(remoteClients[0]);
+            }
           }
 
-          trustedDevices.set(deviceId, {
+          for (const compSocket of matchedSockets) {
+            compSocket.isAuthorized = true;
+            compSocket.deviceId = pending.deviceId;
+            compSocket.deviceName = pending.deviceName;
+            compSocket.token = pending.token;
+          }
+
+          trustedDevices.set(pending.deviceId, {
             name: pending.deviceName,
             model: pending.model,
             token: pending.token,
             pairedAt: Date.now(),
           });
+          if (deviceId && deviceId !== pending.deviceId) {
+            trustedDevices.set(deviceId, {
+              name: pending.deviceName,
+              model: pending.model,
+              token: pending.token,
+              pairedAt: Date.now(),
+            });
+          }
           saveTrustStore(trustedDevices);
 
           pairedDevice = {
-            id: deviceId,
+            id: pending.deviceId,
             name: pending.deviceName,
             model: pending.model,
             rssi: -50,
@@ -2133,13 +2779,14 @@ function handleWsFrame(socket, buffer) {
             batteryLevel: 98,
             lastSeen: Date.now(),
             isAuthorized: true,
+            ipAddress: pending.ip,
           };
 
-          console.log(`[Security] Device APPROVED by desktop user: ${pending.deviceName} (${deviceId})`);
+          console.log(`[Security] Device APPROVED by desktop user: ${pending.deviceName} (${pending.deviceId})`);
 
-          // Confirm to mobile phone
-          if (pending.socket) {
-            sendWsPacket(pending.socket, {
+          // Confirm to all matched companion sockets
+          for (const compSocket of matchedSockets) {
+            sendWsPacket(compSocket, {
               magic: 'SK',
               version: 1,
               packetId: Date.now(),
@@ -2149,7 +2796,8 @@ function handleWsFrame(socket, buffer) {
                 status: 'authorized',
                 paired: true,
                 token: pending.token,
-                deviceId,
+                deviceId: pending.deviceId,
+                isAuthorized: true,
               },
             });
           }
@@ -2161,7 +2809,7 @@ function handleWsFrame(socket, buffer) {
             packetId: Date.now(),
             timestamp: Date.now(),
             packetType: 'BRIDGE_STATUS',
-            payload: { status: 'online', pairedDevice },
+            payload: { status: 'online', pairedDevice, requiresPairing: false },
           });
         } else {
           console.log(`[Security] Device DENIED by desktop user: ${pending.deviceName} (${deviceId})`);
@@ -2172,7 +2820,11 @@ function handleWsFrame(socket, buffer) {
               packetId: Date.now(),
               timestamp: Date.now(),
               packetType: 'PAIR_REJECT',
-              payload: { status: 'rejected', error: 'Connection was declined on the desktop.' },
+              payload: {
+                status: 'rejected',
+                error: 'DECLINED_BY_DESKTOP',
+                message: 'Pairing request was declined on desktop.',
+              },
             });
           }
         }
@@ -2182,15 +2834,44 @@ function handleWsFrame(socket, buffer) {
 
     // Unpair request from phone or desktop
     if (packet.packetType === 'UNPAIR_REQUEST') {
-      const deviceId = packet.payload?.deviceId || socket.deviceId;
+      const deviceId = packet.payload?.deviceId || socket.deviceId || (pairedDevice ? pairedDevice.id : null);
       if (deviceId && trustedDevices.has(deviceId)) {
         trustedDevices.delete(deviceId);
         saveTrustStore(trustedDevices);
         console.log(`[Security] Unpaired device: ${deviceId}`);
       }
+      if (packet.payload?.forget || socket.isLocalDesktop) {
+        if (deviceId && trustedDevices.has(deviceId)) {
+          trustedDevices.delete(deviceId);
+        } else {
+          trustedDevices.clear();
+        }
+        saveTrustStore(trustedDevices);
+        console.log('[Security] Cleared trust store credentials on unpair/forget.');
+      }
       socket.isAuthorized = socket.isLocalDesktop;
       pairedDevice = null;
 
+      // De-authorize and notify all remote client sockets
+      for (const client of activeClients) {
+        if (!client.isLocalDesktop) {
+          client.isAuthorized = false;
+          sendWsPacket(client, {
+            magic: 'SK',
+            version: 1,
+            packetId: Date.now(),
+            timestamp: Date.now(),
+            packetType: 'DEVICE_UNPAIRED',
+            payload: {
+              success: true,
+              deviceId,
+              reason: packet.payload?.reason || 'Device unpaired and forgotten by peer',
+            },
+          });
+        }
+      }
+
+      const remainingDiscovered = getDiscoveredUnpairedDevices();
       // Broadcast cleared pairedDevice to all clients
       broadcastPacket({
         magic: 'SK',
@@ -2200,7 +2881,12 @@ function handleWsFrame(socket, buffer) {
         packetType: 'BRIDGE_STATUS',
         payload: {
           status: 'online',
+          service: 'Soko Connection Bridge',
+          version: appVersion,
           pairedDevice: null,
+          requiresPairing: true,
+          discoveredDevice: remainingDiscovered[0] || null,
+          discoveredDevices: remainingDiscovered,
         },
       });
 
@@ -2230,8 +2916,24 @@ function handleWsFrame(socket, buffer) {
       return;
     }
 
-    // Native Token Stats query
+    // Native Token Stats query (Strictly Protected: requires pairing)
     if (packet.packetType === 'FETCH_TOKEN_STATS') {
+      if (!socket.isAuthorized) {
+        console.warn(`[Security Alert] Blocked FETCH_TOKEN_STATS from unauthorized socket ${socket.remoteAddress}`);
+        sendWsPacket(socket, {
+          magic: 'SK',
+          version: 1,
+          packetId: Date.now(),
+          timestamp: Date.now(),
+          packetType: 'SECURITY_ALERT',
+          payload: {
+            status: 'unauthorized',
+            action: 'FETCH_TOKEN_STATS',
+            error: 'Unauthorized: Complete SAS PIN pairing to view token stats.'
+          },
+        });
+        return;
+      }
       const stats = scanNativeTokenUsage();
       sendWsPacket(socket, {
         magic: 'SK',
@@ -2244,8 +2946,24 @@ function handleWsFrame(socket, buffer) {
       return;
     }
 
-    // Live Agent Activity query
-    if (packet.packetType === 'FETCH_AGENT_ACTIVITY') {
+    // Live Agent Activity query (Strictly Protected: requires pairing)
+    if (packet.packetType === 'FETCH_AGENT_ACTIVITY' || packet.packetType === 'FETCH_AGENT_SESSIONS') {
+      if (!socket.isAuthorized) {
+        console.warn(`[Security Alert] Blocked ${packet.packetType} from unauthorized socket ${socket.remoteAddress}`);
+        sendWsPacket(socket, {
+          magic: 'SK',
+          version: 1,
+          packetId: Date.now(),
+          timestamp: Date.now(),
+          packetType: 'SECURITY_ALERT',
+          payload: {
+            status: 'unauthorized',
+            action: packet.packetType,
+            error: 'Unauthorized: Complete SAS PIN pairing to view agent telemetry.'
+          },
+        });
+        return;
+      }
       const activity = checkActiveAgentActivity();
       sendWsPacket(socket, {
         magic: 'SK',
@@ -2258,14 +2976,23 @@ function handleWsFrame(socket, buffer) {
       return;
     }
 
+    // Set Focused Agent Session (manual session switch / lock)
+    if (packet.packetType === 'SET_FOCUSED_AGENT_SESSION') {
+      if (!socket.isAuthorized) return;
+      focusedSessionId = packet.payload?.sessionId || null;
+      broadcastAgentActivity();
+      return;
+    }
+
     // Simulate Agent Activity (for live user testing & UI previews)
     if (packet.packetType === 'SIMULATE_AGENT_ACTIVITY') {
+      if (!socket.isAuthorized) return;
       simulateAgent(packet.payload?.agent, packet.payload?.detail, packet.payload?.durationMs);
       return;
     }
 
-    // Guard privileged packets against unauthorized sockets (CLI & file storage operations)
-    const PRIVILEGED_PACKETS = ['CLI_EXECUTE', 'FILE_OFFER', 'FILE_START'];
+    // Guard privileged packets against unauthorized sockets (CLI & file storage & notifications)
+    const PRIVILEGED_PACKETS = ['CLI_EXECUTE', 'FILE_OFFER', 'FILE_START', 'NOTIFICATION_POST'];
     if (PRIVILEGED_PACKETS.includes(packet.packetType) && !socket.isAuthorized) {
       console.warn(`[Security Alert] Blocked privileged packet ${packet.packetType} from unauthorized socket.`);
       sendWsPacket(socket, {
@@ -2274,14 +3001,24 @@ function handleWsFrame(socket, buffer) {
         packetId: Date.now(),
         timestamp: Date.now(),
         packetType: 'SECURITY_ALERT',
-        payload: { error: 'Device is not authorized. Complete PIN pairing and desktop approval first.' },
+        payload: {
+          status: 'unauthorized',
+          action: packet.packetType,
+          error: 'Device is not authorized. Complete PIN pairing and desktop approval first.'
+        },
       });
+      return;
+    }
+
+    // Forward file offer and transfer stream packets to peer clients
+    if (packet.packetType === 'FILE_OFFER' || packet.packetType === 'FILE_START' || packet.packetType === 'FILE_PROGRESS' || packet.packetType === 'FILE_COMPLETED') {
+      broadcastPacket(packet, socket);
       return;
     }
 
     // Cancel file transfer packet from phone or desktop
     if (packet.packetType === 'FILE_CANCEL') {
-      cancelActiveTransfer(packet.payload?.error || 'Cancelled by peer');
+      cancelActiveTransfer(packet.payload?.error || 'Cancelled by peer', true);
       return;
     }
 
@@ -2298,16 +3035,55 @@ function handleWsFrame(socket, buffer) {
       return;
     }
 
+    // Media player control over WebSocket (play-pause, next, prev)
+    if (packet.packetType === 'AUDIO_CONTROL') {
+      const action = packet.payload?.action || 'play-pause';
+      controlMediaPlayback(action);
+      setTimeout(() => broadcastAudioStatus(), 150);
+      return;
+    }
+
+    // Speaker mute toggle over WebSocket
+    if (packet.packetType === 'AUDIO_MUTE_SPEAKER') {
+      if (typeof packet.payload?.mute === 'boolean') {
+        setSpeakerMute(packet.payload.mute);
+      } else {
+        toggleSpeakerMute();
+      }
+      broadcastAudioStatus();
+      return;
+    }
+
     // Companion device announced from mobile UI
     if (packet.packetType === 'COMPANION_ANNOUNCE') {
       const devId = packet.payload?.deviceId || socket.deviceId || `dev-${Date.now()}`;
       socket.deviceId = devId;
       socket.deviceName = packet.payload?.deviceName;
-      if (!pairedDevice) {
+      socket.deviceModel = packet.payload?.model;
+      const token = packet.payload?.token;
+
+      // Only authorize if valid token exists in trustedDevices!
+      let matchedDev = null;
+      let matchedId = devId;
+      if (token && devId && trustedDevices.has(devId) && trustedDevices.get(devId).token === token) {
+        matchedDev = trustedDevices.get(devId);
+      } else if (token) {
+        for (const [id, dev] of trustedDevices.entries()) {
+          if (dev && dev.token === token) {
+            matchedDev = dev;
+            matchedId = id;
+            break;
+          }
+        }
+      }
+
+      if (matchedDev) {
+        socket.isAuthorized = true;
+        socket.deviceId = matchedId;
         pairedDevice = {
-          id: devId,
-          name: packet.payload?.deviceName || 'Mobile Companion (Android)',
-          model: packet.payload?.model || 'Soko Mobile Companion v1.0.0',
+          id: matchedId,
+          name: packet.payload?.deviceName || matchedDev.name || 'Mobile Companion (Android)',
+          model: packet.payload?.model || matchedDev.model || 'Soko Mobile Companion v1.0.0',
           rssi: packet.payload?.rssi || -45,
           pingMs: 10,
           transport: 'dual',
@@ -2316,10 +3092,10 @@ function handleWsFrame(socket, buffer) {
           isAuthorized: true,
         };
       } else {
-        if (packet.payload?.deviceName) pairedDevice.name = packet.payload.deviceName;
-        if (packet.payload?.model) pairedDevice.model = packet.payload.model;
-        pairedDevice.lastSeen = Date.now();
+        socket.isAuthorized = socket.isLocalDesktop;
       }
+
+      const discoveredNow = getDiscoveredUnpairedDevices();
       broadcastPacket({
         magic: 'SK',
         version: 1,
@@ -2328,7 +3104,11 @@ function handleWsFrame(socket, buffer) {
         packetType: 'BRIDGE_STATUS',
         payload: {
           status: 'online',
-          pairedDevice,
+          service: 'Soko Connection Bridge',
+          version: appVersion,
+          pairedDevice: pairedDevice && pairedDevice.isAuthorized ? pairedDevice : null,
+          discoveredDevice: discoveredNow[0] || null,
+          discoveredDevices: discoveredNow,
           activeClients: activeClients.size,
         },
       });
@@ -2336,33 +3116,7 @@ function handleWsFrame(socket, buffer) {
     }
 
     if (packet.packetType === 'NOTIFICATION_POST') {
-      if (!pairedDevice) {
-        const remoteIp = socket.remoteAddress?.replace(/^.*:/, '') || getLocalIps()[0] || '192.168.31.210';
-        pairedDevice = {
-          id: packet.payload?.deviceId || socket.deviceId || `wifi-companion-${remoteIp}`,
-          name: packet.payload?.deviceName || socket.deviceName || 'Mobile Companion (Android)',
-          model: packet.payload?.model || `Local Companion (${remoteIp}:8766)`,
-          transport: 'wifi',
-          rssi: -45,
-          pingMs: 8,
-          batteryLevel: packet.payload?.batteryLevel || 95,
-          lastSeen: Date.now(),
-          isAuthorized: true,
-          ipAddress: remoteIp,
-        };
-        broadcastPacket({
-          magic: 'SK',
-          version: 1,
-          packetId: Date.now(),
-          timestamp: Date.now(),
-          packetType: 'BRIDGE_STATUS',
-          payload: {
-            status: 'online',
-            pairedDevice,
-            activeClients: activeClients.size,
-          },
-        });
-      } else {
+      if (pairedDevice) {
         pairedDevice.lastSeen = Date.now();
       }
     }
@@ -2510,7 +3264,8 @@ function executeWhitelistedCli(command, onFinished = null) {
  */
 function isRequestAuthorized(req) {
   const remoteIp = req.socket.remoteAddress;
-  const isLocal = remoteIp === '127.0.0.1' || remoteIp === '::1' || remoteIp === '::ffff:127.0.0.1';
+  const isLocal = (remoteIp === '127.0.0.1' || remoteIp === '::1' || remoteIp === '::ffff:127.0.0.1')
+    && !req.headers['x-simulate-remote-ip'];
   if (isLocal) return true;
 
   let token = null;
@@ -2538,11 +3293,12 @@ function isRequestAuthorized(req) {
 }
 
 function rejectUnauthorized(res) {
-  res.writeHead(401, { 'Content-Type': 'application/json' });
+  res.writeHead(401, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
   res.end(
     JSON.stringify({
       error: 'Unauthorized: Remote device is not paired or missing valid bearer token. Complete PIN pairing on Desktop Island first.',
       code: 401,
+      requiresPairing: true,
     })
   );
 }
@@ -2551,7 +3307,7 @@ function rejectUnauthorized(res) {
 const server = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Checksum-Sha256, Content-Length, Authorization, *');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Checksum-Sha256, Content-Length, Authorization, x-simulate-remote-ip, *');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
@@ -2580,7 +3336,12 @@ const server = http.createServer((req, res) => {
 
   // 2. Health and discovery status
   if (url.pathname === '/api/status' && req.method === 'GET') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+    const hasAuthorizedRemote = Array.from(activeClients).some((c) => !c.isLocalDesktop && c.isAuthorized);
+    if (!hasAuthorizedRemote) {
+      pairedDevice = null;
+    }
+    const discovered = getDiscoveredUnpairedDevices();
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
     res.end(
       JSON.stringify({
         status: 'online',
@@ -2589,14 +3350,17 @@ const server = http.createServer((req, res) => {
         activeClients: activeClients.size,
         localIps: getLocalIps(),
         port: PORT,
-        pairedDevice,
+        pairedDevice: pairedDevice && pairedDevice.isAuthorized ? pairedDevice : null,
+        discoveredDevice: discovered[0] || null,
+        discoveredDevices: discovered,
+        requiresPairing: !pairedDevice || !pairedDevice.isAuthorized,
       })
     );
     return;
   }
 
   // 3. Scan for available nearby devices (Bluetooth & Wi-Fi LAN)
-  if (url.pathname === '/api/devices/scan' && req.method === 'GET') {
+  if ((url.pathname === '/api/devices/scan' || url.pathname === '/api/devices/discovered') && req.method === 'GET') {
     const devices = scanAvailableDevices();
     res.writeHead(200, {
       'Content-Type': 'application/json',
@@ -2606,7 +3370,42 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // 4. Manually select and pair device from desktop UI
+  // 3b. Active pairing PIN query & regeneration (Local desktop or approved context)
+  if ((url.pathname === '/api/devices/pending-pin' || url.pathname === '/api/devices/regenerate-pin') && req.method === 'POST') {
+    activeSasPin = generateRandomPin();
+    pendingPairRequests.clear();
+    console.log(`[Security] Regenerated active SAS Pairing PIN: ${activeSasPin}`);
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(JSON.stringify({ pin: activeSasPin }));
+    return;
+  }
+
+  if (url.pathname === '/api/devices/pending-pin' && req.method === 'GET') {
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.end(JSON.stringify({ pin: activeSasPin }));
+    return;
+  }
+
+  // 3c. Pending pair requests status query (checks if mobile entered PIN)
+  if (url.pathname === '/api/devices/pending-pair' && req.method === 'GET') {
+    const list = Array.from(pendingPairRequests.values()).map((p) => ({
+      deviceId: p.deviceId,
+      deviceName: p.deviceName,
+      model: p.model,
+      ip: p.ip,
+      pin: p.pin,
+      timestamp: p.timestamp,
+      verified: true,
+    }));
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(JSON.stringify({ pending: list, count: list.length }));
+    return;
+  }
+
+  // 4. Manually select and pair device from desktop UI (Verifies PIN before approving)
   if (url.pathname === '/api/devices/pair-select' && req.method === 'POST') {
     let bodyStr = '';
     req.on('data', (chunk) => (bodyStr += chunk));
@@ -2618,30 +3417,130 @@ const server = http.createServer((req, res) => {
         const model = body.model || 'Device';
         const transport = body.transport || 'dual';
         const rssi = typeof body.rssi === 'number' ? body.rssi : -50;
+        const enteredPin = (body.pin || '').replace(/\s+/g, '');
+        const expectedPin = activeSasPin.replace(/\s+/g, '');
 
+        if (enteredPin && enteredPin !== expectedPin) {
+          res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ success: false, error: 'PIN_MISMATCH', message: 'PIN mismatch. Please verify the 6-digit PIN.' }));
+          return;
+        }
+
+        // Verify that the companion device has actually submitted the matching 6-digit PIN!
+        let pending = pendingPairRequests.get(deviceId);
+        const normBodyIp = normalizeIp(body.ipAddress);
+        if (!pending && body.ipAddress) {
+          for (const [id, reqInfo] of pendingPairRequests.entries()) {
+            const normReqIp = normalizeIp(reqInfo.ip);
+            if (normReqIp === normBodyIp || (reqInfo.ip && reqInfo.ip.includes(body.ipAddress))) {
+              pending = reqInfo;
+              break;
+            }
+          }
+        }
+        if (!pending && pendingPairRequests.size === 1) {
+          pending = Array.from(pendingPairRequests.values())[0];
+        }
+
+        if (!pending) {
+          console.warn(`[Security Alert] Rejected unverified pair attempt for ${deviceName} (${deviceId}): Mobile companion has not entered or verified the 6-digit PIN yet.`);
+          res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({
+            success: false,
+            error: 'PIN_NOT_VERIFIED',
+            message: `Verification Required: Mobile companion has not entered the 6-digit PIN yet. Please enter "${activeSasPin}" in the Soko mobile companion app first.`,
+          }));
+          return;
+        }
+
+        const finalDeviceId = pending.deviceId || deviceId;
+        const finalDeviceName = pending.deviceName || deviceName;
+        const finalModel = pending.model || model;
+        const token = pending.token || crypto.randomBytes(16).toString('hex');
+        pendingPairRequests.delete(pending.deviceId);
+        if (deviceId && deviceId !== pending.deviceId) {
+          pendingPairRequests.delete(deviceId);
+        }
+
+        trustedDevices.set(finalDeviceId, {
+          name: finalDeviceName,
+          model: finalModel,
+          token,
+          pairedAt: Date.now(),
+        });
+        if (deviceId !== finalDeviceId) {
+          trustedDevices.set(deviceId, {
+            name: finalDeviceName,
+            model: finalModel,
+            token,
+            pairedAt: Date.now(),
+          });
+        }
+        saveTrustStore(trustedDevices);
+
+        // Find companion sockets and authorize
+        const normPendingIp = normalizeIp(pending.ip);
+        const matchedSockets = new Set();
+        if (pending.socket && !pending.socket.destroyed) {
+          matchedSockets.add(pending.socket);
+        }
+
+        for (const client of activeClients) {
+          if (!client.isLocalDesktop) {
+            const clientIp = normalizeIp(client.remoteAddress);
+            if (
+              (client.deviceId && (client.deviceId === finalDeviceId || client.deviceId === deviceId)) ||
+              (normPendingIp && clientIp === normPendingIp) ||
+              (normBodyIp && clientIp === normBodyIp)
+            ) {
+              matchedSockets.add(client);
+            }
+          }
+        }
+
+        if (matchedSockets.size === 0) {
+          const remoteClients = Array.from(activeClients).filter((c) => !c.isLocalDesktop);
+          if (remoteClients.length === 1) {
+            matchedSockets.add(remoteClients[0]);
+          }
+        }
+
+        for (const companionSocket of matchedSockets) {
+          companionSocket.isAuthorized = true;
+          companionSocket.deviceId = finalDeviceId;
+          companionSocket.deviceName = finalDeviceName;
+          companionSocket.token = token;
+          sendWsPacket(companionSocket, {
+            magic: 'SK',
+            version: 1,
+            packetId: Date.now(),
+            timestamp: Date.now(),
+            packetType: 'PAIR_CONFIRM',
+            payload: {
+              status: 'authorized',
+              paired: true,
+              token,
+              deviceId: finalDeviceId,
+              isAuthorized: true,
+            },
+          });
+        }
+
+        const primarySocket = Array.from(matchedSockets)[0] || null;
         pairedDevice = {
-          id: deviceId,
-          name: deviceName,
-          model,
+          id: finalDeviceId,
+          name: finalDeviceName,
+          model: finalModel,
           rssi,
           pingMs: 12,
           transport,
           batteryLevel: 95,
           lastSeen: Date.now(),
           isAuthorized: true,
-          ipAddress: body.ipAddress,
+          ipAddress: body.ipAddress || (primarySocket && primarySocket.remoteAddress),
         };
 
-        const token = crypto.randomBytes(16).toString('hex');
-        trustedDevices.set(deviceId, {
-          name: deviceName,
-          model,
-          token,
-          pairedAt: Date.now(),
-        });
-        saveTrustStore(trustedDevices);
-
-        console.log(`[Security] Desktop manually paired with device: ${deviceName} (${deviceId})`);
+        console.log(`[Security] Mobile companion successfully verified and paired: ${finalDeviceName} (${finalDeviceId})`);
 
         broadcastPacket({
           magic: 'SK',
@@ -2651,7 +3550,10 @@ const server = http.createServer((req, res) => {
           packetType: 'BRIDGE_STATUS',
           payload: {
             status: 'online',
+            service: 'Soko Connection Bridge',
+            version: appVersion,
             pairedDevice,
+            requiresPairing: false,
           },
         });
 
@@ -2659,44 +3561,80 @@ const server = http.createServer((req, res) => {
           'Content-Type': 'application/json',
           'Access-Control-Allow-Origin': '*',
         });
-        res.end(JSON.stringify({ status: 'paired', pairedDevice }));
+        res.end(JSON.stringify({ success: true, status: 'paired', pairedDevice, token }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-        res.end(JSON.stringify({ error: err.message }));
+        res.end(JSON.stringify({ success: false, error: err.message }));
       }
     });
     return;
   }
 
-  // 5. Unpair active device
+  // 5. Unpair active device from desktop
   if (url.pathname === '/api/devices/unpair' && req.method === 'POST') {
-    pairedDevice = null;
-    trustedDevices.clear();
-    saveTrustStore(trustedDevices);
-    console.log('[Security] Desktop unpaired and cleared trust store.');
+    let bodyStr = '';
+    req.on('data', (chunk) => (bodyStr += chunk));
+    req.on('end', () => {
+      let body = {};
+      try { body = JSON.parse(bodyStr || '{}'); } catch {}
+      const targetDevId = body.deviceId || (pairedDevice && pairedDevice.id) || null;
+      pairedDevice = null;
+      trustedDevices.clear();
+      saveTrustStore(trustedDevices);
+      console.log('[Security] Desktop unpaired and cleared trust store.');
 
-    broadcastPacket({
-      magic: 'SK',
-      version: 1,
-      packetId: Date.now(),
-      timestamp: Date.now(),
-      packetType: 'BRIDGE_STATUS',
-      payload: {
-        status: 'online',
-        pairedDevice: null,
-      },
-    });
+      // De-authorize and notify all remote client sockets
+      for (const client of activeClients) {
+        if (!client.isLocalDesktop) {
+          client.isAuthorized = false;
+          sendWsPacket(client, {
+            magic: 'SK',
+            version: 1,
+            packetId: Date.now(),
+            timestamp: Date.now(),
+            packetType: 'DEVICE_UNPAIRED',
+            payload: {
+              success: true,
+              deviceId: targetDevId || client.deviceId,
+              reason: 'Disconnected and forgotten by desktop',
+            },
+          });
+        }
+      }
 
-    res.writeHead(200, {
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
+      const unlinkedDiscovered = getDiscoveredUnpairedDevices();
+      broadcastPacket({
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'BRIDGE_STATUS',
+        payload: {
+          status: 'online',
+          service: 'Soko Connection Bridge',
+          version: appVersion,
+          pairedDevice: null,
+          requiresPairing: true,
+          discoveredDevice: unlinkedDiscovered[0] || null,
+          discoveredDevices: unlinkedDiscovered,
+        },
+      });
+
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      });
+      res.end(JSON.stringify({ success: true, status: 'unpaired', deviceId: targetDevId }));
     });
-    res.end(JSON.stringify({ status: 'unpaired' }));
     return;
   }
 
-  // 6. Native AI Token Stats endpoint
+  // 6. Native AI Token Stats endpoint (Protected: requires pairing)
   if (url.pathname === '/api/tokens' && req.method === 'GET') {
+    if (!isRequestAuthorized(req)) {
+      rejectUnauthorized(res);
+      return;
+    }
     const stats = scanNativeTokenUsage();
     res.writeHead(200, {
       'Content-Type': 'application/json',
@@ -2706,14 +3644,38 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // 7. Live CLI Agent Activity endpoint
+  // 7. Live CLI Agent Activity endpoint (Protected: requires pairing)
   if (url.pathname === '/api/agent-activity' && req.method === 'GET') {
+    if (!isRequestAuthorized(req)) {
+      rejectUnauthorized(res);
+      return;
+    }
     const activity = checkActiveAgentActivity();
     res.writeHead(200, {
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*',
     });
     res.end(JSON.stringify(activity));
+    return;
+  }
+
+  // 7b. Live Multi-Session Agent Registry endpoint (Protected: requires pairing)
+  if (url.pathname === '/api/agent-sessions' && req.method === 'GET') {
+    if (!isRequestAuthorized(req)) {
+      rejectUnauthorized(res);
+      return;
+    }
+    const activity = checkActiveAgentActivity();
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.end(JSON.stringify({
+      success: true,
+      activeCount: activity.activeCount || 0,
+      primary: activity,
+      sessions: activity.activeSessions || [],
+    }));
     return;
   }
 
@@ -2758,20 +3720,48 @@ const server = http.createServer((req, res) => {
           res.end(
             JSON.stringify({
               status: 'rejected',
-              error: `PIN mismatch. Entered PIN "${enteredPin}" does not match active Desktop PIN.`,
+              error: 'PIN_MISMATCH',
+              message: `PIN mismatch. Entered PIN "${enteredPin}" does not match active Desktop PIN.`,
             })
           );
           return;
         }
 
         const newToken = crypto.randomBytes(16).toString('hex');
+        const reqIp = normalizeIp(req.socket.remoteAddress);
+        let companionSocket = null;
+        for (const client of activeClients) {
+          if (!client.isLocalDesktop) {
+            const clientIp = normalizeIp(client.remoteAddress);
+            if (
+              (client.deviceId && client.deviceId === deviceId) ||
+              (reqIp && clientIp && clientIp === reqIp)
+            ) {
+              client.deviceId = deviceId;
+              client.deviceName = body.deviceName || 'Mobile Companion (Android)';
+              companionSocket = client;
+              break;
+            }
+          }
+        }
+        if (!companionSocket) {
+          const remoteClients = Array.from(activeClients).filter((c) => !c.isLocalDesktop);
+          if (remoteClients.length === 1) {
+            remoteClients[0].deviceId = deviceId;
+            remoteClients[0].deviceName = body.deviceName || 'Mobile Companion (Android)';
+            companionSocket = remoteClients[0];
+          }
+        }
+
         const pendingInfo = {
+          socket: companionSocket,
           deviceId,
           deviceName: body.deviceName || 'Mobile Companion (Android)',
           model: body.model || 'Android Phone',
           pin: body.pin || activeSasPin,
           token: newToken,
           timestamp: Date.now(),
+          ip: req.socket.remoteAddress,
         };
 
         pendingPairRequests.set(deviceId, pendingInfo);
@@ -2790,6 +3780,7 @@ const server = http.createServer((req, res) => {
             model: pendingInfo.model,
             pin: pendingInfo.pin,
             ip: req.socket.remoteAddress,
+            verified: true,
           },
         });
 
@@ -2846,18 +3837,63 @@ const server = http.createServer((req, res) => {
           saveTrustStore(trustedDevices);
           console.log(`[Security] Device unpaired via HTTP: ${deviceId}`);
         }
-        res.writeHead(200, { 'Content-Type': 'application/json' });
+        if (pairedDevice && (pairedDevice.id === deviceId || !deviceId)) {
+          pairedDevice = null;
+        }
+
+        // De-authorize and notify all remote client sockets
+        for (const client of activeClients) {
+          if (!client.isLocalDesktop && (!deviceId || client.deviceId === deviceId)) {
+            client.isAuthorized = false;
+            sendWsPacket(client, {
+              magic: 'SK',
+              version: 1,
+              packetId: Date.now(),
+              timestamp: Date.now(),
+              packetType: 'DEVICE_UNPAIRED',
+              payload: {
+                success: true,
+                deviceId,
+                reason: 'Device unpaired via HTTP request',
+              },
+            });
+          }
+        }
+
+        const remainingDiscovered = getDiscoveredUnpairedDevices();
+        broadcastPacket({
+          magic: 'SK',
+          version: 1,
+          packetId: Date.now(),
+          timestamp: Date.now(),
+          packetType: 'BRIDGE_STATUS',
+          payload: {
+            status: 'online',
+            service: 'Soko Connection Bridge',
+            version: appVersion,
+            pairedDevice: pairedDevice && pairedDevice.isAuthorized ? pairedDevice : null,
+            requiresPairing: true,
+            discoveredDevice: remainingDiscovered[0] || null,
+            discoveredDevices: remainingDiscovered,
+          },
+        });
+
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
         res.end(JSON.stringify({ success: true, unpaired: deviceId }));
       } catch (e) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
         res.end(JSON.stringify({ error: e.message }));
       }
     });
     return;
   }
 
-  // 3. Push incoming notification from phone (HTTP POST)
+  // 3. Push incoming notification from phone (HTTP POST - Protected: requires pairing)
   if (url.pathname === '/api/notify' && req.method === 'POST') {
+    if (!isRequestAuthorized(req)) {
+      rejectUnauthorized(res);
+      return;
+    }
     let body = '';
     req.on('data', (chunk) => (body += chunk));
     req.on('end', () => {
@@ -2881,43 +3917,17 @@ const server = http.createServer((req, res) => {
           },
         };
 
-        if (!pairedDevice) {
-          const remoteIp = req.socket.remoteAddress?.replace(/^.*:/, '') || getLocalIps()[0] || '192.168.31.210';
-          pairedDevice = {
-            id: data.deviceId || `wifi-companion-${remoteIp}`,
-            name: data.deviceName || 'Mobile Companion (Android)',
-            model: data.model || `Local Companion (${remoteIp}:8766)`,
-            transport: 'wifi',
-            rssi: -45,
-            pingMs: 8,
-            batteryLevel: data.batteryLevel || 95,
-            lastSeen: Date.now(),
-            isAuthorized: true,
-            ipAddress: remoteIp,
-          };
-          broadcastPacket({
-            magic: 'SK',
-            version: 1,
-            packetId: Date.now(),
-            timestamp: Date.now(),
-            packetType: 'BRIDGE_STATUS',
-            payload: {
-              status: 'online',
-              pairedDevice,
-              activeClients: activeClients.size,
-            },
-          });
-        } else {
+        if (pairedDevice) {
           pairedDevice.lastSeen = Date.now();
         }
 
         broadcastPacket(packet);
         console.log(`[Bridge HTTP] Mirrored notification: [${packet.payload.appName}] ${packet.payload.title}`);
 
-        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
         res.end(JSON.stringify({ success: true, packetId: packet.packetId }));
       } catch (err) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
         res.end(JSON.stringify({ error: err.message }));
       }
     });
@@ -3022,7 +4032,7 @@ const server = http.createServer((req, res) => {
     const { cleanFilename, finalPath, partPath } = pathInfo;
     const clientSha256 = req.headers['x-checksum-sha256'] || url.searchParams.get('sha256');
 
-    cancelActiveTransfer('Replacing with new file upload');
+    cancelActiveTransfer('Replacing with new file upload', false);
 
     console.log(`[Bridge Upload] Receiving file: ${cleanFilename} (sandbox verified)`);
     const writeStream = fs.createWriteStream(partPath);
@@ -3230,10 +4240,19 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const data = body ? JSON.parse(body) : {};
+        const isDryRun = Boolean(
+          data.dryRun ||
+          data.test ||
+          req.headers['x-dry-run'] === 'true' ||
+          process.env.NODE_ENV === 'test'
+        );
+
         if (data.action === 'folder' || !data.filename) {
-          openFileOrFolder(TRANSFERS_DIR);
+          if (!isDryRun) {
+            openFileOrFolder(TRANSFERS_DIR);
+          }
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: true, opened: TRANSFERS_DIR }));
+          res.end(JSON.stringify({ success: true, opened: TRANSFERS_DIR, dryRun: isDryRun }));
           return;
         }
 
@@ -3244,9 +4263,11 @@ const server = http.createServer((req, res) => {
           return;
         }
 
-        openFileOrFolder(pathInfo.finalPath);
+        if (!isDryRun) {
+          openFileOrFolder(pathInfo.finalPath);
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, opened: pathInfo.finalPath }));
+        res.end(JSON.stringify({ success: true, opened: pathInfo.finalPath, dryRun: isDryRun }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
@@ -3306,8 +4327,96 @@ const server = http.createServer((req, res) => {
         format: 'MP3 (48 kHz Stereo)',
         bitrate: '192 kbps',
         source: getAudioSourceDescription(),
+        isSpeakerMuted: getSpeakerMuteState(),
+        activeApp: detectedActiveAudioApp || 'Music',
+        title: detectedActiveAudioTitle || '',
+        autoMuteSpeakerOnStream,
       })
     );
+    return;
+  }
+
+  // 12b. Audio Player Control Endpoint (play-pause, next, prev)
+  if (url.pathname === '/api/audio/control' && req.method === 'POST') {
+    if (!isRequestAuthorized(req)) {
+      rejectUnauthorized(res);
+      return;
+    }
+    let body = '';
+    req.on('data', (chunk) => (body += chunk));
+    req.on('end', () => {
+      try {
+        const data = body ? JSON.parse(body) : {};
+        const action = data.action || 'play-pause';
+        const success = controlMediaPlayback(action);
+        setTimeout(() => broadcastAudioStatus(), 150);
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ success, action, isPlaying: checkIsAudioPlaying() }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // 12c. Speaker Mute Toggle Endpoint (Mute / Unmute PC Speaker)
+  if (url.pathname === '/api/audio/mute-speaker' && req.method === 'POST') {
+    if (!isRequestAuthorized(req)) {
+      rejectUnauthorized(res);
+      return;
+    }
+    let body = '';
+    req.on('data', (chunk) => (body += chunk));
+    req.on('end', () => {
+      try {
+        const data = body ? JSON.parse(body) : {};
+        let isMuted = false;
+        if (typeof data.mute === 'boolean') {
+          setSpeakerMute(data.mute);
+          isMuted = data.mute;
+        } else if (data.action === 'mute') {
+          setSpeakerMute(true);
+          isMuted = true;
+        } else if (data.action === 'unmute') {
+          setSpeakerMute(false);
+          isMuted = false;
+        } else {
+          isMuted = toggleSpeakerMute();
+        }
+        broadcastAudioStatus();
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ success: true, isMuted }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // 12d. Audio Streaming Auto-Mute Settings
+  if (url.pathname === '/api/audio/settings' && req.method === 'POST') {
+    if (!isRequestAuthorized(req)) {
+      rejectUnauthorized(res);
+      return;
+    }
+    let body = '';
+    req.on('data', (chunk) => (body += chunk));
+    req.on('end', () => {
+      try {
+        const data = body ? JSON.parse(body) : {};
+        if (typeof data.autoMuteSpeakerOnStream === 'boolean') {
+          autoMuteSpeakerOnStream = data.autoMuteSpeakerOnStream;
+        }
+        broadcastAudioStatus();
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ success: true, autoMuteSpeakerOnStream }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
     return;
   }
 
@@ -3333,13 +4442,27 @@ const server = http.createServer((req, res) => {
       'Access-Control-Allow-Origin': '*',
     });
 
+    const isFirstClient = activeAudioStreams.size === 0;
     activeAudioStreams.add(res);
     startAudioBroadcaster();
+
+    // Auto-mute PC speaker while streaming to phone
+    if (isFirstClient && autoMuteSpeakerOnStream) {
+      previousSpeakerMuteState = getSpeakerMuteState();
+      console.log(`[Bridge Audio] Mobile stream connected: auto-muting PC speaker (previous mute: ${previousSpeakerMuteState})`);
+      setSpeakerMute(true);
+    }
     broadcastAudioStatus();
 
     const cleanup = () => {
       activeAudioStreams.delete(res);
       stopAudioBroadcasterIfNoClients();
+      // Restore PC speaker state when all mobile listeners disconnect
+      if (activeAudioStreams.size === 0 && autoMuteSpeakerOnStream) {
+        console.log(`[Bridge Audio] Mobile listeners disconnected: restoring PC speaker mute state to ${previousSpeakerMuteState ?? false}`);
+        setSpeakerMute(previousSpeakerMuteState !== null ? previousSpeakerMuteState : false);
+        previousSpeakerMuteState = null;
+      }
       broadcastAudioStatus();
     };
 

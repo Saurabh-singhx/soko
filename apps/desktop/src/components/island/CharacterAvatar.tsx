@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useId } from 'react';
 import { motion } from 'framer-motion';
 import { MascotMood, ConnectionStatus, CliAgentId, AgentActivityStatus } from '../../types/index.ts';
 
@@ -236,6 +236,19 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
   const [leftEarTwitch, setLeftEarTwitch] = useState(false);
   const [rightEarTwitch, setRightEarTwitch] = useState(false);
   const [spinAngle, setSpinAngle] = useState(0);
+  const [isSleeping, setIsSleeping] = useState(false);
+  const [microSaccade, setMicroSaccade] = useState({ x: 0, y: 0 });
+
+  const microSaccadeRafRef = useRef<number | null>(null);
+
+  // Unique SVG def IDs (prevents collision when multiple instances render)
+  const svgIdPrefix = useId();
+  const visorClipId = `${svgIdPrefix}-visor-screen`;
+  const visorGradientId = `${svgIdPrefix}-visor-black`;
+  const rimGradientId = `${svgIdPrefix}-rim-mono`;
+  const finGradientId = `${svgIdPrefix}-fin-mono`;
+  const eyeBloomId = `${svgIdPrefix}-eye-bloom`;
+  const musicGradientId = `${svgIdPrefix}-music-eq`;
 
   // Dynamic Connection Eye Color State Machine:
   // Disconnected -> #EF4444 (red)
@@ -248,7 +261,7 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
   const isAgentActive = Boolean(
     activeAgent &&
     agentStatus &&
-    (agentStatus.status === 'working' || agentStatus.status === 'thinking' || agentStatus.status === 'completed')
+    (agentStatus.status === 'working' || agentStatus.status === 'thinking' || agentStatus.status === 'waiting' || agentStatus.status === 'completed')
   );
 
   const agentColor = activeAgent === 'antigravity'
@@ -263,17 +276,44 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
 
   const prevStatusRef = useRef<ConnectionStatus>(connectionStatus);
   const greenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connEarTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (greenTimerRef.current) {
       clearTimeout(greenTimerRef.current);
       greenTimerRef.current = null;
     }
+    if (connEarTimerRef.current) {
+      clearTimeout(connEarTimerRef.current);
+      connEarTimerRef.current = null;
+    }
 
     if (connectionStatus === 'connected') {
       if (prevStatusRef.current !== 'connected') {
         // Transitioned from disconnected/connecting to connected -> turn GREEN for 4.5 seconds!
         setEyeColor('#10B981');
+        // Full connection celebration choreography
+        setSpinAngle(prev => prev + 360);
+        setCurrentTarget({
+          name: 'connection_celebration',
+          gazeX: 0,
+          gazeY: -0.5,
+          leftTopY: 14.5,
+          leftHeight: 13.5,
+          leftScaleX: 1.06,
+          leftTilt: 0,
+          rightTopY: 14.5,
+          rightHeight: 13.5,
+          rightScaleX: 1.06,
+          rightTilt: 0,
+          headTilt: 0,
+        });
+        setLeftEarTwitch(true);
+        setRightEarTwitch(true);
+        connEarTimerRef.current = setTimeout(() => {
+          setLeftEarTwitch(false);
+          setRightEarTwitch(false);
+        }, 500);
         greenTimerRef.current = setTimeout(() => {
           setEyeColor('#FFFFFF');
         }, 4500);
@@ -281,6 +321,9 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
         // Already connected
         setEyeColor((prev) => (prev === '#EF4444' ? '#FFFFFF' : prev));
       }
+    } else if (connectionStatus === 'discovered') {
+      // Discovered available nearby Wi-Fi device awaiting pairing -> turn Electric Cyan!
+      setEyeColor('#38BDF8');
     } else {
       // Disconnected, scanning, or connecting -> turn RED!
       setEyeColor('#EF4444');
@@ -290,6 +333,7 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
 
     return () => {
       if (greenTimerRef.current) clearTimeout(greenTimerRef.current);
+      if (connEarTimerRef.current) clearTimeout(connEarTimerRef.current);
     };
   }, [connectionStatus]);
 
@@ -312,6 +356,7 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
   const saccadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const blinkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notificationTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const scanTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   // Listen for dynamic settings toggle from SettingsView
   useEffect(() => {
@@ -552,7 +597,8 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
         // Perk up with curious wink
         triggerBlink();
         setRightEarTwitch(true);
-        setTimeout(() => setRightEarTwitch(false), 300);
+        const t2b = setTimeout(() => setRightEarTwitch(false), 300);
+        notificationTimersRef.current.push(t2b);
       }, 1600);
 
       const t3 = setTimeout(() => {
@@ -623,10 +669,11 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
       // VARIETY D: Radar Perk: Ear-fin high vibration perk, wide eyes, glances left & right
       setLeftEarTwitch(true);
       setRightEarTwitch(true);
-      setTimeout(() => {
+      const tEar = setTimeout(() => {
         setLeftEarTwitch(false);
         setRightEarTwitch(false);
       }, 400);
+      notificationTimersRef.current.push(tEar);
 
       setCurrentTarget({
         name: 'wide_radar',
@@ -706,7 +753,7 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
         });
 
         // Scan across to the right after 450ms
-        setTimeout(() => {
+        const st1 = setTimeout(() => {
           setCurrentTarget((prev) => ({
             ...prev,
             gazeX: 2.5,
@@ -714,10 +761,11 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
         }, 450);
 
         // End scan sweep after 1300ms
-        setTimeout(() => {
+        const st2 = setTimeout(() => {
           setIsScanning(false);
           setCurrentTarget(NEUTRAL_TARGET);
         }, 1300);
+        scanTimersRef.current.push(st1, st2);
 
         saccadeTimerRef.current = setTimeout(performSaccade, 2000);
         return;
@@ -764,8 +812,90 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
 
     return () => {
       if (saccadeTimerRef.current) clearTimeout(saccadeTimerRef.current);
+      scanTimersRef.current.forEach(t => clearTimeout(t));
+      scanTimersRef.current = [];
     };
   }, [mood, isAgentActive]);
+
+  // 2c. Searching / Radar Scan Animation Controller
+  useEffect(() => {
+    if (mood !== 'searching') return;
+
+    let step = 0;
+    const radarInterval = setInterval(() => {
+      step = (step + 1) % 4;
+      if (step === 0) {
+        // Sweep left
+        setIsScanning(true);
+        setCurrentTarget({
+          name: 'search_sweep_left',
+          gazeX: -3.2,
+          gazeY: 0,
+          leftTopY: 18.0,
+          leftHeight: 10.0,
+          leftScaleX: 0.92,
+          leftTilt: 0,
+          rightTopY: 18.0,
+          rightHeight: 10.0,
+          rightScaleX: 1.02,
+          rightTilt: 0,
+          headTilt: -2.5,
+        });
+      } else if (step === 1) {
+        // Sweep right
+        setCurrentTarget(prev => ({
+          ...prev,
+          name: 'search_sweep_right',
+          gazeX: 3.2,
+          headTilt: 2.5,
+          leftScaleX: 1.02,
+          rightScaleX: 0.92,
+        }));
+      } else if (step === 2) {
+        setIsScanning(false);
+        // Concentrated center check
+        setCurrentTarget({
+          name: 'search_center_check',
+          gazeX: 0,
+          gazeY: -0.6,
+          leftTopY: 17.5,
+          leftHeight: 10.5,
+          leftScaleX: 1.0,
+          leftTilt: 0,
+          rightTopY: 17.5,
+          rightHeight: 10.5,
+          rightScaleX: 1.0,
+          rightTilt: 0,
+          headTilt: 0,
+        });
+        triggerBlink();
+      } else {
+        // Ear perk + wide alert
+        setLeftEarTwitch(true);
+        setRightEarTwitch(true);
+        setTimeout(() => {
+          setLeftEarTwitch(false);
+          setRightEarTwitch(false);
+        }, 350);
+        setCurrentTarget({
+          name: 'search_perk',
+          gazeX: 0,
+          gazeY: -0.8,
+          leftTopY: 15.5,
+          leftHeight: 12.5,
+          leftScaleX: 1.03,
+          leftTilt: 0,
+          rightTopY: 15.5,
+          rightHeight: 12.5,
+          rightScaleX: 1.03,
+          rightTilt: 0,
+          headTilt: 0,
+        });
+      }
+    }, 1100);
+
+    return () => clearInterval(radarInterval);
+  }, [mood]);
 
   // 2b. Agent Task Watcher Ocular Animation Controller
   useEffect(() => {
@@ -798,6 +928,69 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
         setRightEarTwitch(false);
       }, 500);
       return () => clearTimeout(t);
+    }
+
+    if (agentStatus?.status === 'waiting') {
+      // AGENT WAITING / SCHEDULED TASK CONTROLLER:
+      // Patient, observant watch: eyes glance attentively with steady calm focus and micro-blinks
+      intervalId = setInterval(() => {
+        step = (step + 1) % 4;
+        if (step === 0) {
+          // Attentive observant glance toward the task
+          setCurrentTarget({
+            name: 'agent_waiting_attentive',
+            gazeX: 1.8,
+            gazeY: -0.6,
+            leftTopY: 15.6,
+            leftHeight: 12.4,
+            leftScaleX: 1.02,
+            leftTilt: 0,
+            rightTopY: 15.6,
+            rightHeight: 12.4,
+            rightScaleX: 0.98,
+            rightTilt: 0,
+            headTilt: 1.5,
+          });
+        } else if (step === 1) {
+          // Soft micro-blink while waiting
+          triggerBlink();
+        } else if (step === 2) {
+          // Centered calm focus
+          setCurrentTarget({
+            name: 'agent_waiting_center',
+            gazeX: 0,
+            gazeY: -0.4,
+            leftTopY: 16.0,
+            leftHeight: 12.0,
+            leftScaleX: 1.0,
+            leftTilt: 0,
+            rightTopY: 16.0,
+            rightHeight: 12.0,
+            rightScaleX: 1.0,
+            rightTilt: 0,
+            headTilt: 0,
+          });
+        } else {
+          // Slight inquisitive curiosity perk
+          setCurrentTarget({
+            name: 'agent_waiting_perk',
+            gazeX: -1.0,
+            gazeY: -0.8,
+            leftTopY: 15.2,
+            leftHeight: 12.8,
+            leftScaleX: 0.98,
+            leftTilt: 0,
+            rightTopY: 15.2,
+            rightHeight: 12.8,
+            rightScaleX: 1.02,
+            rightTilt: 0,
+            headTilt: -1.0,
+          });
+        }
+      }, 1600);
+      return () => {
+        if (intervalId) clearInterval(intervalId);
+      };
     }
 
     if (activeAgent === 'antigravity') {
@@ -979,7 +1172,12 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
 
   useEffect(() => {
     const scheduleBlink = () => {
-      const interval = (mood === 'alert' ? 2400 : 2800) + Math.random() * 2000;
+      // Gamma-like distribution: natural blink clustering with occasional long pauses
+      const u1 = Math.random();
+      const u2 = Math.random();
+      const gamma = -Math.log(u1) * 1200; // Exponential component for clustering
+      const base = mood === 'alert' ? 1800 : 2200;
+      const interval = base + Math.min(gamma + u2 * 800, 5000); // Cap at 5s max pause
       blinkTimerRef.current = setTimeout(() => {
         triggerBlink();
         scheduleBlink();
@@ -1013,6 +1211,105 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
     const timer = scheduleTwitch();
     return () => clearTimeout(timer);
   }, [mood]);
+
+  // 5. Organic Micro-Saccade Tremor (continuous subtle eye jitter for lifelike feel)
+  useEffect(() => {
+    if (isSleeping) {
+      setMicroSaccade({ x: 0, y: 0 });
+      return;
+    }
+
+    let lastUpdate = 0;
+    const JITTER_INTERVAL = 50; // ~20Hz update rate
+
+    const jitterLoop = (timestamp: number) => {
+      if (timestamp - lastUpdate > JITTER_INTERVAL) {
+        lastUpdate = timestamp;
+        setMicroSaccade({
+          x: (Math.random() - 0.5) * 0.3,
+          y: (Math.random() - 0.5) * 0.2,
+        });
+      }
+      microSaccadeRafRef.current = requestAnimationFrame(jitterLoop);
+    };
+
+    microSaccadeRafRef.current = requestAnimationFrame(jitterLoop);
+
+    return () => {
+      if (microSaccadeRafRef.current !== null) {
+        cancelAnimationFrame(microSaccadeRafRef.current);
+      }
+    };
+  }, [isSleeping]);
+
+  // 6. Sleep Mode Controller (activates after 5 minutes of idle)
+  useEffect(() => {
+    if (mood !== 'idle' || isMusicPlaying || isAgentActive || isTrackingMouse) {
+      setIsSleeping(false);
+      return;
+    }
+
+    const sleepTimer = setTimeout(() => {
+      setIsSleeping(true);
+      setCurrentTarget({
+        name: 'sleeping',
+        gazeX: 0,
+        gazeY: 0.6,
+        leftTopY: 22.5,
+        leftHeight: 5.5,
+        leftScaleX: 1.0,
+        leftTilt: 0,
+        rightTopY: 22.5,
+        rightHeight: 5.5,
+        rightScaleX: 1.0,
+        rightTilt: 0,
+        headTilt: 3.0,
+      });
+    }, 300000); // 5 minutes
+
+    return () => clearTimeout(sleepTimer);
+  }, [mood, isMusicPlaying, isAgentActive, isTrackingMouse]);
+
+  // Sleep mode wake-up on any interaction
+  useEffect(() => {
+    if (!isSleeping) return;
+
+    const wakeUp = () => {
+      setIsSleeping(false);
+      // Wake-up stretch animation
+      setCurrentTarget({
+        name: 'wake_stretch',
+        gazeX: 0,
+        gazeY: -0.8,
+        leftTopY: 14.5,
+        leftHeight: 13.5,
+        leftScaleX: 1.06,
+        leftTilt: 0,
+        rightTopY: 14.5,
+        rightHeight: 13.5,
+        rightScaleX: 1.06,
+        rightTilt: 0,
+        headTilt: 0,
+      });
+      setLeftEarTwitch(true);
+      setRightEarTwitch(true);
+      setTimeout(() => {
+        setLeftEarTwitch(false);
+        setRightEarTwitch(false);
+        setCurrentTarget(NEUTRAL_TARGET);
+      }, 800);
+    };
+
+    window.addEventListener('mousemove', wakeUp, { once: true });
+    window.addEventListener('click', wakeUp, { once: true });
+    window.addEventListener('keydown', wakeUp, { once: true });
+
+    return () => {
+      window.removeEventListener('mousemove', wakeUp);
+      window.removeEventListener('click', wakeUp);
+      window.removeEventListener('keydown', wakeUp);
+    };
+  }, [isSleeping]);
 
   // High-performance spring configs
   const saccadeSpring = {
@@ -1062,8 +1359,8 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
   const currentRightTopY = isBlinking ? 26.8 : currentTarget.rightTopY;
   const currentRightHeight = isBlinking ? 1.2 : currentTarget.rightHeight;
   const currentRightRx = currentTarget.name.includes('inquisitive') ? 3.0 : EYE_RX;
-  const activeGazeX = isMusicPlaying ? 0 : currentTarget.gazeX;
-  const activeGazeY = isMusicPlaying ? 0 : currentTarget.gazeY;
+  const activeGazeX = (isMusicPlaying || isSleeping ? 0 : currentTarget.gazeX) + (isSleeping ? 0 : microSaccade.x);
+  const activeGazeY = (isMusicPlaying || isSleeping ? 0 : currentTarget.gazeY) + (isSleeping ? 0 : microSaccade.y);
 
   // Handle direct click spin reaction
   const handleAvatarClick = () => {
@@ -1145,32 +1442,32 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
               Guarantees 100% mathematically that NO pixel of the eyes 
               can ever bleed outside the circular black visor dome.
             */}
-            <clipPath id="grok-visor-screen">
+            <clipPath id={visorClipId}>
               <circle cx="22" cy="22" r="15" />
             </clipPath>
 
             {/* Deep OLED Black Gradient */}
-            <radialGradient id="grok-visor-black" cx="35%" cy="30%" r="70%">
+            <radialGradient id={visorGradientId} cx="35%" cy="30%" r="70%">
               <stop offset="0%" stopColor="#141418" />
               <stop offset="70%" stopColor="#050507" />
               <stop offset="100%" stopColor="#000000" />
             </radialGradient>
 
             {/* Crisp Titanium Rim Stroke */}
-            <linearGradient id="grok-rim-mono" x1="4" y1="4" x2="40" y2="40" gradientUnits="userSpaceOnUse">
+            <linearGradient id={rimGradientId} x1="4" y1="4" x2="40" y2="40" gradientUnits="userSpaceOnUse">
               <stop stopColor="#FFFFFF" stopOpacity="0.45" />
               <stop offset="50%" stopColor="#888892" stopOpacity="0.25" />
               <stop offset="100%" stopColor="#FFFFFF" stopOpacity="0.35" />
             </linearGradient>
 
             {/* Graphite Ear-Fin Gradient */}
-            <linearGradient id="grok-fin-mono" x1="0" y1="0" x2="1" y2="1">
+            <linearGradient id={finGradientId} x1="0" y1="0" x2="1" y2="1">
               <stop stopColor="#22222A" />
               <stop offset="100%" stopColor="#0A0A0E" />
             </linearGradient>
 
             {/* OLED High-Definition Bloom Filter */}
-            <filter id="eye-bloom" x="-30%" y="-30%" width="160%" height="160%">
+            <filter id={eyeBloomId} x="-30%" y="-30%" width="160%" height="160%">
               <feGaussianBlur stdDeviation="0.65" result="blur" />
               <feMerge>
                 <feMergeNode in="blur" />
@@ -1179,32 +1476,36 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
             </filter>
 
             {/* Vibrant Music Equalizer Spectrum Gradient */}
-            <linearGradient id="grok-music-equalizer" x1="0" y1="1" x2="0" y2="0">
+            <linearGradient id={musicGradientId} x1="0" y1="1" x2="0" y2="0">
               <stop offset="0%" stopColor="#10B981" />
               <stop offset="50%" stopColor="#34D399" />
               <stop offset="100%" stopColor="#60A5FA" />
             </linearGradient>
           </defs>
 
-          {/* 1. Left Ear-Fin Antenna (Fast autonomous spring twitch & music rhythm bounce) */}
+          {/* 1. Left Ear-Fin Antenna (Fast autonomous spring twitch, sleep droop, & music rhythm bounce) */}
           <motion.path
             d="M7 17C4 13 4 8 8 10C9 13 8 18 7 17Z"
-            fill="url(#grok-fin-mono)"
+            fill={`url(#${finGradientId})`}
             stroke="#FFFFFF"
             strokeOpacity={mood === 'alert' ? 0.9 : 0.45}
             strokeWidth="1.2"
             animate={
               leftEarTwitch
                 ? { rotate: [-18, 14, -8, 0] }
+                : isSleeping
+                ? { rotate: 12 }
                 : isMusicPlaying
                 ? { rotate: [-6, 6, -6] }
                 : mood === 'alert'
                 ? { rotate: -24, scale: 1.12 }
+                : mood === 'searching'
+                ? { rotate: [-12, 6, -12] }
                 : { rotate: 0 }
             }
             style={{ originX: '8px', originY: '17px' }}
             transition={
-              isMusicPlaying
+              isMusicPlaying || mood === 'searching'
                 ? { duration: 0.65, repeat: Infinity, ease: 'easeInOut' }
                 : {
                     type: 'spring',
@@ -1214,25 +1515,29 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
             }
           />
 
-          {/* 2. Right Ear-Fin Antenna (Music rhythm bounce) */}
+          {/* 2. Right Ear-Fin Antenna (Music rhythm bounce, sleep droop) */}
           <motion.path
             d="M37 17C40 13 40 8 36 10C35 13 36 18 37 17Z"
-            fill="url(#grok-fin-mono)"
+            fill={`url(#${finGradientId})`}
             stroke="#FFFFFF"
             strokeOpacity={mood === 'alert' ? 0.9 : 0.45}
             strokeWidth="1.2"
             animate={
               rightEarTwitch
                 ? { rotate: [18, -14, 8, 0] }
+                : isSleeping
+                ? { rotate: -12 }
                 : isMusicPlaying
                 ? { rotate: [6, -6, 6] }
                 : mood === 'alert'
                 ? { rotate: 24, scale: 1.12 }
+                : mood === 'searching'
+                ? { rotate: [12, -6, 12] }
                 : { rotate: 0 }
             }
             style={{ originX: '36px', originY: '17px' }}
             transition={
-              isMusicPlaying
+              isMusicPlaying || mood === 'searching'
                 ? { duration: 0.65, repeat: Infinity, ease: 'easeInOut' }
                 : {
                     type: 'spring',
@@ -1247,25 +1552,22 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
             cx="22"
             cy="22"
             r="16"
-            fill="url(#grok-visor-black)"
-            stroke="url(#grok-rim-mono)"
+            fill={`url(#${visorGradientId})`}
+            stroke={`url(#${rimGradientId})`}
             strokeWidth="1.5"
           />
 
           {/* 
             4. GROK BOT OCULAR SCREEN ASSEMBLY:
-            Enclosed completely within #grok-visor-screen clip path.
+            Enclosed completely within visor clip path.
           */}
-          <g clipPath="url(#grok-visor-screen)">
+          <g clipPath={`url(#${visorClipId})`}>
             <motion.g
-              filter="url(#eye-bloom)"
+              filter={`url(#${eyeBloomId})`}
               transform={`translate(${activeGazeX}, ${activeGazeY})`}
               animate={{
                 x: activeGazeX,
                 y: activeGazeY,
-              }}
-              style={{
-                transition: isScanning ? 'transform 0.55s ease-in-out' : isTrackingMouse ? 'none' : 'transform 0.12s cubic-bezier(0.16, 1, 0.3, 1)',
               }}
               transition={isScanning ? scanSpring : isTrackingMouse ? trackingSpring : saccadeSpring}
             >
@@ -1279,37 +1581,37 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
                   transition={{ duration: 0.2 }}
                 >
                   {/* Left Eye Equalizer Cluster (Grounded at baseline y = 27.5, matching normal eye bottom) */}
-                  <rect x="12.5" y="18.5" width="1.5" height="9" rx="0.75" fill="url(#grok-music-equalizer)">
+                  <rect x="12.5" y="18.5" width="1.5" height="9" rx="0.75" fill={`url(#${musicGradientId})`}>
                     <animate attributeName="y" values="22.5;17.5;23.5;16.5;22.5" dur="0.62s" repeatCount="indefinite" />
                     <animate attributeName="height" values="5;10;4;11;5" dur="0.62s" repeatCount="indefinite" />
                   </rect>
-                  <rect x="14.3" y="16.5" width="1.5" height="11" rx="0.75" fill="url(#grok-music-equalizer)">
+                  <rect x="14.3" y="16.5" width="1.5" height="11" rx="0.75" fill={`url(#${musicGradientId})`}>
                     <animate attributeName="y" values="16.5;21.5;15.5;20.5;16.5" dur="0.52s" repeatCount="indefinite" />
                     <animate attributeName="height" values="11;6;12;7;11" dur="0.52s" repeatCount="indefinite" />
                   </rect>
-                  <rect x="16.1" y="20.5" width="1.5" height="7" rx="0.75" fill="url(#grok-music-equalizer)">
+                  <rect x="16.1" y="20.5" width="1.5" height="7" rx="0.75" fill={`url(#${musicGradientId})`}>
                     <animate attributeName="y" values="20.5;15.5;22.5;16.5;20.5" dur="0.74s" repeatCount="indefinite" />
                     <animate attributeName="height" values="7;12;5;11;7" dur="0.74s" repeatCount="indefinite" />
                   </rect>
-                  <rect x="17.9" y="23.5" width="1.5" height="4" rx="0.75" fill="url(#grok-music-equalizer)">
+                  <rect x="17.9" y="23.5" width="1.5" height="4" rx="0.75" fill={`url(#${musicGradientId})`}>
                     <animate attributeName="y" values="23.5;19.5;24.5;20.5;23.5" dur="0.45s" repeatCount="indefinite" />
                     <animate attributeName="height" values="4;8;3;7;4" dur="0.45s" repeatCount="indefinite" />
                   </rect>
 
                   {/* Right Eye Equalizer Cluster (Grounded at baseline y = 27.5, matching normal eye bottom) */}
-                  <rect x="24.6" y="23.5" width="1.5" height="4" rx="0.75" fill="url(#grok-music-equalizer)">
+                  <rect x="24.6" y="23.5" width="1.5" height="4" rx="0.75" fill={`url(#${musicGradientId})`}>
                     <animate attributeName="y" values="23.5;20.5;24.5;19.5;23.5" dur="0.48s" repeatCount="indefinite" />
                     <animate attributeName="height" values="4;7;3;8;4" dur="0.48s" repeatCount="indefinite" />
                   </rect>
-                  <rect x="26.4" y="20.5" width="1.5" height="7" rx="0.75" fill="url(#grok-music-equalizer)">
+                  <rect x="26.4" y="20.5" width="1.5" height="7" rx="0.75" fill={`url(#${musicGradientId})`}>
                     <animate attributeName="y" values="20.5;16.5;22.5;15.5;20.5" dur="0.70s" repeatCount="indefinite" />
                     <animate attributeName="height" values="7;11;5;12;7" dur="0.70s" repeatCount="indefinite" />
                   </rect>
-                  <rect x="28.2" y="16.5" width="1.5" height="11" rx="0.75" fill="url(#grok-music-equalizer)">
+                  <rect x="28.2" y="16.5" width="1.5" height="11" rx="0.75" fill={`url(#${musicGradientId})`}>
                     <animate attributeName="y" values="16.5;20.5;15.5;21.5;16.5" dur="0.55s" repeatCount="indefinite" />
                     <animate attributeName="height" values="11;7;12;6;11" dur="0.55s" repeatCount="indefinite" />
                   </rect>
-                  <rect x="30.0" y="21.5" width="1.5" height="6" rx="0.75" fill="url(#grok-music-equalizer)">
+                  <rect x="30.0" y="21.5" width="1.5" height="6" rx="0.75" fill={`url(#${musicGradientId})`}>
                     <animate attributeName="y" values="21.5;16.5;23.5;17.5;21.5" dur="0.65s" repeatCount="indefinite" />
                     <animate attributeName="height" values="6;11;4;10;6" dur="0.65s" repeatCount="indefinite" />
                   </rect>
@@ -1357,6 +1659,90 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
                     style={{ transition: 'stroke 0.45s ease' }}
                   />
                 </>
+              ) : isSleeping ? (
+                // Sleeping Mode: Peaceful resting closed eyes with gentle breathing pulse
+                <motion.g
+                  key="sleeping-eyes"
+                  animate={{
+                    y: [0, -0.4, 0],
+                  }}
+                  transition={{
+                    repeat: Infinity,
+                    duration: 3.6,
+                    ease: 'easeInOut',
+                  }}
+                >
+                  <path
+                    d="M12.5 24C14.5 25.5 17.5 25.5 19.5 24"
+                    stroke={effectiveEyeColor}
+                    strokeWidth="2.2"
+                    strokeLinecap="round"
+                    opacity={0.75}
+                  />
+                  <path
+                    d="M24.5 24C26.5 25.5 29.5 25.5 31.5 24"
+                    stroke={effectiveEyeColor}
+                    strokeWidth="2.2"
+                    strokeLinecap="round"
+                    opacity={0.75}
+                  />
+                  {/* Subtle Zzz micro indicator */}
+                  <text
+                    x="33"
+                    y="14"
+                    fontSize="3.2"
+                    fill={effectiveEyeColor}
+                    opacity="0.6"
+                    fontFamily="sans-serif"
+                    fontWeight="bold"
+                  >
+                    <animate attributeName="opacity" values="0.2;0.8;0.2" dur="2.4s" repeatCount="indefinite" />
+                    <animate attributeName="y" values="15;12;15" dur="2.4s" repeatCount="indefinite" />
+                    z
+                  </text>
+                </motion.g>
+              ) : mood === 'thinking' && !isAgentActive ? (
+                // Standalone Thinking Expression: Inquisitive upward gaze with asymmetric curiosity
+                <motion.g
+                  key="thinking-eyes"
+                  animate={{
+                    opacity: [0.92, 1, 0.92],
+                  }}
+                  transition={{
+                    repeat: Infinity,
+                    duration: 2.2,
+                    ease: 'easeInOut',
+                  }}
+                >
+                  {/* Left Eye: Alert rounded pill looking up */}
+                  <rect
+                    x={LEFT_EYE_X}
+                    y="14.8"
+                    width={EYE_WIDTH}
+                    height="12.8"
+                    rx={EYE_RX}
+                    fill={effectiveEyeColor}
+                    style={{ transition: 'fill 0.45s ease' }}
+                  />
+                  {/* Right Eye: Curious squinted pill */}
+                  <rect
+                    x={RIGHT_EYE_X}
+                    y="18.2"
+                    width={EYE_WIDTH}
+                    height="9.4"
+                    rx="3.0"
+                    fill={effectiveEyeColor}
+                    style={{ transition: 'fill 0.45s ease' }}
+                  />
+                  {/* Inquisitive brow accent */}
+                  <path
+                    d="M24 15.5C26 14.2 29 14.8 31.5 16"
+                    stroke={effectiveEyeColor}
+                    strokeWidth="1.2"
+                    strokeLinecap="round"
+                    opacity={0.6}
+                  />
+                </motion.g>
               ) : mood === 'working' && !isAgentActive ? (
                 // Cybernetic Scanning Bars (Laser focus during CLI / APK building)
                 <motion.g
@@ -1422,6 +1808,17 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
                       }}
                       transition={isBlinking ? blinkSpring : lidSpring}
                     />
+                    {/* Organic Left Pupil / Iris Core for Gaze Clarity */}
+                    {!isBlinking && currentLeftHeight > 4.5 && (
+                      <circle
+                        cx={16.0 + activeGazeX * 0.28}
+                        cy={currentLeftTopY + currentLeftHeight * 0.5 + activeGazeY * 0.22}
+                        r={1.25}
+                        fill="#050508"
+                        opacity={0.38}
+                        pointerEvents="none"
+                      />
+                    )}
                   </motion.g>
 
                   {/* Right Eye Capsule (Closes strictly from TOP down during inquisitive smirk) */}
@@ -1449,6 +1846,17 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
                       }}
                       transition={isBlinking ? blinkSpring : lidSpring}
                     />
+                    {/* Organic Right Pupil / Iris Core for Gaze Clarity */}
+                    {!isBlinking && currentRightHeight > 4.5 && (
+                      <circle
+                        cx={28.0 + activeGazeX * 0.28}
+                        cy={currentRightTopY + currentRightHeight * 0.5 + activeGazeY * 0.22}
+                        r={1.25}
+                        fill="#050508"
+                        opacity={0.38}
+                        pointerEvents="none"
+                      />
+                    )}
                   </motion.g>
                 </>
               )}

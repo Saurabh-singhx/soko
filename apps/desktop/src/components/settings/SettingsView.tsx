@@ -143,12 +143,52 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
     }
   }, [connectionStatus, activeTab]);
 
+  const [pairError, setPairError] = useState<string | null>(null);
+  const [isPendingVerified, setIsPendingVerified] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (selectedDeviceToPair) {
+      setPairError(null);
+      connectionService.fetchPendingPair().then((p) => {
+        if (p && (p.deviceId === selectedDeviceToPair.id || (selectedDeviceToPair.ipAddress && p.ip?.includes(selectedDeviceToPair.ipAddress)))) {
+          setIsPendingVerified(true);
+        } else {
+          setIsPendingVerified(false);
+        }
+      });
+    } else {
+      setPairError(null);
+      setIsPendingVerified(false);
+    }
+  }, [selectedDeviceToPair]);
+
+  useEffect(() => {
+    const unsubPending = connectionService.onPendingPair((pairReq) => {
+      if (selectedDeviceToPair) {
+        if (pairReq.deviceId === selectedDeviceToPair.id || (selectedDeviceToPair.ipAddress && pairReq.ip?.includes(selectedDeviceToPair.ipAddress))) {
+          setIsPendingVerified(true);
+          setPairError(null);
+        }
+      }
+    });
+    return () => unsubPending();
+  }, [selectedDeviceToPair]);
+
   const handleConfirmPair = async () => {
     if (!selectedDeviceToPair) return;
     setIsPairingInFlight(true);
+    setPairError(null);
     try {
-      await connectionService.pairWithDevice(selectedDeviceToPair, pairingPin);
-      setSelectedDeviceToPair(null);
+      const result = await connectionService.pairWithDevice(selectedDeviceToPair, pairingPin);
+      if (result.success) {
+        setSelectedDeviceToPair(null);
+        setPairError(null);
+        setIsPendingVerified(false);
+      } else {
+        setPairError(result.message || 'Mobile companion has not entered or verified the 6-digit PIN yet.');
+      }
+    } catch (e: any) {
+      setPairError(e?.message || 'Pairing verification failed. Please check Wi-Fi connection.');
     } finally {
       setIsPairingInFlight(false);
     }
@@ -441,6 +481,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
 
       {/* Main Content View */}
       <main className="flex-1 overflow-y-auto p-9 relative bg-[#08090A]">
+        {/* Globally Available Hidden File Input (Mounts for all tabs including Pairing Quick Actions) */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          className="hidden"
+          onChange={handleFileSelect}
+        />
         {onClose && (
           <button
             onClick={onClose}
@@ -610,7 +657,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 <div className="flex flex-col gap-3">
                   <div className="flex items-center justify-between pb-2 border-b border-white/[0.08]">
                     <button
-                      onClick={() => setSelectedDeviceToPair(null)}
+                      onClick={() => {
+                        setSelectedDeviceToPair(null);
+                        setPairError(null);
+                      }}
                       className="flex items-center gap-1.5 text-xs text-linear-text-secondary hover:text-white transition-colors"
                     >
                       <ArrowLeft size={13} />
@@ -647,7 +697,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
 
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => setSelectedDeviceToPair(null)}
+                        onClick={() => {
+                          setSelectedDeviceToPair(null);
+                          setPairError(null);
+                        }}
                         className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-linear-text-secondary hover:text-white text-xs font-medium border border-white/10 transition-all"
                       >
                         Cancel
@@ -655,17 +708,42 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                       <button
                         onClick={handleConfirmPair}
                         disabled={isPairingInFlight}
-                        className="px-4 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-semibold shadow-[0_0_16px_rgba(52,211,153,0.35)] active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-60"
+                        className={`px-4 py-1.5 rounded-lg text-black text-xs font-semibold active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-60 ${
+                          isPendingVerified
+                            ? 'bg-emerald-400 hover:bg-emerald-300 shadow-[0_0_20px_rgba(52,211,153,0.5)]'
+                            : 'bg-emerald-500 hover:bg-emerald-400 shadow-[0_0_16px_rgba(52,211,153,0.35)]'
+                        }`}
                       >
                         {isPairingInFlight ? (
                           <RefreshCw size={13} className="animate-spin" />
                         ) : (
                           <CheckCircle2 size={14} />
                         )}
-                        <span>Confirm Link</span>
+                        <span>{isPendingVerified ? 'Approve & Link' : 'Confirm Link'}</span>
                       </button>
                     </div>
                   </div>
+
+                  {/* Verification Status & Error Banner */}
+                  {pairError ? (
+                    <div className="flex items-start gap-2.5 p-2.5 rounded-lg bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs">
+                      <AlertCircle size={15} className="shrink-0 mt-0.5 text-rose-400" />
+                      <div className="min-w-0">
+                        <span className="font-semibold block text-rose-200">Verification Required</span>
+                        <span className="text-white/80 leading-normal block">{pairError}</span>
+                      </div>
+                    </div>
+                  ) : isPendingVerified ? (
+                    <div className="flex items-center gap-2 p-2 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs">
+                      <CheckCircle2 size={14} className="shrink-0 text-emerald-400" />
+                      <span>✓ 6-Digit PIN verified on phone! Click Approve & Link to complete pairing.</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 p-2 rounded-lg bg-white/[0.04] border border-white/[0.08] text-linear-text-secondary text-xs">
+                      <RefreshCw size={12} className="animate-spin text-[#5E6AD2]" />
+                      <span>Waiting for mobile companion to enter PIN {pairingPin}...</span>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="flex flex-col gap-2.5">
@@ -825,6 +903,48 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                     <Smartphone size={12} className="text-linear-brand" /> Send APK
                   </button>
                 </div>
+
+                {/* Active Transfer Progress Banner */}
+                {activeTransfer && (
+                  <div className="mt-1 bg-white/[0.04] border border-white/10 rounded-lg p-2.5 flex flex-col gap-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-1.5 truncate max-w-[260px]">
+                        <FolderDown size={13} className="text-linear-green shrink-0" />
+                        <span className="font-mono text-white truncate">{activeTransfer.filename}</span>
+                      </div>
+                      <span className="font-mono text-[11px] text-linear-text-secondary">
+                        {activeTransfer.status === 'active'
+                          ? `${Math.round((activeTransfer.bytesDownloaded / Math.max(activeTransfer.totalBytes, 1)) * 100)}%`
+                          : activeTransfer.status.toUpperCase()}
+                      </span>
+                    </div>
+                    <div className="w-full bg-white/10 rounded-full h-1.5 overflow-hidden">
+                      <div
+                        className={`h-full transition-all duration-150 ${
+                          activeTransfer.status === 'completed'
+                            ? 'bg-linear-green'
+                            : activeTransfer.status === 'failed' || activeTransfer.status === 'cancelled'
+                            ? 'bg-linear-red'
+                            : 'bg-linear-brand'
+                        }`}
+                        style={{
+                          width: `${Math.min(100, Math.round((activeTransfer.bytesDownloaded / Math.max(activeTransfer.totalBytes, 1)) * 100))}%`
+                        }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] text-linear-text-tertiary font-mono">
+                      <span>{(activeTransfer.bytesDownloaded / 1_048_576).toFixed(1)} / {(activeTransfer.totalBytes / 1_048_576).toFixed(1)} MB</span>
+                      {activeTransfer.status === 'active' && (
+                        <button
+                          onClick={() => connectionService.cancelTransfer(activeTransfer.id, activeTransfer.filename)}
+                          className="text-linear-red hover:underline"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1237,15 +1357,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 Select or drag APKs and project files to transmit to the Mobile Companion over local Wi-Fi / Hotspot LAN at up to 42 MB/s.
               </p>
             </div>
-
-            {/* Hidden Native File Input */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".apk,application/vnd.android.package-archive,*"
-              className="hidden"
-              onChange={handleFileSelect}
-            />
 
             {/* Drag & Drop File Selector Box */}
             <div

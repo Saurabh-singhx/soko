@@ -75,7 +75,7 @@
       overflow-x: hidden;
       /* Safe Area View Padding */
       padding-top: var(--safe-top);
-      padding-bottom: calc(var(--tab-height) + var(--safe-bottom) + 24px);
+      padding-bottom: calc(var(--tab-height) + var(--safe-bottom) + 52px);
       padding-left: var(--safe-left);
       padding-right: var(--safe-right);
       background-image: 
@@ -193,6 +193,12 @@
       box-shadow: 0 0 10px var(--color-green-glow);
     }
 
+    .status-dot.wifi-available {
+      background: #38BDF8;
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.6);
+      animation: pulse-beacon 1.4s infinite;
+    }
+
     .status-dot.connecting {
       background: var(--color-amber);
       box-shadow: 0 0 10px var(--color-amber-glow);
@@ -294,6 +300,12 @@
       background: rgba(99, 102, 241, 0.1);
       border: 1px solid rgba(99, 102, 241, 0.25);
       color: #C7D2FE;
+    }
+
+    .info-banner.discovered {
+      background: rgba(56, 189, 248, 0.1);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      color: #BAE6FD;
     }
 
     .info-banner-icon {
@@ -541,7 +553,8 @@
       font-family: ui-monospace, SFMono-Regular, monospace;
       font-size: 11px;
       color: #34D399;
-      max-height: 160px;
+      min-height: 140px;
+      max-height: 260px;
       overflow-y: auto;
       white-space: pre-wrap;
       line-height: 1.5;
@@ -667,18 +680,18 @@
       display: block;
     }
 
-    /* Toast Notification */
+    /* Toast Notification (Docked above bottom bar, eliminating top header/card occlusion) */
     #toast {
       position: fixed;
-      top: calc(var(--safe-top) + 72px);
+      bottom: calc(var(--tab-height) + var(--safe-bottom) + 16px);
       left: 50%;
-      transform: translateX(-50%) translateY(-20px);
+      transform: translateX(-50%) translateY(20px);
       background: rgba(22, 27, 38, 0.96);
       border: 1.5px solid rgba(255, 255, 255, 0.18);
       color: #fff;
-      padding: 12px 20px;
+      padding: 10px 18px;
       border-radius: 100px;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 600;
       box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
       backdrop-filter: blur(20px);
@@ -705,6 +718,58 @@
       border-radius: 50%;
       background: var(--brand);
       box-shadow: 0 0 8px var(--brand-glow);
+    }
+
+    /* ============================================================ */
+    /* RESPONSIVE DESIGN BREAKPOINTS */
+    /* ============================================================ */
+    @media (max-width: 380px) {
+      :root {
+        --safe-left: 10px;
+        --safe-right: 10px;
+      }
+      header {
+        padding: 10px 12px;
+        border-radius: 16px;
+        margin-bottom: 12px;
+      }
+      .card {
+        padding: 14px;
+        border-radius: 16px;
+      }
+      .btn {
+        padding: 10px 14px;
+        font-size: 12px;
+      }
+      .ip-row {
+        gap: 8px;
+      }
+      .ip-input {
+        padding: 10px 12px;
+        font-size: 13px;
+      }
+      .notif-grid {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+      }
+      .notif-btn {
+        padding: 10px 4px;
+        font-size: 11px;
+      }
+      .app-icon-wrap {
+        width: 38px;
+        height: 38px;
+      }
+      .cli-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (min-width: 480px) {
+      .card {
+        padding: 22px;
+        border-radius: 24px;
+      }
     }
   </style>
 </head>
@@ -1044,6 +1109,26 @@
           <span id="btnAudioText">Start Listening to PC Sound</span>
         </button>
 
+        <!-- Remote Media Transport Controls & PC Speaker Mute -->
+        <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-subtle); border-radius: 14px; padding: 10px 14px; margin-top: 12px; display: flex; align-items: center; justify-content: space-between;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <button class="icon-btn" onclick="controlDesktopAudio('prev')" title="Previous Track" style="padding: 6px; border-radius: 8px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: #fff; cursor: pointer;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" stroke-width="2"></line></svg>
+            </button>
+            <button class="icon-btn" onclick="controlDesktopAudio('play-pause')" title="Play / Pause" style="padding: 7px; border-radius: 50%; background: #10B981; border: none; color: #000; display: flex; align-items: center; justify-content: center; cursor: pointer;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+            </button>
+            <button class="icon-btn" onclick="controlDesktopAudio('next')" title="Next Track" style="padding: 6px; border-radius: 8px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: #fff; cursor: pointer;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2"></line></svg>
+            </button>
+          </div>
+
+          <button id="btnMobilePcMute" onclick="togglePcSpeakerMute()" style="display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 20px; font-size: 11px; font-family: ui-monospace, monospace; cursor: pointer; transition: all 0.15s ease; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: var(--text-primary);">
+            <svg id="pcMuteIcon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+            <span id="pcMuteText">Mute PC Speaker</span>
+          </button>
+        </div>
+
         <!-- Hidden Native HTML5 Audio Element -->
         <audio id="desktopAudioPlayer" preload="none" playsinline></audio>
       </div>
@@ -1288,6 +1373,8 @@
     let pingInterval = null;
     let lastPingTimestamp = 0;
     const DEFAULT_PORT = 8766;
+    let userExplicitlyDisconnected = false;
+    let isDevicePaired = false;
 
     const ipInput = document.getElementById('bridgeIpInput');
     const connPill = document.getElementById('connPill');
@@ -1355,7 +1442,11 @@
 
     document.getElementById('mascotBot').addEventListener('click', () => {
       blinkBot();
-      showToast('Grok Bot: Companion Online & Connected', 'success');
+      if (isDevicePaired) {
+        showToast('Soko Bot: Paired & Verified ✓', 'success');
+      } else {
+        showToast('Soko Bot: Wi-Fi Present • Pairing Required', 'info');
+      }
     });
 
     // ============================================================
@@ -1394,6 +1485,7 @@
       if (hint && message) hint.innerText = message;
 
       if (state === 'paired') {
+        isDevicePaired = true;
         if (badge) {
           badge.innerText = 'Paired & Verified ✓';
           badge.className = 'badge green';
@@ -1405,6 +1497,7 @@
         if (btnPair) btnPair.style.display = 'none';
         if (btnUnpair) btnUnpair.style.display = 'inline-flex';
       } else if (state === 'pending') {
+        isDevicePaired = false;
         if (badge) {
           badge.innerText = 'Awaiting Approval...';
           badge.className = 'badge amber';
@@ -1413,6 +1506,7 @@
         if (btnPair) btnPair.style.display = 'inline-flex';
         if (btnUnpair) btnUnpair.style.display = 'none';
       } else if (state === 'rejected') {
+        isDevicePaired = false;
         if (badge) {
           badge.innerText = 'Pairing Rejected';
           badge.className = 'badge red';
@@ -1424,6 +1518,7 @@
         if (btnPair) btnPair.style.display = 'inline-flex';
         if (btnUnpair) btnUnpair.style.display = 'none';
       } else {
+        isDevicePaired = false;
         if (badge) {
           badge.innerText = 'Unpaired';
           badge.className = 'badge';
@@ -1512,9 +1607,21 @@
               if (window.SokoNative && typeof window.SokoNative.savePairToken === 'function') {
                 window.SokoNative.savePairToken(data.token);
               }
+              isDevicePaired = true;
+              setStatus('online', 'Connected');
               updatePairingUI('paired', 'Paired & Verified with Desktop Dynamic Island.');
               showToast('Device Paired Successfully! ✓', 'success');
               blinkBot();
+              sendPacket('PAIR_REQUEST', {
+                deviceId: deviceId,
+                token: data.token,
+                deviceName: 'Mobile Companion (Android)',
+                model: 'Soko Mobile Companion v1.0.0'
+              });
+              syncTransfersFromServer();
+              sendPacket('FETCH_TOKEN_STATS', {});
+              sendPacket('FETCH_AGENT_ACTIVITY', {});
+              fetchMobileTokenStats();
             } else if (data.status === 'rejected') {
               clearInterval(pairPollTimer);
               pairPollTimer = null;
@@ -1532,29 +1639,34 @@
         pairPollTimer = null;
       }
       const token = getPairToken();
-      sendPacket('UNPAIR_REQUEST', { deviceId: getDeviceId(), token });
+      const deviceId = getDeviceId();
+      sendPacket('UNPAIR_REQUEST', { deviceId, token, forget: true });
       try {
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
         fetch(`${getHttpBaseUrl()}/api/unpair`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ deviceId: getDeviceId() })
+          headers,
+          body: JSON.stringify({ deviceId, forget: true })
         });
       } catch {}
       localStorage.removeItem('soko_pair_token');
       if (window.SokoNative && typeof window.SokoNative.savePairToken === 'function') {
         window.SokoNative.savePairToken('');
       }
-      updatePairingUI('unpaired', 'Device unlinked. Enter PIN from desktop island to pair.');
-      showToast('Device unlinked from Desktop Island', 'info');
+      isDevicePaired = false;
+      updatePairingUI('unpaired', 'Device unlinked & forgotten. Enter PIN to re-pair.');
+      renderTokenStats(null);
+      showToast('Device forgotten and unlinked from Desktop', 'info');
     }
 
     // ============================================================
     // CONNECTION STATUS & NETWORK PROTOCOL
     // ============================================================
     function setStatus(state, text) {
-      statusDot.className = 'status-dot ' + (state === 'online' ? 'online' : state === 'connecting' ? 'connecting' : '');
+      statusDot.className = 'status-dot ' + (state === 'online' ? 'online' : state === 'connecting' ? 'connecting' : state === 'wifi_available' ? 'wifi-available' : '');
       connLabel.innerText = text;
-      document.getElementById('btnConnect').innerText = state === 'online' ? 'Disconnect' : 'Connect';
+      document.getElementById('btnConnect').innerText = (state === 'online' || state === 'wifi_available') ? 'Disconnect' : 'Connect';
 
       const banner = document.getElementById('connectionGuideBanner');
       const bannerText = document.getElementById('connectionGuideText');
@@ -1562,6 +1674,9 @@
         if (state === 'online') {
           banner.className = 'info-banner online';
           bannerText.innerHTML = `<strong>Connected to Soko Desktop HUD</strong><br>Wi-Fi link established. Alerts and audio are streaming in real-time.`;
+        } else if (state === 'wifi_available') {
+          banner.className = 'info-banner discovered';
+          bannerText.innerHTML = `<strong>Desktop Present on Wi-Fi • Unpaired</strong><br>Soko Desktop detected at ${cleanHost(ipInput.value)}. Enter the 6-digit PIN below to pair this device.`;
         } else if (state === 'connecting') {
           banner.className = 'info-banner hint';
           bannerText.innerHTML = `<strong>Connecting to Desktop...</strong><br>Looking for Soko Desktop at ${cleanHost(ipInput.value)}...`;
@@ -1609,15 +1724,12 @@
         ws = new WebSocket(wsUrl);
 
         ws.onopen = () => {
-          setStatus('online', 'Connected');
-          showToast('Connected to Desktop Island ✓', 'success');
           blinkBot();
-
-          syncTransfersFromServer();
 
           const token = getPairToken();
           const deviceId = getDeviceId();
           if (token) {
+            setStatus('connecting', 'Authenticating...');
             updatePairingUI('pending', 'Authenticating with saved pairing token...');
             sendPacket('PAIR_REQUEST', {
               deviceId: deviceId,
@@ -1628,15 +1740,14 @@
               batteryLevel: 94
             });
           } else {
-            updatePairingUI('unpaired', 'Enter the 6-digit PIN from your Desktop Dynamic Island.');
+            isDevicePaired = false;
+            setStatus('wifi_available', 'Wi-Fi Available • Unpaired');
+            updatePairingUI('unpaired', 'Enter the 6-digit PIN from your Desktop Dynamic Island to pair.');
+            renderTokenStats(null);
+            showToast('Desktop found on Wi-Fi! Enter PIN to pair.', 'info');
           }
 
           startHeartbeat();
-          try {
-            sendPacket('FETCH_TOKEN_STATS', {});
-            sendPacket('FETCH_AGENT_ACTIVITY', {});
-            fetchMobileTokenStats();
-          } catch(e) {}
         };
 
         ws.onmessage = (e) => {
@@ -1650,9 +1761,14 @@
 
         ws.onclose = () => {
           stopHeartbeat();
-          setStatus('offline', 'Offline');
+          if (!getPairToken()) {
+            isDevicePaired = false;
+          }
+          setStatus('offline', getPairToken() ? 'Offline (Reconnecting...)' : 'Offline');
           pingBadge.innerText = '-- ms';
-          scheduleReconnect();
+          if (!userExplicitlyDisconnected) {
+            scheduleReconnect();
+          }
         };
 
         ws.onerror = () => {
@@ -1661,15 +1777,20 @@
         };
       } catch (err) {
         setStatus('offline', 'Offline');
-        scheduleReconnect();
+        if (!userExplicitlyDisconnected) {
+          scheduleReconnect();
+        }
       }
     }
 
     function scheduleReconnect() {
+      if (userExplicitlyDisconnected) return;
       if (reconnectTimer) return;
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
-        connectWs();
+        if (!userExplicitlyDisconnected) {
+          connectWs();
+        }
       }, 5000);
     }
 
@@ -1760,21 +1881,80 @@
         if (packet.payload?.deviceId) {
           localStorage.setItem('soko_device_id', packet.payload.deviceId);
         }
+        isDevicePaired = true;
+        setStatus('online', 'Connected');
         updatePairingUI('paired', 'Paired & Verified with Desktop Dynamic Island.');
         showToast('Paired successfully with Desktop Island! ✓', 'success');
         blinkBot();
+        syncTransfersFromServer();
+        sendPacket('FETCH_TOKEN_STATS', {});
+        sendPacket('FETCH_AGENT_ACTIVITY', {});
+        fetchMobileTokenStats();
       } else if (packet.packetType === 'PAIR_REJECT') {
         localStorage.removeItem('soko_pair_token');
         if (window.SokoNative && typeof window.SokoNative.savePairToken === 'function') {
           window.SokoNative.savePairToken('');
         }
-        const err = packet.payload?.error || 'PIN mismatch or connection declined.';
-        updatePairingUI('rejected', err);
-        showToast(err, 'error');
+        isDevicePaired = false;
+        setStatus('wifi_available', 'Wi-Fi Available • Unpaired');
+        const isExpired = packet.payload?.error === 'SESSION_EXPIRED';
+        const err = packet.payload?.message || packet.payload?.error || 'PIN mismatch or connection declined.';
+        updatePairingUI(isExpired ? 'unpaired' : 'rejected', err);
+        showToast(err, isExpired ? 'amber' : 'error');
         blinkBot();
+      } else if (packet.packetType === 'DEVICE_UNPAIRED') {
+        localStorage.removeItem('soko_pair_token');
+        if (window.SokoNative && typeof window.SokoNative.savePairToken === 'function') {
+          window.SokoNative.savePairToken('');
+        }
+        isDevicePaired = false;
+        userExplicitlyDisconnected = true;
+        if (reconnectTimer) {
+          clearTimeout(reconnectTimer);
+          reconnectTimer = null;
+        }
+        updatePairingUI('unpaired', 'Device was disconnected by PC. Enter PIN to re-pair.');
+        renderTokenStats(null);
+        setStatus('offline', 'Disconnected');
+        try { ws.close(); } catch(e) {}
+        showToast('Disconnected and forgotten by Desktop', 'amber');
+      } else if (packet.packetType === 'SECURITY_ALERT') {
+        const token = getPairToken();
+        if (token && ws && ws.readyState === WebSocket.OPEN) {
+          console.warn('[Security] Received SECURITY_ALERT while holding valid token. Re-asserting authorization...');
+          sendPacket('PAIR_REQUEST', {
+            deviceId: getDeviceId(),
+            token: token,
+            deviceName: 'Mobile Companion (Android)',
+            model: 'Soko Mobile Companion v1.0.0'
+          });
+        } else {
+          showToast(packet.payload?.message || 'Access denied: Pairing required', 'amber');
+          updatePairingUI('unpaired', 'Pairing required to access telemetry and tools.');
+        }
       } else if (packet.packetType === 'BRIDGE_STATUS') {
-        if (packet.payload?.pairedDevice?.isAuthorized && getPairToken()) {
+        const savedToken = getPairToken();
+        if (packet.payload?.pairedDevice?.isAuthorized && savedToken) {
+          isDevicePaired = true;
+          setStatus('online', 'Connected');
           updatePairingUI('paired', 'Paired & Verified with Desktop Dynamic Island.');
+        } else if (savedToken) {
+          // Device possesses valid persistent token; keep paired UI and assert authorization
+          isDevicePaired = true;
+          setStatus('online', 'Connected');
+          updatePairingUI('paired', 'Paired & Verified with Desktop Dynamic Island.');
+          if (packet.payload?.requiresPairing) {
+            sendPacket('PAIR_REQUEST', {
+              deviceId: getDeviceId(),
+              token: savedToken,
+              deviceName: 'Mobile Companion (Android)',
+              model: 'Soko Mobile Companion v1.0.0'
+            });
+          }
+        } else {
+          isDevicePaired = false;
+          setStatus('wifi_available', 'Wi-Fi Available • Unpaired');
+          updatePairingUI('unpaired', 'Enter the 6-digit PIN from desktop island to pair.');
         }
       } else if (packet.packetType === 'AUDIO_STATUS') {
         updateDesktopAudioIndicator(packet.payload);
@@ -1859,12 +2039,26 @@
     }
 
     function renderTokenStats(stats) {
-      if (!stats) return;
       const todayEl = document.getElementById('mobTodayTokens');
       const totalEl = document.getElementById('mobTotalTokens');
       const cachedEl = document.getElementById('mobCachedTokens');
       const sessionEl = document.getElementById('mobSessionCount');
       const container = document.getElementById('mobPlatformBreakdown');
+
+      if (!isDevicePaired || !stats) {
+        if (todayEl) todayEl.innerText = '--';
+        if (totalEl) totalEl.innerText = '--';
+        if (cachedEl) cachedEl.innerText = '--';
+        if (sessionEl) sessionEl.innerText = '0';
+        if (container) {
+          container.innerHTML = `
+            <div style="background: rgba(255,255,255,0.03); border: 1px dashed var(--border-subtle); border-radius: 12px; padding: 14px; text-align: center; color: var(--text-tertiary); font-size: 12px;">
+              🔒 Token stats locked. Pair device with Desktop PIN to view telemetry.
+            </div>
+          `;
+        }
+        return;
+      }
 
       if (todayEl) todayEl.innerText = formatTokenCount(stats.todayTokens);
       if (totalEl) totalEl.innerText = formatTokenCount(stats.totalTokens);
@@ -1906,25 +2100,44 @@
     }
 
     async function fetchMobileTokenStats() {
+      const token = getPairToken();
+      if (!isDevicePaired && !token) {
+        renderTokenStats(null);
+        return;
+      }
       try {
-        const res = await fetch(`${getHttpBaseUrl()}/api/tokens`);
+        const headers = {};
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        const res = await fetch(`${getHttpBaseUrl()}/api/tokens`, { headers });
         if (res.ok) {
           const stats = await res.json();
           renderTokenStats(stats);
+        } else if (res.status === 401) {
+          renderTokenStats(null);
         }
       } catch (e) {
         // ignore network error
       }
     }
 
-    function sendPacket(type, payload) {
+    function sendPacket(type, payload = {}) {
+      const token = getPairToken();
+      const deviceId = getDeviceId();
+      let finalPayload = payload;
+      if (typeof payload === 'object' && payload !== null) {
+        finalPayload = { ...payload };
+        if (token && !finalPayload.token) finalPayload.token = token;
+        if (deviceId && !finalPayload.deviceId) finalPayload.deviceId = deviceId;
+      }
       const packet = {
         magic: 'SK',
         version: 1,
         packetId: Date.now(),
         timestamp: Date.now(),
         packetType: type,
-        payload: payload
+        token: token || undefined,
+        deviceId: deviceId || undefined,
+        payload: finalPayload
       };
 
       if (ws && ws.readyState === WebSocket.OPEN) {
@@ -1935,9 +2148,18 @@
     }
 
     function toggleConnection() {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.close();
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        userExplicitlyDisconnected = true;
+        if (reconnectTimer) {
+          clearTimeout(reconnectTimer);
+          reconnectTimer = null;
+        }
+        unpairDevice();
+        try { ws.close(); } catch(e) {}
+        setStatus('offline', 'Disconnected');
+        showToast('Disconnected and forgot pairing.', 'info');
       } else {
+        userExplicitlyDisconnected = false;
         connectWs();
       }
     }
@@ -1966,6 +2188,11 @@
     // NOTIFICATION MIRRORING DISPATCHER
     // ============================================================
     function sendPresetNotif(appName, packageName, title, body) {
+      if (!isDevicePaired) {
+        showToast('Pairing required! Enter 6-digit PIN on Island tab to pair.', 'amber');
+        switchTab('tab-link');
+        return;
+      }
       blinkBot();
       const payload = {
         id: `notif-${Date.now()}`,
@@ -1995,6 +2222,11 @@
     // REMOTE CLI RUNNER
     // ============================================================
     function executeRemoteCli(command, title) {
+      if (!isDevicePaired) {
+        showToast('Pairing required! Enter 6-digit PIN on Island tab to pair.', 'amber');
+        switchTab('tab-link');
+        return;
+      }
       blinkBot();
       termLog.innerText = `[${new Date().toLocaleTimeString()}] Executing: ${title} ($ ${command})...\nStreaming output from desktop host...`;
 
@@ -2027,6 +2259,11 @@
     let activeUploadXhr = null;
 
     function triggerFileTransfer(filename = 'soko-v1.0.0-release.apk') {
+      if (!isDevicePaired) {
+        showToast('Pairing required! Enter 6-digit PIN on Island tab to pair.', 'amber');
+        switchTab('tab-link');
+        return;
+      }
       blinkBot();
       const fill = document.getElementById('transferFill');
       fill.style.background = 'linear-gradient(90deg, var(--brand), var(--color-green))';
@@ -2085,6 +2322,12 @@
 
     function uploadRealFile(input) {
       if (!input.files || input.files.length === 0) return;
+      if (!isDevicePaired) {
+        showToast('Pairing required! Enter 6-digit PIN to pair before sending files.', 'amber');
+        try { input.value = ''; } catch(e) {}
+        switchTab('tab-link');
+        return;
+      }
       const file = input.files[0];
       try { input.value = ''; } catch(e) {}
       blinkBot();
@@ -2254,6 +2497,7 @@
     }
 
     async function syncTransfersFromServer() {
+      if (!isDevicePaired && !getPairToken()) return;
       try {
         const httpBase = getHttpBaseUrl();
         const token = getPairToken();
@@ -2481,7 +2725,7 @@
       const meta = document.getElementById('audioStreamMeta');
       if (!isAudioStreaming && badge) {
         if (status.isPlaying) {
-          badge.innerText = 'Desktop Sound Active';
+          badge.innerText = `${status.activeApp || 'Desktop Audio'} Active`;
           badge.className = 'badge green';
         } else {
           badge.innerText = 'Idle';
@@ -2490,6 +2734,66 @@
       }
       if (meta && status.format && status.bitrate) {
         meta.innerText = `${status.bitrate} • ${status.format.toUpperCase()} Stereo`;
+      }
+
+      // Update PC Speaker Mute status button
+      const muteBtn = document.getElementById('btnMobilePcMute');
+      const muteText = document.getElementById('pcMuteText');
+      const muteIcon = document.getElementById('pcMuteIcon');
+      if (status.isSpeakerMuted) {
+        if (muteBtn) {
+          muteBtn.style.background = 'rgba(239, 68, 68, 0.15)';
+          muteBtn.style.borderColor = 'rgba(239, 68, 68, 0.4)';
+          muteBtn.style.color = '#FCA5A5';
+        }
+        if (muteText) muteText.innerText = 'PC Muted';
+        if (muteIcon) muteIcon.innerHTML = '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line>';
+      } else {
+        if (muteBtn) {
+          muteBtn.style.background = 'rgba(255, 255, 255, 0.06)';
+          muteBtn.style.borderColor = 'rgba(255, 255, 255, 0.12)';
+          muteBtn.style.color = 'var(--text-primary)';
+        }
+        if (muteText) muteText.innerText = 'Mute PC Speaker';
+        if (muteIcon) muteIcon.innerHTML = '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>';
+      }
+    }
+
+    async function controlDesktopAudio(action) {
+      try {
+        const token = localStorage.getItem('soko_bearer_token');
+        await fetch(`${getHttpBaseUrl()}/api/audio/control`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ action }),
+        });
+      } catch (e) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          sendWsPacket('AUDIO_CONTROL', { action });
+        }
+      }
+    }
+
+    async function togglePcSpeakerMute() {
+      try {
+        const token = localStorage.getItem('soko_bearer_token');
+        const res = await fetch(`${getHttpBaseUrl()}/api/audio/mute-speaker`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ action: 'toggle' }),
+        });
+        const data = await res.json();
+        showToast(data.isMuted ? 'PC Speaker Muted' : 'PC Speaker Unmuted', 'info');
+      } catch (e) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          sendWsPacket('AUDIO_MUTE_SPEAKER', { action: 'toggle' });
+        }
       }
     }
 
@@ -2634,6 +2938,7 @@
         updatePairingUI('paired', 'Paired & Verified with Desktop Dynamic Island.');
       } else {
         updatePairingUI('unpaired', 'Enter the 6-digit PIN from desktop island to pair.');
+        renderTokenStats(null);
       }
 
       checkRealNotificationAccess();
@@ -2652,8 +2957,14 @@
       });
 
       connectWs();
-      fetchMobileTokenStats();
-      setInterval(fetchMobileTokenStats, 20000);
+      if (getPairToken()) {
+        fetchMobileTokenStats();
+      }
+      setInterval(() => {
+        if (isDevicePaired) {
+          fetchMobileTokenStats();
+        }
+      }, 20000);
     });
   </script>
 </body>
