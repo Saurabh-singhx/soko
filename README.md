@@ -63,9 +63,17 @@ Whether you need to beam 100MB+ APKs and media files across devices in seconds w
 - **Live Streaming stdout**: Real-time ANSI terminal logs stream over WebSockets to your mobile companion deck.
 - **Whitelisted Sandbox**: Only commands explicitly registered in the desktop configuration can be executed, preventing arbitrary remote code execution (RCE).
 
-### 🎵 Low-Latency Desktop Audio Streaming
-- **Desktop-to-Phone Audio**: Stream desktop audio directly to your mobile device via PipeWire, PulseAudio, or WASAPI.
-- **High-Fidelity 192 kbps Stream**: Enjoy lag-free audio monitoring on your phone or connected earbuds while away from your desk.
+### 🎵 Low-Latency Desktop Audio Streaming (Option 1 HTTP Stream)
+- **Zero-Bloat Desktop-to-Phone Audio**: Stream desktop sound (YouTube, Spotify, IDE build alerts, movies) directly to your mobile device or Bluetooth earbuds without adding a single megabyte to your APK.
+- **Why Option 1 Beats WebRTC**: Bypasses WebRTC's 15–30 MB `libwebrtc` binary penalty, eliminates 1.5–3s cold-start SDP/ICE delays, and avoids speech filters (AEC/AGC) that degrade music fidelity.
+- **High-Fidelity 192 kbps Stereo**: Crystal-clear 48 kHz stereo streaming via PipeWire / PulseAudio on Linux and WASAPI Loopback on Windows.
+- **Android Lock-Screen & Background Playback**: Native media session integration keeps sound streaming seamlessly even when your phone is locked in your pocket.
+- **Instant Connect & Zero-Idle CPU**: Connects in <100ms; automatically spawns the low-delay encoder upon connection and frees OS audio loopbacks when listeners disconnect.
+
+### 📱 Mobile Companion & Silent Link Daemon
+- **Lean, Non-Intrusive Daemon**: Lightweight native background service (`SokoBackgroundService`) keeps local LAN and Hotspot links alive without notification shade spam.
+- **Zero-Cloud Local Privacy**: 100% offline peer-to-peer data synchronization with zero third-party cloud intermediaries.
+- **Desktop Dynamic Island Focus**: Live alerts, audio waveforms, and file progress are centralized on the Desktop HUD, avoiding mobile screen overlay clutter and touch dead zones.
 
 ### 🛡️ Zero-Trust Security & Pairing
 - **Short Authentication String (SAS)**: Cryptographic 6-digit confirmation codes guarantee physical human-in-the-loop pairing.
@@ -85,7 +93,7 @@ Ready-to-use binaries are published with every release on [GitHub Releases](http
 | **Linux (x64)** | `.tar.gz` | [`soko-linux-x64.tar.gz`](https://github.com/Saurabh-singhx/soko/releases/latest) | Standalone unpacked binary archive |
 | **Windows (x64)** | Portable `.exe` | [`soko-win-x64.exe`](https://github.com/Saurabh-singhx/soko/releases/latest) | Standalone portable executable (No installer required) |
 | **Windows (x64)** | `.zip` | [`soko-win-x64.zip`](https://github.com/Saurabh-singhx/soko/releases/latest) | Unpack and launch `soko.exe` |
-| **Android (API 24+)** | `soko-mobile.apk` | [`soko-mobile.apk`](https://github.com/Saurabh-singhx/soko/releases/latest) | Full companion with background notification listener |
+| **Android (API 24+)** | `soko-mobile.apk` | [`soko-mobile.apk`](https://github.com/Saurabh-singhx/soko/releases/latest) | Full companion with silent link daemon, notification listener, & audio streaming |
 | **Android (API 24+)** | `soko-mobile-lite.apk` | [`soko-mobile-lite.apk`](https://github.com/Saurabh-singhx/soko/releases/latest) | Lite standalone companion (Clean transfer & CLI, 0 Play Protect warnings) |
 
 > [!TIP]
@@ -270,6 +278,8 @@ Explore our comprehensive engineering logs and feature architecture documents:
 | **Android NotificationListener Service & Filters** | [docs/features/05-notification-mirroring.md](docs/features/05-notification-mirroring.md) |
 | **Zero-Trust SAS Pairing & Replay Guards** | [docs/features/06-security-and-pairing.md](docs/features/06-security-and-pairing.md) |
 | **Grok Bot Living OLED Mascot Animation Engine** | [docs/features/07-grok-bot-monochrome-animation.md](docs/features/07-grok-bot-monochrome-animation.md) |
+| **Low-Latency Desktop Audio Streaming (Option 1 HTTP Stream)** | [docs/features/08-desktop-audio-streaming.md](docs/features/08-desktop-audio-streaming.md) |
+| **Mobile Dynamic Island & Fluid Cloud Technical Analysis** | [docs/features/09-mobile-dynamic-island-fluid-cloud.md](docs/features/09-mobile-dynamic-island-fluid-cloud.md) |
 
 ---
 

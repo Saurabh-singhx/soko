@@ -107,7 +107,10 @@ soko/
 │       ├── 03-hotspot-high-speed-transfer.md
 │       ├── 04-remote-cli-execution.md
 │       ├── 05-notification-mirroring.md
-│       └── 06-security-and-pairing.md
+│       ├── 06-security-and-pairing.md
+│       ├── 07-grok-bot-monochrome-animation.md
+│       ├── 08-desktop-audio-streaming.md
+│       └── 09-mobile-dynamic-island-fluid-cloud.md
 └── README.md
 ```
 
@@ -175,6 +178,27 @@ Controlling developer tools like `antigravity-cli` (`agy`) or custom build scrip
    }
    ```
 3. **PTY Virtual Stream**: Output is captured in chunks and sent back to mobile over the BLE channel or buffered in memory for real-time inspection.
+
+### 4.5 Low-Latency Desktop Audio Streaming (Option 1: HTTP Chunked Stream)
+
+To enable listening to computer sound (YouTube, Spotify, IDE build alerts, movies) directly through a smartphone or connected earbuds without internet access:
+
+1. **Rejection of WebRTC**: WebRTC was evaluated and rejected due to its **15–30 MB native binary APK penalty**, 1.5–3.0 second cold-start negotiation latency (SDP, ICE, DTLS), failure of STUN candidates on offline mobile hotspots, and default voice filters (AEC/AGC) that degrade music fidelity.
+2. **Option 1 Architecture (HTTP Chunked Streaming)**:
+   - The desktop bridge exposes `GET /api/audio/stream` using `Transfer-Encoding: chunked` and `Content-Type: audio/mpeg`.
+   - The desktop dynamically detects the default audio monitor (PipeWire/PulseAudio via `wpctl` inspect on Linux, WASAPI Loopback on Windows) and pipes it to a low-latency 192 kbps MP3 encoder (`ffmpeg -fflags nobuffer -flags low_delay`).
+   - The mobile companion plays the stream via standard HTML5 `<audio>` or Android `ExoPlayer`, connecting in under 100ms.
+3. **Android Lock-Screen Integration**: Standard media streaming hooks directly into the Android `MediaSession` and notification drawer, enabling background playback with the phone screen locked.
+4. **Zero-Resource Idle State**: Audio capture processes only spawn upon client connection and terminate immediately when listener count reaches zero.
+
+### 4.6 Mobile Ecosystem Integration & Fluid Cloud Architectural Strategy
+
+Soko's signature Dynamic Island and living Grok-Bot mascot are purpose-built for the **Desktop HUD** (Linux, macOS, Windows), where full window transparency and framer-motion physics operate with zero system friction.
+
+On Android smartphones (including OnePlus OxygenOS 14/15):
+1. **Architectural Separation**: Rather than injecting a fragile, invasive third-party window overlay (`TYPE_APPLICATION_OVERLAY`) that creates touch dead zones and clashes with native status bar notification icons or system Live Alerts, Soko relies on a clean, low-importance native background daemon (`SokoBackgroundService`).
+2. **Zero-Distraction Daemon (`soko_foreground_link`)**: Keeps local LAN / Hotspot WebSockets persistent and auto-restarts on phone reboot (`BOOT_COMPLETED`) without intrusive heads-up banners or notification shade spam.
+3. **Hardware & Compositor Analysis**: For an exhaustive technical breakdown of the display compositor conflicts, Pantanal cloud-push constraints, and why custom mobile floating overlays fail on OnePlus devices, refer to [docs/features/09-mobile-dynamic-island-fluid-cloud.md](features/09-mobile-dynamic-island-fluid-cloud.md).
 
 ---
 

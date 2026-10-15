@@ -13,6 +13,7 @@
    - **Notification Mode**: (Width: ~380px, Height: ~84px) Expands downward and outward with sender name, message body, app icon, and dismiss/action buttons.
    - **CLI Mode**: (Width: ~420px, Height: ~120px) Shows the active command (e.g., `agy status`), animated terminal spinner, and live stdout tail.
    - **Transfer Mode**: (Width: ~340px, Height: ~76px) Shows filename, transfer rate, progress bar, and completion checkmark.
+   - **Audio Streaming Mode**: (Width: ~360px, Height: ~68px) Shows animated equalizer soundwaves, active phone listener count, and source audio telemetry when streaming PC sound to mobile.
 4. **Click-Through Transparency**: Transparent margins around the compact pill must **not block mouse clicks** directed at native browser tabs or window titlebars directly behind them.
 5. **Cross-Platform Compatibility**: Must run natively on Windows 10/11 and Linux (both X11 and Wayland compositors).
 
@@ -104,3 +105,6 @@ To make the bot original and visually engaging rather than a generic flat smiley
   - `stiffness: 450`, `damping: 32`, `mass: 0.85`.
 - **Layout Morphing**: Uses layout morphing (`layout` & `layoutId` properties) so dimensions resize organically without jarring frame jumps.
 - **Color Aesthetics**: Deep obsidian core (`#0A0A0C`), multi-spectrum aurora gradients, and OLED deep black contrast.
+
+> [!NOTE]
+> The signature Dynamic Island and living mascot are engineered exclusively for the **Desktop HUD**. For an in-depth technical analysis on why mobile floating window overlays fail on Android & OnePlus OxygenOS, see [09-mobile-dynamic-island-fluid-cloud.md](09-mobile-dynamic-island-fluid-cloud.md).
