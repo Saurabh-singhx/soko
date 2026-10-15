@@ -97,7 +97,52 @@ function request(method, pathName, body = null, headers = {}) {
   });
 }
 
+let spawnedBridge = null;
+
+async function isBridgeOnline() {
+  try {
+    const res = await request('GET', '/api/status');
+    return res.status === 200;
+  } catch {
+    return false;
+  }
+}
+
+async function ensureBridgeRunning() {
+  if (await isBridgeOnline()) {
+    return;
+  }
+
+  console.log(`[Setup] Starting Soko Bridge test instance on port ${PORT}...`);
+  const { spawn } = require('child_process');
+  const bridgeScript = [
+    path.resolve(__dirname, '../scripts/soko_bridge.js'),
+    path.resolve(__dirname, 'soko_bridge.js'),
+    path.resolve(process.cwd(), 'scripts/soko_bridge.js'),
+  ].find((p) => fs.existsSync(p));
+
+  spawnedBridge = spawn('node', [bridgeScript], {
+    env: {
+      ...process.env,
+      PORT: String(PORT),
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  const startTime = Date.now();
+  while (Date.now() - startTime < 10000) {
+    await new Promise((r) => setTimeout(r, 200));
+    if (await isBridgeOnline()) {
+      console.log(`  ✓ Test bridge process online on port ${PORT}\n`);
+      return;
+    }
+  }
+  throw new Error(`Failed to start test bridge on port ${PORT} within 10s`);
+}
+
 async function runTests() {
+  await ensureBridgeRunning();
+
   console.log('================================================================');
   console.log(' SOKO FULL INTEGRATION & SECURITY TEST SUITE');
   console.log(` Target Server: ${BASE_URL}`);
@@ -464,6 +509,12 @@ async function runTests() {
   console.log('\n================================================================');
   console.log(` RESULTS: ${passedTests} / ${totalTests} tests passed (${Math.round((passedTests / totalTests) * 100)}%)`);
   console.log('================================================================\n');
+
+  if (spawnedBridge) {
+    try {
+      spawnedBridge.kill();
+    } catch {}
+  }
 
   if (passedTests === totalTests) {
     process.exit(0);
