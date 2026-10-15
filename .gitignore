@@ -35,6 +35,7 @@ build/
 build_apk_tmp/
 apks/*.apk
 apks/*.idsig
+.build_number
 
 # Uploaded Files & Transfers
 transfers/*

@@ -900,6 +900,9 @@
         </div>
       </div>
 
+      <div style="text-align: center; margin-top: 18px; margin-bottom: 24px; font-size: 11px; color: var(--text-tertiary);">
+        <span id="appVersionLabel">Soko Mobile Companion</span> • Zero-Cloud Architecture
+      </div>
     </div>
 
     <!-- ============================================================ -->
@@ -2635,6 +2638,13 @@
 
       checkRealNotificationAccess();
       checkBatteryOptimizationStatus();
+
+      const verLabel = document.getElementById('appVersionLabel');
+      if (verLabel && window.SokoNative && typeof window.SokoNative.getAppVersion === 'function') {
+        try {
+          verLabel.innerText = `Soko Mobile Companion v${window.SokoNative.getAppVersion()}`;
+        } catch (e) {}
+      }
 
       window.addEventListener('focus', () => {
         checkRealNotificationAccess();

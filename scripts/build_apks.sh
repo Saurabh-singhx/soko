@@ -38,9 +38,32 @@ D8="${BUILD_TOOLS}/d8"
 ZIPALIGN="${BUILD_TOOLS}/zipalign"
 APKSIGNER="${BUILD_TOOLS}/apksigner"
 
-# Dynamic Version Resolution
-VERSION_NAME="${SOKO_VERSION:-$(node -p "require('${PROJECT_ROOT}/package.json').version" 2>/dev/null || echo "1.0.0")}"
-VERSION_CODE="${SOKO_BUILD_NUMBER:-$(git -C "${PROJECT_ROOT}" rev-list --count HEAD 2>/dev/null || echo "1")}"
+# ==============================================================================
+# Dynamic Version Resolution & Auto-Incrementing Build Counter
+# ==============================================================================
+BUILD_COUNTER_FILE="${PROJECT_ROOT}/.build_number"
+GIT_COUNT="$(git -C "${PROJECT_ROOT}" rev-list --count HEAD 2>/dev/null || echo "44")"
+
+if [ -f "${BUILD_COUNTER_FILE}" ]; then
+  LAST_BUILD="$(cat "${BUILD_COUNTER_FILE}" | tr -d '[:space:]')"
+  if ! [[ "${LAST_BUILD}" =~ ^[0-9]+$ ]]; then
+    LAST_BUILD="${GIT_COUNT}"
+  fi
+else
+  LAST_BUILD="${GIT_COUNT}"
+fi
+
+# Ensure build number is always strictly greater than git count and strictly increasing
+if [ "${LAST_BUILD}" -lt "${GIT_COUNT}" ]; then
+  LAST_BUILD="${GIT_COUNT}"
+fi
+
+NEW_BUILD=$(( LAST_BUILD + 1 ))
+echo "${NEW_BUILD}" > "${BUILD_COUNTER_FILE}"
+VERSION_CODE="${SOKO_BUILD_NUMBER:-${NEW_BUILD}}"
+
+BASE_VERSION="$(node -p "require('${PROJECT_ROOT}/package.json').version" 2>/dev/null || echo "1.0.1")"
+VERSION_NAME="${SOKO_VERSION:-${BASE_VERSION}.${VERSION_CODE}}"
 
 echo "=== Soko Android APK Generator ==="
 echo "Project Root: ${PROJECT_ROOT}"
@@ -388,6 +411,11 @@ public class MainActivity extends Activity {
                 }
             }
         }
+
+        @JavascriptInterface
+        public String getAppVersion() {
+            return "__VERSION_NAME__ (Build __VERSION_CODE__)";
+        }
     }
 
     @Override
@@ -581,6 +609,8 @@ public class MainActivity extends Activity {
     }
 }
 EOF
+    sed -i "s/__VERSION_NAME__/${VERSION_NAME}/g" "${WORK}/src/com/soko/${APP_ID}/MainActivity.java"
+    sed -i "s/__VERSION_CODE__/${VERSION_CODE}/g" "${WORK}/src/com/soko/${APP_ID}/MainActivity.java"
   else
     # Native Mobile Companion Dashboard Activity
     cat <<EOF > "${WORK}/src/com/soko/${APP_ID}/MainActivity.java"
