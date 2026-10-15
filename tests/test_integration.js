@@ -126,7 +126,7 @@ async function ensureBridgeRunning() {
       ...process.env,
       PORT: String(PORT),
     },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: 'inherit',
   });
 
   const startTime = Date.now();
@@ -512,7 +512,7 @@ async function runTests() {
 
   if (spawnedBridge) {
     try {
-      spawnedBridge.kill();
+      spawnedBridge.kill('SIGKILL');
     } catch {}
   }
 
