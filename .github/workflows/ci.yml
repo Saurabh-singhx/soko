@@ -1,0 +1,41 @@
+name: Continuous Integration & Verification
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+    branches:
+      - master
+      - main
+
+jobs:
+  test-and-verify:
+    name: Run Test Suites & Build Verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Node Dependencies
+        run: |
+          npm install
+          npm --prefix apps/desktop install
+
+      - name: Run Full Integration Tests
+        run: npm test
+
+      - name: Run Zero-Trust Security Suite
+        run: npm run test:security
+
+      - name: Run Dynamic Island Assertions
+        run: npm run test:island
+
+      - name: Build Web Frontend
+        run: npm run build:desktop

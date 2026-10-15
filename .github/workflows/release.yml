@@ -2,15 +2,12 @@ name: Release Multi-Platform Binaries & Auto-Update Feed
 
 on:
   push:
-    branches:
-      - master
-      - main
     tags:
       - 'v*'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Custom version override (e.g. 1.0.1)'
+        description: 'Custom version override (e.g. 1.0.2)'
         required: false
         default: ''
 
@@ -19,7 +16,7 @@ permissions:
 
 jobs:
   prepare-version:
-    name: Resolve Continuous Build Version
+    name: Resolve Release Version
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -36,8 +33,7 @@ jobs:
           elif [[ "${{ github.ref_type }}" == "tag" ]]; then
             VER="${GITHUB_REF_NAME#v}"
           else
-            # Continuous build: starts from 1.0.<run_number>
-            VER="1.0.${{ github.run_number }}"
+            VER="$(node -p "require('./package.json').version")"
           fi
           # Strip any leading 'v'
           VER="${VER#v}"

@@ -41,3 +41,6 @@ apks/*.idsig
 transfers/*
 !transfers/.gitkeep
 screenshot_p
+
+# Production Readiness Roadmap
+PRODUCTION_READINESS.md
