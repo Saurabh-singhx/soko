@@ -29,6 +29,8 @@ jobs:
           npm --prefix apps/desktop install
 
       - name: Run Full Integration Tests
+        env:
+          PORT: 8799
         run: npm test
 
       - name: Run Zero-Trust Security Suite

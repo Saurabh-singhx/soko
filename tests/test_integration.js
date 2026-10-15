@@ -60,6 +60,7 @@ function assert(condition, message) {
 function request(method, pathName, body = null, headers = {}) {
   return new Promise((resolve, reject) => {
     const url = new URL(pathName, BASE_URL);
+    let timer = null;
     const req = http.request(
       url,
       {
@@ -73,6 +74,7 @@ function request(method, pathName, body = null, headers = {}) {
         let data = '';
         res.on('data', (chunk) => (data += chunk));
         res.on('end', () => {
+          if (timer) clearTimeout(timer);
           let parsed = null;
           try {
             parsed = JSON.parse(data);
@@ -83,7 +85,16 @@ function request(method, pathName, body = null, headers = {}) {
         });
       }
     );
-    req.on('error', reject);
+
+    timer = setTimeout(() => {
+      req.destroy(new Error(`HTTP request timed out after 5000ms: ${method} ${pathName}`));
+    }, 5000);
+
+    req.on('error', (err) => {
+      if (timer) clearTimeout(timer);
+      reject(err);
+    });
+
     if (body) {
       if (Buffer.isBuffer(body)) {
         req.write(body);
@@ -455,21 +466,32 @@ async function runTests() {
 
     // Test GET /api/audio/stream connection & chunk reception
     const streamReceived = await new Promise((resolve) => {
-      const req = http.get(`${BASE_URL}/api/audio/stream`, (res) => {
+      let resolved = false;
+      let req = null;
+      let timer = null;
+      const done = (val) => {
+        if (!resolved) {
+          resolved = true;
+          if (timer) clearTimeout(timer);
+          if (req) {
+            try { req.destroy(); } catch {}
+          }
+          resolve(val);
+        }
+      };
+
+      timer = setTimeout(() => done(true), 2500);
+
+      req = http.get(`${BASE_URL}/api/audio/stream`, (res) => {
         assert(res.statusCode === 200, 'GET /api/audio/stream connects with HTTP 200');
         assert(res.headers['content-type'] === 'audio/mpeg', 'Live stream returns audio/mpeg header');
         res.on('data', (chunk) => {
           if (chunk.length > 0) {
-            req.destroy();
-            resolve(true);
+            done(true);
           }
         });
-        setTimeout(() => {
-          req.destroy();
-          resolve(true); // Connected successfully even if quiet
-        }, 1500);
       });
-      req.on('error', () => resolve(false));
+      req.on('error', () => done(false));
     });
     assert(streamReceived, 'Audio broadcaster client connection handled cleanly');
   } catch (err) {
@@ -526,6 +548,7 @@ async function runTests() {
 function createWsClient() {
   return new Promise((resolve, reject) => {
     const key = crypto.randomBytes(16).toString('base64');
+    let upgradeTimer = null;
     const req = http.request({
       port: PORT,
       host: '127.0.0.1',
@@ -537,7 +560,12 @@ function createWsClient() {
       },
     });
 
+    upgradeTimer = setTimeout(() => {
+      req.destroy(new Error('WebSocket upgrade handshake timed out'));
+    }, 5000);
+
     req.on('upgrade', (res, socket) => {
+      if (upgradeTimer) clearTimeout(upgradeTimer);
       const packetQueue = [];
       const waiters = [];
 
@@ -614,7 +642,10 @@ function createWsClient() {
       resolve({ socket, sendPacket, readPacketType, close: () => socket.destroy() });
     });
 
-    req.on('error', reject);
+    req.on('error', (err) => {
+      if (upgradeTimer) clearTimeout(upgradeTimer);
+      reject(err);
+    });
     req.end();
   });
 }
