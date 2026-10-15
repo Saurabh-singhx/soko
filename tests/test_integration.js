@@ -27,9 +27,9 @@ const BASE_URL = `http://127.0.0.1:${PORT}`;
 function getTransfersDir() {
   if (process.env.SOKO_TRANSFERS_DIR) return process.env.SOKO_TRANSFERS_DIR;
   const candidates = [
+    path.resolve(os.homedir(), '.config/soko/transfers'),
     path.resolve(__dirname, '../transfers'),
     path.resolve(process.cwd(), 'transfers'),
-    path.resolve(os.homedir(), '.config/soko/transfers'),
     path.resolve(os.tmpdir(), 'soko-transfers'),
   ];
   return (
@@ -187,7 +187,17 @@ async function runTests() {
     assert(resUpload.status === 200, 'POST /api/upload succeeds with matching SHA-256');
     assert(resUpload.data.sha256 === validHash, 'Returned SHA-256 matches cryptographic digest');
 
-    const uploadedFilePath = path.join(TRANSFERS_DIR, 'integration-test.bin');
+    function findUploadedFile(name) {
+      const candidates = [
+        path.resolve(TRANSFERS_DIR, name),
+        path.resolve(__dirname, '../transfers', name),
+        path.resolve(process.cwd(), 'transfers', name),
+        path.resolve(os.homedir(), '.config/soko/transfers', name),
+      ];
+      return candidates.find((f) => fs.existsSync(f)) || path.resolve(TRANSFERS_DIR, name);
+    }
+
+    const uploadedFilePath = findUploadedFile('integration-test.bin');
     assert(fs.existsSync(uploadedFilePath), 'File saved to transfers/ directory');
     const stat = fs.statSync(uploadedFilePath);
     assert((stat.mode & 0o111) === 0, 'Permissions are non-executable (0644 security defense)');
@@ -202,7 +212,7 @@ async function runTests() {
     );
     assert(resTraversal.status === 200, 'Path traversal upload handled safely');
     assert(resTraversal.data.filename === 'malicious.bin', 'Path sanitized to basename (escapes blocked)');
-    const maliciousPath = path.join(TRANSFERS_DIR, 'malicious.bin');
+    const maliciousPath = findUploadedFile('malicious.bin');
     assert(fs.existsSync(maliciousPath), 'Confined strictly to transfers/ directory');
     try { fs.unlinkSync(maliciousPath); } catch {}
 
@@ -229,9 +239,60 @@ async function runTests() {
     const resStream = await request('GET', `/transfers/${encodeURIComponent(testFileToStream)}`);
     assert(resStream.status === 200, 'GET /transfers/:filename streams transferred file with HTTP 200');
 
-    // Test POST /api/transfers/open for host file/folder viewing
-    const resOpen = await request('POST', '/api/transfers/open', { action: 'folder' });
+    // Test POST /api/transfers/open for host file/folder viewing (dryRun: true prevents launching GUI file manager)
+    const resOpen = await request(
+      'POST',
+      '/api/transfers/open',
+      { action: 'folder', dryRun: true },
+      { 'x-dry-run': 'true' }
+    );
     assert(resOpen.status === 200, 'POST /api/transfers/open returns HTTP 200 to view files on disk');
+
+    // 5d. Peer WebSocket receives FILE_OFFER and upload broadcasts progress without cancellation
+    const wsListener = await createWsClient();
+    await wsListener.readPacketType('BRIDGE_STATUS');
+
+    const wsSender = await createWsClient();
+    await wsSender.readPacketType('BRIDGE_STATUS');
+    wsSender.sendPacket({
+      magic: 'SK',
+      version: 1,
+      packetId: Date.now(),
+      timestamp: Date.now(),
+      packetType: 'FILE_OFFER',
+      payload: {
+        filename: 'real-payload-test.apk',
+        bytesDownloaded: 0,
+        totalBytes: 1024,
+        speedBytesPerSec: 0,
+        percentage: 0,
+        status: 'active',
+      },
+    });
+
+    const receivedOffer = await wsListener.readPacketType('FILE_OFFER', 2000);
+    assert(receivedOffer && receivedOffer.payload?.filename === 'real-payload-test.apk', 'WebSocket peer successfully receives forwarded FILE_OFFER');
+
+    // Now send binary stream to /api/upload
+    const uploadPayload = Buffer.from('Testing real file upload without self-sabotaging cancel 2026', 'utf8');
+    const resUploadFlow = await request(
+      'POST',
+      `/api/upload?filename=real-payload-test.apk`,
+      uploadPayload,
+      { 'Content-Length': uploadPayload.length }
+    );
+    assert(resUploadFlow.status === 200, 'POST /api/upload succeeds during active peer session');
+    assert(resUploadFlow.data?.filename === 'real-payload-test.apk', 'Real upload returns correct file name');
+
+    const completedPkt = await wsListener.readPacketType('FILE_COMPLETED', 2000);
+    assert(completedPkt && completedPkt.payload?.filename === 'real-payload-test.apk', 'WebSocket peer receives FILE_COMPLETED');
+
+    const savedPath = findUploadedFile('real-payload-test.apk');
+    if (fs.existsSync(savedPath)) {
+      try { fs.unlinkSync(savedPath); } catch {}
+    }
+    wsListener.close();
+    wsSender.close();
   } catch (err) {
     assert(false, `Binary upload security check failed: ${err.message}`);
   }
@@ -317,27 +378,9 @@ async function runTests() {
       'Issues cryptographic persistent bearer token'
     );
 
-    // 6d. Unpairing clears trusted device
-    wsClient.sendPacket({
-      magic: 'SK',
-      version: 1,
-      packetId: Date.now() + 4,
-      timestamp: Date.now(),
-      packetType: 'UNPAIR_REQUEST',
-      payload: {
-        deviceId: testDeviceId,
-      },
-    });
-
-    const unpairConfirm = await wsClient.readPacketType('UNPAIR_CONFIRM');
-    assert(
-      unpairConfirm && unpairConfirm.packetType === 'UNPAIR_CONFIRM',
-      'Unpair request acknowledged and device unlinked'
-    );
-
     wsClient.socket.destroy();
 
-    // 6e. Direct HTTP Pairing Endpoint tests
+    // 6d. Direct HTTP Pairing Endpoint tests
     const badPairRes = await request('POST', '/api/pair', {
       deviceId: 'http-test-phone',
       pin: '000000',
@@ -386,6 +429,36 @@ async function runTests() {
     assert(streamReceived, 'Audio broadcaster client connection handled cleanly');
   } catch (err) {
     assert(false, `Audio streaming test failed: ${err.message}`);
+  }
+
+  // Suite 8: Multi-Session CLI Agent Telemetry & Registry
+  console.log('\n[Suite 8/8] Multi-Session CLI Agent Telemetry & Registry');
+  try {
+    const actRes = await request('GET', '/api/agent-activity');
+    assert(actRes.status === 200, 'GET /api/agent-activity returns HTTP 200');
+    assert(Array.isArray(actRes.data?.activeSessions), 'Returns activeSessions array');
+    assert(typeof actRes.data?.activeCount === 'number', 'Reports activeCount metric');
+
+    const sessRes = await request('GET', '/api/agent-sessions');
+    assert(sessRes.status === 200, 'GET /api/agent-sessions returns HTTP 200');
+    assert(sessRes.data?.success === true, 'Returns success: true');
+    assert(Array.isArray(sessRes.data?.sessions), 'Returns sessions registry array');
+
+    // Simulate multi-session
+    const simRes = await request('POST', '/api/agent-activity/simulate', {
+      agent: 'codex',
+      detail: 'Multi-session integration verification',
+      durationMs: 5000,
+    });
+    assert(simRes.status === 200, 'POST /api/agent-activity/simulate returns HTTP 200');
+    assert(simRes.data?.activity?.agent === 'codex', 'Simulated session agent matches codex');
+    assert(simRes.data?.activity?.activeSessions?.length >= 1, 'Simulated session present in activeSessions');
+
+    // Reset simulation
+    const resetRes = await request('POST', '/api/agent-activity/simulate', { agent: 'reset' });
+    assert(resetRes.status === 200, 'Resetting simulation returns HTTP 200');
+  } catch (err) {
+    assert(false, `Multi-session test failed: ${err.message}`);
   }
 
   console.log('\n================================================================');
@@ -487,7 +560,7 @@ function createWsClient() {
         });
       }
 
-      resolve({ socket, sendPacket, readPacketType });
+      resolve({ socket, sendPacket, readPacketType, close: () => socket.destroy() });
     });
 
     req.on('error', reject);

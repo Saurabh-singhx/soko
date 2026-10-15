@@ -17,8 +17,10 @@
     "build:all": "bash scripts/build_apks.sh && npm --prefix apps/desktop run dist",
     "bridge": "node scripts/soko_bridge.js",
     "start": "node scripts/soko_bridge.js",
-    "test": "node scripts/test_integration.js",
-    "test:island": "node scripts/test_idle_and_agent_completion.js",
+    "test": "node tests/test_integration.js",
+    "test:security": "node tests/test_security.js",
+    "test:island": "node tests/test_idle_and_agent_completion.js",
+    "test:all": "node tests/test_security.js && node tests/test_integration.js",
     "version:bump": "node scripts/update_version.js"
   },
   "keywords": [
