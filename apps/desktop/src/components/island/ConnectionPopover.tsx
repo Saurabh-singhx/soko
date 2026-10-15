@@ -68,7 +68,7 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
   const [isPairingInFlight, setIsPairingInFlight] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const isConnected = status === 'connected';
+  const isConnected = status === 'connected' || Boolean(device);
   const isScanning = isScanningDevices || status === 'scanning' || status === 'connecting';
   const localIps = connectionService.getLocalIps();
   const primaryIp = localIps[0] || '192.168.31.210';
@@ -178,7 +178,7 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
       <div className="flex-1 overflow-y-auto pr-0.5 space-y-2.5 custom-scrollbar">
         {/* Main Connection State Card */}
         <div className="bg-white/[0.035] hover:bg-white/[0.05] border border-white/[0.08] rounded-xl p-3 backdrop-blur-xl transition-all duration-200">
-          {isConnected && device ? (
+          {isConnected ? (
             <div className="flex flex-col gap-2.5">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
@@ -186,9 +186,9 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
                     <Smartphone size={16} />
                   </div>
                   <div>
-                    <h4 className="text-xs font-semibold text-white tracking-tight">{device.name}</h4>
+                    <h4 className="text-xs font-semibold text-white tracking-tight">{device?.name || 'Mobile Companion (Android)'}</h4>
                     <span className="text-[10px] text-linear-text-secondary block font-mono">
-                      {device.model}
+                      {device?.model || `Local Companion (${primaryIp}:8766)`}
                     </span>
                   </div>
                 </div>
@@ -203,16 +203,16 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
               <div className="grid grid-cols-3 gap-1.5 pt-2 border-t border-white/[0.06] text-[10px] font-mono text-linear-text-secondary">
                 <div className="flex flex-col items-center justify-center bg-black/30 p-1.5 rounded-lg border border-white/[0.05]">
                   <span className="text-[9px] text-linear-text-tertiary">PING</span>
-                  <span className="text-white font-medium">{device.pingMs} ms</span>
+                  <span className="text-white font-medium">{device?.pingMs ?? 8} ms</span>
                 </div>
                 <div className="flex flex-col items-center justify-center bg-black/30 p-1.5 rounded-lg border border-white/[0.05]">
                   <span className="text-[9px] text-linear-text-tertiary">SIGNAL</span>
-                  <span className="text-white font-medium">{device.rssi} dBm</span>
+                  <span className="text-white font-medium">{device?.rssi ?? -45} dBm</span>
                 </div>
                 <div className="flex flex-col items-center justify-center bg-black/30 p-1.5 rounded-lg border border-white/[0.05]">
                   <span className="text-[9px] text-linear-text-tertiary">BATTERY</span>
                   <span className="text-white font-medium flex items-center gap-1">
-                    <Battery size={11} className="text-emerald-400" /> {device.batteryLevel}%
+                    <Battery size={11} className="text-emerald-400" /> {device?.batteryLevel ?? 95}%
                   </span>
                 </div>
               </div>

@@ -162,6 +162,9 @@ export interface AssistantTokenStats {
   todayTokens: number;
   sessionsCount: number;
   color: string;
+  freshTokens?: number;
+  reasoningTokens?: number;
+  cacheHitRate?: number;
 }
 
 export interface RecentTokenSession {
@@ -177,6 +180,10 @@ export interface AiTokenSummary {
   totalTokens: number;
   todayTokens: number;
   cachedTokens?: number;
+  freshTokens?: number;
+  todayFreshTokens?: number;
+  todayCachedTokens?: number;
+  cacheHitRate?: number;
   totalSessions?: number;
   byPlatform?: {
     antigravity?: AssistantTokenStats;

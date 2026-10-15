@@ -864,9 +864,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                   <Zap size={14} />
                 </div>
                 <span className="text-xl font-bold font-mono tracking-tight text-white mt-1">
-                  {tokenSummary ? (tokenSummary.todayTokens >= 1000000 ? `${(tokenSummary.todayTokens / 1000000).toFixed(2)}M` : tokenSummary.todayTokens.toLocaleString()) : '...'}
+                  {tokenSummary ? (
+                    tokenSummary.todayTokens >= 1000000000
+                      ? `${(tokenSummary.todayTokens / 1000000000).toFixed(2)}B`
+                      : tokenSummary.todayTokens >= 1000000
+                      ? `${(tokenSummary.todayTokens / 1000000).toFixed(2)}M`
+                      : tokenSummary.todayTokens.toLocaleString()
+                  ) : '...'}
                 </span>
-                <span className="text-[10px] text-linear-text-tertiary">Active coding today</span>
+                <span className="text-[10px] text-linear-text-tertiary">
+                  {tokenSummary?.todayFreshTokens !== undefined
+                    ? `${(tokenSummary.todayFreshTokens / 1000000).toFixed(1)}M fresh • ${(tokenSummary.todayCachedTokens! / 1000000).toFixed(1)}M cached`
+                    : 'Active coding today'}
+                </span>
               </div>
 
               <div className="linear-card rounded-lg p-3.5 flex flex-col gap-1 border border-indigo-500/20 bg-indigo-500/[0.03]">
@@ -875,9 +885,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                   <Cpu size={14} />
                 </div>
                 <span className="text-xl font-bold font-mono tracking-tight text-white mt-1">
-                  {tokenSummary ? `${(tokenSummary.totalTokens / 1000000).toFixed(1)}M` : '...'}
+                  {tokenSummary ? (
+                    tokenSummary.totalTokens >= 1000000000
+                      ? `${(tokenSummary.totalTokens / 1000000000).toFixed(2)}B`
+                      : `${(tokenSummary.totalTokens / 1000000).toFixed(1)}M`
+                  ) : '...'}
                 </span>
-                <span className="text-[10px] text-linear-text-tertiary">Total lifetime tokens</span>
+                <span className="text-[10px] text-linear-text-tertiary">
+                  {tokenSummary?.freshTokens !== undefined
+                    ? `${(tokenSummary.freshTokens / 1000000).toFixed(1)}M net interactive`
+                    : 'Total lifetime context'}
+                </span>
               </div>
 
               <div className="linear-card rounded-lg p-3.5 flex flex-col gap-1 border border-emerald-500/20 bg-emerald-500/[0.03]">
@@ -888,12 +906,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 <span className="text-xl font-bold font-mono tracking-tight text-white mt-1">
                   {tokenSummary ? (
                     (() => {
-                      const totalCached = tokenSummary.assistants.reduce((acc, a) => acc + (a.cachedTokens || 0), 0);
-                      return totalCached >= 1000000000 ? `${(totalCached / 1000000000).toFixed(2)}B` : `${(totalCached / 1000000).toFixed(1)}M`;
+                      const totalCached = tokenSummary.cachedTokens !== undefined
+                        ? tokenSummary.cachedTokens
+                        : tokenSummary.assistants.reduce((acc, a) => acc + (a.cachedTokens || 0), 0);
+                      return totalCached >= 1000000000
+                        ? `${(totalCached / 1000000000).toFixed(2)}B`
+                        : `${(totalCached / 1000000).toFixed(1)}M`;
                     })()
                   ) : '...'}
                 </span>
-                <span className="text-[10px] text-linear-text-tertiary">Context cache reads</span>
+                <span className="text-[10px] text-emerald-400/90 font-mono flex items-center gap-1">
+                  {tokenSummary?.cacheHitRate !== undefined ? `${tokenSummary.cacheHitRate}% cache hit efficiency` : 'Context cache reads'}
+                </span>
               </div>
 
               <div className="linear-card rounded-lg p-3.5 flex flex-col gap-1 border border-purple-500/20 bg-purple-500/[0.03]">
@@ -902,7 +926,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                   <Layers size={14} />
                 </div>
                 <span className="text-xl font-bold font-mono tracking-tight text-white mt-1">
-                  {tokenSummary ? tokenSummary.assistants.reduce((acc, a) => acc + (a.sessionsCount || 0), 0) : '...'}
+                  {tokenSummary ? (tokenSummary.totalSessions || tokenSummary.assistants.reduce((acc, a) => acc + (a.sessionsCount || 0), 0)) : '...'}
                 </span>
                 <span className="text-[10px] text-linear-text-tertiary">Across all assistants</span>
               </div>
@@ -1018,15 +1042,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                         />
                         <h4 className="text-xs font-bold text-white tracking-tight">{assistant.name}</h4>
                       </div>
-                      <span className="text-[10px] font-mono text-linear-text-secondary bg-white/[0.05] px-2 py-0.5 rounded border border-white/5">
-                        {assistant.sessionsCount} session{assistant.sessionsCount !== 1 ? 's' : ''}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        {assistant.cacheHitRate !== undefined && assistant.cacheHitRate > 0 && (
+                          <span className="text-[9px] font-mono text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                            {assistant.cacheHitRate}% cached
+                          </span>
+                        )}
+                        <span className="text-[10px] font-mono text-linear-text-secondary bg-white/[0.05] px-2 py-0.5 rounded border border-white/5">
+                          {assistant.sessionsCount} session{assistant.sessionsCount !== 1 ? 's' : ''}
+                        </span>
+                      </div>
                     </div>
 
                     <div className="flex items-baseline justify-between pt-1 border-t border-white/[0.06]">
                       <span className="text-xs text-linear-text-tertiary font-mono">Total Tokens:</span>
                       <span className="text-sm font-bold font-mono text-white">
-                        {assistant.totalTokens >= 1000000 ? `${(assistant.totalTokens / 1000000).toFixed(2)}M` : assistant.totalTokens.toLocaleString()}
+                        {assistant.totalTokens >= 1000000000
+                          ? `${(assistant.totalTokens / 1000000000).toFixed(2)}B`
+                          : assistant.totalTokens >= 1000000
+                          ? `${(assistant.totalTokens / 1000000).toFixed(2)}M`
+                          : assistant.totalTokens.toLocaleString()}
                       </span>
                     </div>
 
@@ -1045,19 +1080,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                       <div className="bg-black/40 p-2 rounded border border-white/[0.04]">
                         <span className="text-linear-text-tertiary block text-[9px]">INPUTS</span>
                         <span className="text-white font-medium">
-                          {assistant.inputTokens >= 1000000 ? `${(assistant.inputTokens / 1000000).toFixed(1)}M` : assistant.inputTokens.toLocaleString()}
+                          {assistant.inputTokens >= 1000000000 ? `${(assistant.inputTokens / 1000000000).toFixed(2)}B` : assistant.inputTokens >= 1000000 ? `${(assistant.inputTokens / 1000000).toFixed(1)}M` : assistant.inputTokens.toLocaleString()}
                         </span>
                       </div>
                       <div className="bg-black/40 p-2 rounded border border-white/[0.04]">
                         <span className="text-linear-text-tertiary block text-[9px]">OUTPUTS</span>
                         <span className="text-white font-medium">
-                          {assistant.outputTokens >= 1000000 ? `${(assistant.outputTokens / 1000000).toFixed(1)}M` : assistant.outputTokens.toLocaleString()}
+                          {assistant.outputTokens >= 1000000000 ? `${(assistant.outputTokens / 1000000000).toFixed(2)}B` : assistant.outputTokens >= 1000000 ? `${(assistant.outputTokens / 1000000).toFixed(1)}M` : assistant.outputTokens.toLocaleString()}
                         </span>
                       </div>
                       <div className="bg-black/40 p-2 rounded border border-white/[0.04]">
                         <span className="text-linear-text-tertiary block text-[9px]">CACHED</span>
                         <span className="text-white font-medium">
-                          {assistant.cachedTokens >= 1000000000 ? `${(assistant.cachedTokens / 1000000000).toFixed(1)}B` : assistant.cachedTokens >= 1000000 ? `${(assistant.cachedTokens / 1000000).toFixed(1)}M` : assistant.cachedTokens.toLocaleString()}
+                          {assistant.cachedTokens >= 1000000000 ? `${(assistant.cachedTokens / 1000000000).toFixed(2)}B` : assistant.cachedTokens >= 1000000 ? `${(assistant.cachedTokens / 1000000).toFixed(1)}M` : assistant.cachedTokens.toLocaleString()}
                         </span>
                       </div>
                     </div>
@@ -1105,7 +1140,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                         </div>
 
                         <span className="text-xs font-mono font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded shrink-0">
-                          {session.tokens >= 1000000 ? `${(session.tokens / 1000000).toFixed(2)}M` : session.tokens.toLocaleString()} tok
+                          {session.tokens >= 1000000000
+                            ? `${(session.tokens / 1000000000).toFixed(2)}B`
+                            : session.tokens >= 1000000
+                            ? `${(session.tokens / 1000000).toFixed(2)}M`
+                            : session.tokens.toLocaleString()} tok
                         </span>
                       </div>
                     ))}

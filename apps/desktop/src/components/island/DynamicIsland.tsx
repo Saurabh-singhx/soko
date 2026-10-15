@@ -184,7 +184,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
 
     // 4. Audio streaming to phone
     if (audioStatus.isStreamingToMobile) {
-      return 'Streaming audio to phone';
+      return audioStatus.isPlaying ? 'Streaming music to phone' : 'Streaming audio to phone';
     }
 
     // 5. Connection states
@@ -194,7 +194,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     if (connectionStatus === 'connecting') {
       return 'Connecting...';
     }
-    if (connectionStatus === 'disconnected' || !pairedDevice) {
+    if (connectionStatus === 'disconnected') {
       return 'Not Connected';
     }
 
@@ -303,17 +303,36 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     }
   }, [mode, isHovered, activeNotification]);
 
-  // Auto-collapse completed file transfer after 8s (paused when hovered so user can click Open / Folder)
+  // Auto-collapse completed, cancelled, or failed file transfer and clear activeTransfer
   useEffect(() => {
-    if (mode === 'transfer' && activeTransfer?.status === 'completed') {
-      if (isHovered) return;
+    if (!activeTransfer) return;
+    if (activeTransfer.status === 'completed' || activeTransfer.status === 'cancelled' || activeTransfer.status === 'failed') {
+      if (isHovered && mode === 'transfer') return;
+      const delay = activeTransfer.status === 'completed' ? 6000 : 2500;
       const timer = setTimeout(() => {
-        setMode('compact');
-        setMood('idle');
-      }, 8000);
+        setActiveTransfer(null);
+        if (mode === 'transfer') {
+          setMode('compact');
+          setMood('idle');
+        }
+      }, delay);
       return () => clearTimeout(timer);
     }
-  }, [mode, activeTransfer?.status, isHovered]);
+  }, [mode, activeTransfer, isHovered]);
+
+  // Safety watchdog: clear stale active transfer if no updates arrive within 6 seconds
+  useEffect(() => {
+    if (activeTransfer && activeTransfer.status === 'active') {
+      const watchdog = setTimeout(() => {
+        setActiveTransfer(null);
+        if (mode === 'transfer') {
+          setMode('compact');
+          setMood('idle');
+        }
+      }, 6000);
+      return () => clearTimeout(watchdog);
+    }
+  }, [activeTransfer, mode]);
 
   // Auto-collapse completed or failed CLI command after 6s (paused when hovered)
   useEffect(() => {
@@ -820,7 +839,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
             mood={mood}
             size={avatarSize}
             notificationKey={activeNotification?.id}
-            isMusicPlaying={audioStatus.isPlaying || audioStatus.isStreamingToMobile}
+            isMusicPlaying={audioStatus.isPlaying}
             isIdleMascotOnly={isIdleMascotOnly}
             connectionStatus={connectionStatus}
             activeAgent={agentStatus?.agent}
@@ -938,7 +957,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                     </div>
 
                     {/* Animated Dynamic Island Music Sign */}
-                    {(audioStatus.isPlaying || audioStatus.isStreamingToMobile) && (
+                    {audioStatus.isPlaying && (
                       <motion.div
                         initial={{ opacity: 0, scale: 0.8 }}
                         animate={{ opacity: 1, scale: 1 }}
@@ -1016,12 +1035,18 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                     status: 'cancelled',
                   });
                   setMood('error');
+                  setTimeout(() => {
+                    setActiveTransfer(null);
+                    setMode('compact');
+                    setMood('idle');
+                  }, 2500);
                 }}
                 onRetry={() => {
                   connectionService.retryTransfer(activeTransfer.id, activeTransfer.filename);
                   setMood('working');
                 }}
                 onDismiss={() => {
+                  setActiveTransfer(null);
                   setMode('compact');
                   setMood('idle');
                 }}
