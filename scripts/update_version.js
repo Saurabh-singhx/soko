@@ -52,5 +52,21 @@ if (fs.existsSync(TAURI_CONF)) {
   }
 }
 
+// 4. Desktop auto-updater CURRENT_VERSION constant
+const UPDATER_TS = path.join(ROOT_DIR, 'apps/desktop/src/services/updater.ts');
+if (fs.existsSync(UPDATER_TS)) {
+  try {
+    let updaterContent = fs.readFileSync(UPDATER_TS, 'utf8');
+    updaterContent = updaterContent.replace(
+      /export const CURRENT_VERSION = ['"][^'"]+['"];/,
+      `export const CURRENT_VERSION = '${newVersion}';`
+    );
+    fs.writeFileSync(UPDATER_TS, updaterContent, 'utf8');
+    console.log(`[Version Manager] Synchronized updater.ts CURRENT_VERSION to ${newVersion}`);
+  } catch (e) {
+    console.warn('[Version Manager] Could not update updater.ts:', e.message);
+  }
+}
+
 console.log(`[Version Manager] Successfully updated all packages to ${newVersion}`);
 console.log(newVersion);

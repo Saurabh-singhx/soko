@@ -25,7 +25,7 @@ export interface UpdateInfo {
   recommendedDownloadUrl?: string;
 }
 
-export const CURRENT_VERSION = '1.0.0';
+export const CURRENT_VERSION = '1.0.3';
 const DEFAULT_REPO = 'Saurabh-singhx/soko';
 export const DEFAULT_FEED_URL = 'https://gist.githubusercontent.com/Saurabh-singhx/04c5db7f1bed9206d1b858cd44bfb8eb/raw/soko-version.json';
 

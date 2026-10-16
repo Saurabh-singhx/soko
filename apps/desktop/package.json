@@ -5,7 +5,7 @@
   "author": "Soko Team <team@soko.local>",
   "homepage": "https://github.com/soko-ecosystem/soko",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.0.3",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {

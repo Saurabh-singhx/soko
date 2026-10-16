@@ -1,6 +1,6 @@
 {
   "name": "soko-monorepo",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "Cross-platform desktop dynamic island & mobile companion with high-speed hotspot transfer and CLI control",
   "workspaces": [
@@ -17,10 +17,11 @@
     "build:all": "bash scripts/build_apks.sh && npm --prefix apps/desktop run dist",
     "bridge": "node scripts/soko_bridge.js",
     "start": "node scripts/soko_bridge.js",
-    "test": "node tests/test_integration.js",
+    "test": "node tests/test_character_system.js && node tests/test_integration.js",
+    "test:characters": "node tests/test_character_system.js",
     "test:security": "node tests/test_security.js",
     "test:island": "node tests/test_idle_and_agent_completion.js",
-    "test:all": "node tests/test_security.js && node tests/test_integration.js",
+    "test:all": "node tests/test_character_system.js && node tests/test_security.js && node tests/test_integration.js",
     "version:bump": "node scripts/update_version.js"
   },
   "keywords": [
