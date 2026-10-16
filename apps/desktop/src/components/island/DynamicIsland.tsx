@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Check, Zap, Play, Pause, SkipBack, SkipForward, Volume2, VolumeX } from 'lucide-react';
-import { CharacterAvatar } from './CharacterAvatar.tsx';
+import { CharacterHost } from '../../characters/CharacterHost.tsx';
+import { getActiveCharacter, getCharacterBackground, subscribeToCharacterChanges } from '../../characters/registry.ts';
+import { CharacterDefinition } from '../../characters/types.ts';
 import { NotificationBanner } from './NotificationBanner.tsx';
 import { CliStatusWidget } from './CliStatusWidget.tsx';
 import { TransferProgress } from './TransferProgress.tsx';
@@ -41,6 +43,14 @@ const formatTokens = (tokens?: number): string => {
 export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) => {
   const [mode, setMode] = useState<IslandMode>('compact');
   const [mood, setMood] = useState<MascotMood>('idle');
+  const [activeChar, setActiveChar] = useState<CharacterDefinition>(() => getActiveCharacter());
+
+  // Listen to character updates across all windows in real time
+  useEffect(() => {
+    return subscribeToCharacterChanges((newId) => {
+      setActiveChar(getActiveCharacter(newId));
+    });
+  }, []);
 
   // Live connection state
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>(
@@ -81,6 +91,92 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
   const [isBotClicked, setIsBotClicked] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isCharging, setIsCharging] = useState(false);
+  const [isOnline, setIsOnline] = useState(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
+  const [gitAction, setGitAction] = useState<'commit' | 'push' | null>(null);
+  const gitTimerRef = useRef<any>(null);
+
+  // Internet connectivity state listener
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      setMood('happy');
+      setTimeout(() => setMood('idle'), 4500);
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+    };
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // Battery charging detection with hardware fallback
+  useEffect(() => {
+    let isMounted = true;
+    let batteryObj: any = null;
+
+    const updateChargingStatus = () => {
+      if (!isMounted || !batteryObj) return;
+      try {
+        const charging = Boolean(batteryObj.charging);
+        setIsCharging(charging);
+      } catch {}
+    };
+
+    if (typeof navigator !== 'undefined' && 'getBattery' in navigator) {
+      (navigator as any).getBattery().then((battery: any) => {
+        if (!isMounted) return;
+        batteryObj = battery;
+        updateChargingStatus();
+        battery.addEventListener('chargingchange', updateChargingStatus);
+        battery.addEventListener('levelchange', updateChargingStatus);
+      }).catch(() => {
+        // Battery API gracefully ignored on unsupported hardware
+      });
+    }
+
+    return () => {
+      isMounted = false;
+      if (batteryObj) {
+        try {
+          batteryObj.removeEventListener('chargingchange', updateChargingStatus);
+          batteryObj.removeEventListener('levelchange', updateChargingStatus);
+        } catch {}
+      }
+    };
+  }, []);
+
+  // Git activity broadcast subscription
+  useEffect(() => {
+    return connectionService.subscribeGitActivity((event) => {
+      if (gitTimerRef.current) {
+        clearTimeout(gitTimerRef.current);
+      }
+      setGitAction(event.action);
+      gitTimerRef.current = setTimeout(() => {
+        setGitAction(null);
+      }, 5000);
+    });
+  }, []);
+
+  // Auto-detect git operations from agentStatus detail or activeCli
+  useEffect(() => {
+    const detail = (agentStatus?.detail || activeCli?.title || activeCli?.commandId || '').toLowerCase();
+    if (detail.includes('git push') || detail.includes('pushing') || detail.includes('pushed')) {
+      if (gitTimerRef.current) clearTimeout(gitTimerRef.current);
+      setGitAction('push');
+      gitTimerRef.current = setTimeout(() => setGitAction(null), 5000);
+    } else if (detail.includes('git commit') || detail.includes('committing') || detail.includes('committed')) {
+      if (gitTimerRef.current) clearTimeout(gitTimerRef.current);
+      setGitAction('commit');
+      gitTimerRef.current = setTimeout(() => setGitAction(null), 5000);
+    }
+  }, [agentStatus?.detail, activeCli?.title, activeCli?.commandId]);
 
   // Graceful player control persistence for 10s when playback is paused
   const [showRecentAudioControls, setShowRecentAudioControls] = useState(false);
@@ -150,6 +246,97 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
   }, [completedTaskNotice]);
   const [isIdleMascotOnly, setIsIdleMascotOnly] = useState(false);
   const idleTimerRef = useRef<any>(null);
+
+  const isMultiSession = Boolean(
+    (agentStatus && agentStatus.activeCount !== undefined && agentStatus.activeCount > 1) ||
+    (agentStatus?.activeSessions && agentStatus.activeSessions.length > 1)
+  );
+
+  const effectiveDragging = isDragging || isDragOver;
+
+  // Character-controlled atmospheric background for the active state
+  const characterBg = useMemo(() => {
+    return getCharacterBackground(activeChar, mood, {
+      isMusicPlaying: audioStatus.isPlaying,
+      isSleeping: isIdleMascotOnly,
+      isDragging: effectiveDragging,
+      isHovered,
+      isCharging,
+      isOnline,
+      isMultiSession,
+      gitAction,
+    });
+  }, [
+    activeChar,
+    mood,
+    audioStatus.isPlaying,
+    isIdleMascotOnly,
+    effectiveDragging,
+    isHovered,
+    isCharging,
+    isOnline,
+    isMultiSession,
+    gitAction,
+  ]);
+
+  // Dynamic eye and agent color for ambient backlight glow
+  const activeEyeColor = useMemo(() => {
+    if (isOnline === false || connectionStatus === 'disconnected' || mood === 'alert') {
+      return '#EF4444'; // Red alert / disconnected / offline
+    }
+    if (effectiveDragging) {
+      return '#FB923C'; // Dragging Neon Orange
+    }
+    if (gitAction === 'push') {
+      return '#A855F7'; // Git Push Purple
+    }
+    if (gitAction === 'commit') {
+      return '#2DD4BF'; // Git Commit Cyber Teal
+    }
+    if (agentStatus?.agent === 'antigravity' && (mood === 'working' || isAgentRunning)) {
+      return '#38BDF8'; // Electric Sky Cyan for Google Antigravity
+    }
+    if (agentStatus?.agent === 'codex' && (mood === 'working' || isAgentRunning)) {
+      return '#10A37F'; // Cyber Mint for OpenAI Codex
+    }
+    if (agentStatus?.agent === 'claude' && (mood === 'working' || isAgentRunning)) {
+      return '#F59E0B'; // Sunset Amber for Anthropic Claude
+    }
+    if (mood === 'working') {
+      return '#38BDF8'; // Active Working Sky Cyan
+    }
+    if (mood === 'thinking') {
+      return '#818CF8'; // Cognitive Indigo
+    }
+    if (audioStatus.isPlaying) {
+      return '#C084FC'; // Synthwave Violet for Music
+    }
+    if (mood === 'happy') {
+      return '#34D399'; // Joyful Emerald
+    }
+    if (isCharging) {
+      return '#FBBF24'; // Charging Amber / Lightning Gold
+    }
+    if (isMultiSession) {
+      return '#6366F1'; // Multi-Session Neon Indigo
+    }
+    if (isHovered) {
+      return '#7DD3FC'; // Soft Cyan Hover
+    }
+    return '#FFFFFF'; // OLED White
+  }, [
+    connectionStatus,
+    mood,
+    agentStatus?.agent,
+    isAgentRunning,
+    audioStatus.isPlaying,
+    isOnline,
+    gitAction,
+    isCharging,
+    effectiveDragging,
+    isMultiSession,
+    isHovered,
+  ]);
   const islandRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [measuredNotificationHeight, setMeasuredNotificationHeight] = useState<number | null>(null);
@@ -229,24 +416,39 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
 
   // Dynamic status text: strictly event-driven, only changes when something is happening
   const dynamicStatusText = useMemo(() => {
-    // 1. User dragging a file over the Island
-    if (isDragOver) {
-      return 'Drop to send to phone';
+    // 0. Dragging window or file
+    if (effectiveDragging) {
+      return isDragOver ? 'Drop to send to phone' : 'Moving Dynamic Island';
     }
 
-    // 2. File transfer in progress
+    // 0b. Git operations
+    if (gitAction === 'push') {
+      return '🚀 GitHub: Pushing changes...';
+    }
+    if (gitAction === 'commit') {
+      return '📦 GitHub: Commit recorded';
+    }
+
+    // 0c. Offline state
+    if (!isOnline) {
+      return '⚠️ Internet Disconnected (Offline)';
+    }
+
+    // 1. File transfer in progress
     if (activeTransfer && activeTransfer.status === 'active') {
       return `Transferring ${activeTransfer.filename} (${activeTransfer.percentage}%)`;
     }
 
-    // 3. CLI execution in progress
+    // 2. CLI execution in progress
     if (activeCli && activeCli.status === 'running') {
       return `Running: ${activeCli.title}`;
     }
 
-    // 3b. Active CLI Agent execution (Google Antigravity, OpenAI Codex, Anthropic Claude)
+    // 3. Active CLI Agent execution (Google Antigravity, OpenAI Codex, Anthropic Claude)
     if (currentSession && currentSession.agent && (currentSession.status === 'working' || currentSession.status === 'thinking' || currentSession.status === 'waiting')) {
-      const prefix = currentSession.agent === 'antigravity'
+      const prefix = isMultiSession
+        ? `⚡ [${(activeSessionIndex % (agentStatus?.activeSessions?.length || 1)) + 1}/${agentStatus?.activeSessions?.length || agentStatus?.activeCount}] ${currentSession.name || 'Agent'}`
+        : currentSession.agent === 'antigravity'
         ? '⚡ Antigravity'
         : currentSession.agent === 'codex'
         ? '⚡ Codex'
@@ -268,6 +470,11 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
       return 'Streaming audio to phone';
     }
 
+    // 4b. Ambient battery charging connected
+    if (isCharging) {
+      return '⚡ Battery Charging Connected';
+    }
+
     // 5. Connection states
     if (connectionStatus === 'scanning') {
       return 'Scanning for devices...';
@@ -285,7 +492,13 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     // 6. Connected & idle: simple small connected text
     return 'Connected';
   }, [
+    effectiveDragging,
     isDragOver,
+    gitAction,
+    isOnline,
+    isCharging,
+    isMultiSession,
+    activeSessionIndex,
     activeTransfer,
     activeCli,
     agentStatus,
@@ -807,6 +1020,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
 
       if (Math.abs(deltaX) > 0 || Math.abs(deltaY) > 0) {
         isDraggingRef.current = true;
+        setIsDragging(true);
         (window as any).electronAPI?.moveWindow?.(deltaX, deltaY);
       }
     };
@@ -817,7 +1031,10 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
       if (isDraggingRef.current) {
         setTimeout(() => {
           isDraggingRef.current = false;
+          setIsDragging(false);
         }, 120);
+      } else {
+        setIsDragging(false);
       }
     };
 
@@ -864,6 +1081,10 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
           height: dims.height ?? 'auto',
         }}
         transition={springTransition}
+        style={{
+          background: characterBg || undefined,
+          transition: 'background 0.3s ease',
+        }}
         onMouseDown={handleDragStart}
         onDoubleClick={handleDoubleClick}
         onClick={handlePillClick}
@@ -897,7 +1118,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
             : ''
         } ${
           mode === 'compact'
-            ? 'cursor-grab active:cursor-grabbing hover:scale-[1.01] items-center justify-center'
+            ? 'cursor-grab active:cursor-grabbing items-center justify-center'
             : mode === 'notification'
             ? 'min-h-[72px] max-h-[min(75vh,520px)] justify-start cursor-default'
             : 'items-center py-2.5 cursor-default'
@@ -917,6 +1138,16 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
           <div
             className="absolute top-1 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full bg-white/20 group-hover:bg-white/40 transition-colors pointer-events-none"
             title="Drag to move • Double-click to center"
+          />
+        )}
+
+        {/* Dynamic Eye-Color Ambient Backlight Aura behind Mascot */}
+        {!isIdleMascotOnly && (
+          <div
+            className="absolute -left-6 top-1/2 -translate-y-1/2 w-32 h-32 rounded-full pointer-events-none transition-all duration-700 ease-out"
+            style={{
+              background: `radial-gradient(circle at center, ${activeEyeColor}2A 0%, transparent 70%)`,
+            }}
           />
         )}
 
@@ -963,7 +1194,8 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
               : 'Click to manage connection'
           }
         >
-          <CharacterAvatar
+          <CharacterHost
+            character={activeChar}
             mood={mood}
             size={avatarSize}
             notificationKey={activeNotification?.id}
@@ -972,6 +1204,12 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
             connectionStatus={connectionStatus}
             activeAgent={agentStatus?.agent}
             agentStatus={agentStatus}
+            isDragging={effectiveDragging}
+            isHovered={isHovered}
+            isCharging={isCharging}
+            isOnline={isOnline}
+            isMultiSession={isMultiSession}
+            gitAction={gitAction}
           />
         </div>
 

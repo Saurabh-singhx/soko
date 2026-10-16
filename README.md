@@ -48,6 +48,13 @@ Whether you need to beam 100MB+ APKs and media files across devices in seconds w
 - **Biomimetic Eye Engine**: Dynamic eye-tracking, biological ballistic saccades, blink reflexes, and expressively choreographed emotions (`idle`, `happy`, `thinking`, `busy`, `error`, `surprised`).
 - **360° Physics Interactions**: Watch Soko roll, inspect active transfers, read incoming messages left-to-right, and react to system state changes.
 
+### 🎭 Modular Character Engine & Custom AI Imports
+- **Universal Character Host**: Hot-swap between built-in mascots (**Grok Bot**, **Cyber Cat**) or import custom character packs generated via AI.
+- **Strict Validation Guardrails**: Automatically verifies essential states (`idle`, `thinking`, `music`) to guarantee UI animations never break.
+- **Atmospheric Island Backgrounds**: Characters dynamically customize the Dynamic Island's background gradient and color palette for every state (`dragging`, `hover`, `git_push`, `git_commit`, `charging`, `online`, `offline`, `music`, `thinking`, `idle`).
+- **Dynamic Eye Color & Halo Bloom**: Dynamic color synchronization (`#EF4444` alerts, `#A855F7` git push, `#2DD4BF` git commit, `#FBBF24` charging, `#FB923C` dragging, `#6366F1` multi-session) with an ambient backlight glow halo.
+- **Complete Architecture & AI Generator**: See [docs/characters/README.md](docs/characters/README.md) for full technical schemas, SVG specs, and ready-to-use AI prompts.
+
 ### ⚡ 60 MB/s Hotspot & LAN Transfers
 - **Direct Peer-to-Peer Streaming**: Pull and push files directly between devices at 30–60+ MB/s over local Wi-Fi or Mobile Hotspot.
 - **Zero Cellular Data**: Transfers bypass external networks completely—beam heavy build artifacts, videos, and APKs in under 2 seconds.
@@ -280,6 +287,8 @@ Explore our comprehensive engineering logs and feature architecture documents:
 | **Grok Bot Living OLED Mascot Animation Engine** | [docs/features/07-grok-bot-monochrome-animation.md](docs/features/07-grok-bot-monochrome-animation.md) |
 | **Low-Latency Desktop Audio Streaming (Option 1 HTTP Stream)** | [docs/features/08-desktop-audio-streaming.md](docs/features/08-desktop-audio-streaming.md) |
 | **Mobile Dynamic Island & Fluid Cloud Technical Analysis** | [docs/features/09-mobile-dynamic-island-fluid-cloud.md](docs/features/09-mobile-dynamic-island-fluid-cloud.md) |
+| **YouTube Music Offline Desktop Connector** | [docs/features/10-youtube-music-offline-connector.md](docs/features/10-youtube-music-offline-connector.md) |
+| **Custom Character Creation Guide & AI Prompt (Mascots & Atmospheric Backgrounds)** | [docs/characters/README.md](docs/characters/README.md) |
 
 ---
 

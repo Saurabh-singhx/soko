@@ -129,11 +129,13 @@ const TRANSFERS_DIR = app.isPackaged
 
 const DIST_PATH = path.resolve(__dirname, '../dist/index.html');
 const candidateBridgeScripts = [
-  path.join(process.resourcesPath || '', 'scripts/soko_bridge.js'),
+  process.env.SOKO_BRIDGE_SCRIPT,
+  path.resolve(process.env.HOME || '', 'coding/soko/scripts/soko_bridge.js'),
   path.resolve(__dirname, '../../../scripts/soko_bridge.js'),
   path.resolve(__dirname, '../../scripts/soko_bridge.js'),
   path.resolve(process.cwd(), 'scripts/soko_bridge.js'),
-];
+  path.join(process.resourcesPath || '', 'scripts/soko_bridge.js'),
+].filter(Boolean);
 const BRIDGE_SCRIPT = candidateBridgeScripts.find((p) => fs.existsSync(p)) || candidateBridgeScripts[0];
 
 // Ensure transfers directory exists
@@ -461,6 +463,15 @@ ipcMain.on('soko:open-settings', (_event, tab) => {
 ipcMain.on('soko:close-settings', () => {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     settingsWindow.close();
+  }
+});
+
+ipcMain.on('soko:sync-character', (_event, data) => {
+  if (islandWindow && !islandWindow.isDestroyed()) {
+    islandWindow.webContents.send('soko:character-synced', data);
+  }
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.webContents.send('soko:character-synced', data);
   }
 });
 

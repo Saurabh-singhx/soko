@@ -39,6 +39,7 @@ import {
 import { connectionService } from '../../services/connection.ts';
 import { autoUpdateService, UpdateInfo, CURRENT_VERSION } from '../../services/updater.ts';
 import { ConnectionStatus, PairedDevice, DiscoveredDevice, FileTransferStatus, TransferHistoryItem, AiTokenSummary, AgentActivityStatus } from '../../types/index.ts';
+import { CharacterSelector } from '../../characters/CharacterSelector.tsx';
 
 interface SettingsViewProps {
   onClose?: () => void;
@@ -1680,8 +1681,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
             <div>
               <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">Mascot & Dynamic Island</h2>
               <p className="text-xs text-linear-text-secondary mt-1">
-                Customize Soko's ambient idle behavior, mascot facial scaling, and interactive HUD morphing.
+                Customize Soko's mascot character pack, atmospheric state backgrounds, ambient idle behavior, and interactive HUD morphing.
               </p>
+            </div>
+
+            {/* Character Selection & Custom Import System */}
+            <div className="linear-card rounded-lg p-5">
+              <CharacterSelector />
             </div>
 
             <div className="linear-card rounded-lg p-5 flex flex-col gap-4">

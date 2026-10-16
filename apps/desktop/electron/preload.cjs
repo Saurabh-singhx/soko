@@ -23,5 +23,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('soko:window-blur', handler);
     return () => ipcRenderer.removeListener('soko:window-blur', handler);
   },
+  syncCharacter: (type, payload) => ipcRenderer.send('soko:sync-character', { type, payload }),
+  onCharacterSync: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('soko:character-synced', handler);
+    return () => ipcRenderer.removeListener('soko:character-synced', handler);
+  },
   quitApp: () => ipcRenderer.send('soko:quit'),
 });

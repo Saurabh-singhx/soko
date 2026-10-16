@@ -2,7 +2,8 @@
 # Soko Desktop Launcher
 # Automatically launches the native Linux build without requiring FUSE
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOKO_REPO="/home/saurabh/coding/soko"
+SCRIPT_DIR="$SOKO_REPO"
 UNPACKED_BIN="$SCRIPT_DIR/dist-desktop/linux-unpacked/soko"
 APPIMAGE_BIN="$SCRIPT_DIR/dist-desktop/soko-linux-x86_64.AppImage"
 

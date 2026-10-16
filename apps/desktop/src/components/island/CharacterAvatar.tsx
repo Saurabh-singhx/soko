@@ -12,6 +12,12 @@ interface CharacterAvatarProps {
   connectionStatus?: ConnectionStatus;
   activeAgent?: CliAgentId;
   agentStatus?: AgentActivityStatus | null;
+  isDragging?: boolean;
+  isHovered?: boolean;
+  isCharging?: boolean;
+  isOnline?: boolean;
+  isMultiSession?: boolean;
+  gitAction?: 'commit' | 'push' | null;
 }
 
 /**
@@ -229,6 +235,12 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
   connectionStatus = 'disconnected',
   activeAgent,
   agentStatus,
+  isDragging = false,
+  isHovered = false,
+  isCharging = false,
+  isOnline = true,
+  isMultiSession = false,
+  gitAction = null,
 }) => {
   const [currentTarget, setCurrentTarget] = useState<GazeTarget>(NEUTRAL_TARGET);
   const [isBlinking, setIsBlinking] = useState(false);
@@ -272,7 +284,35 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
     ? '#F59E0B' // Sunset Amber for Anthropic Claude
     : null;
 
-  const effectiveEyeColor = isAgentActive && agentColor ? agentColor : eyeColor;
+  // Resolve effective eye color across all system triggers
+  let computedColor = eyeColor;
+  if (isOnline === false || connectionStatus === 'disconnected' || mood === 'alert') {
+    computedColor = '#EF4444';
+  } else if (isDragging) {
+    computedColor = '#FB923C';
+  } else if (gitAction === 'push') {
+    computedColor = '#A855F7';
+  } else if (gitAction === 'commit') {
+    computedColor = '#2DD4BF';
+  } else if (isAgentActive && agentColor) {
+    computedColor = agentColor;
+  } else if (mood === 'working') {
+    computedColor = '#38BDF8';
+  } else if (mood === 'thinking') {
+    computedColor = '#818CF8';
+  } else if (isMusicPlaying) {
+    computedColor = '#C084FC';
+  } else if (mood === 'happy') {
+    computedColor = '#34D399';
+  } else if (isCharging) {
+    computedColor = '#FBBF24';
+  } else if (isMultiSession) {
+    computedColor = '#6366F1';
+  } else if (isHovered) {
+    computedColor = '#7DD3FC';
+  }
+
+  const effectiveEyeColor = computedColor;
 
   const prevStatusRef = useRef<ConnectionStatus>(connectionStatus);
   const greenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
