@@ -132,6 +132,8 @@ export interface SokoPacketEnvelope {
     | 'AUDIO_STATUS'
     | 'AUDIO_CONTROL'
     | 'AUDIO_MUTE_SPEAKER'
+    | 'MUSIC_NOW_PLAYING'
+    | 'GIT_ACTIVITY_EVENT'
     | 'FETCH_TOKEN_STATS'
     | 'TOKEN_STATS_UPDATE'
     | 'FETCH_AGENT_ACTIVITY'

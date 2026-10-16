@@ -1131,6 +1131,51 @@
 
         <!-- Hidden Native HTML5 Audio Element -->
         <audio id="desktopAudioPlayer" preload="none" playsinline></audio>
+
+        <!-- ============================================================ -->
+        <!-- SOKO MUSIC CONNECTOR: HIGH-FIDELITY OFFLINE / YOUTUBE CARD  -->
+        <!-- ============================================================ -->
+        <div id="musicConnectorCard" style="display: none; background: #0B0E14; border: 1.5px solid rgba(99, 102, 241, 0.4); border-radius: 16px; padding: 14px; margin-top: 14px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="#6366F1"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+              <span style="font-size: 11px; font-weight: 700; color: #818CF8; text-transform: uppercase; letter-spacing: 0.5px;">Music Connector</span>
+            </div>
+            <span id="musicQualityBadge" class="badge" style="background: rgba(99, 102, 241, 0.2); color: #818CF8; border: 1px solid rgba(99, 102, 241, 0.4); font-size: 10px;">160k Opus</span>
+          </div>
+
+          <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 12px;">
+            <img id="musicCoverArt" src="" alt="Cover" style="width: 52px; height: 52px; border-radius: 10px; object-fit: cover; background: #131722; border: 1px solid rgba(255,255,255,0.1);" />
+            <div style="flex: 1; min-width: 0;">
+              <div id="musicTrackTitle" style="font-size: 13px; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">No active track</div>
+              <div id="musicTrackArtist" style="font-size: 11px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px;">Unknown Artist</div>
+            </div>
+          </div>
+
+          <!-- Progress / Seek Slider -->
+          <div style="margin-bottom: 10px;">
+            <input type="range" id="musicSeekSlider" min="0" max="100" value="0" oninput="seekConnectorTrack(this.value)" style="width: 100%; accent-color: #6366F1; cursor: pointer; height: 5px;" />
+            <div style="display: flex; justify-content: space-between; font-size: 10px; font-family: ui-monospace, monospace; color: var(--text-tertiary); margin-top: 3px;">
+              <span id="musicTimeCurrent">0:00</span>
+              <span id="musicTimeDuration">0:00</span>
+            </div>
+          </div>
+
+          <!-- Controls -->
+          <div style="display: flex; align-items: center; justify-content: center; gap: 14px;">
+            <button class="icon-btn" onclick="controlDesktopAudio('prev')" title="Previous Track" style="padding: 7px; border-radius: 8px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: #fff; cursor: pointer;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" stroke-width="2"></line></svg>
+            </button>
+            <button id="btnConnectorPlayPause" class="icon-btn" onclick="toggleConnectorPlayback()" title="Play / Pause" style="padding: 10px; border-radius: 50%; background: #6366F1; border: none; color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer;">
+              <svg id="connectorPlayIcon" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+            </button>
+            <button class="icon-btn" onclick="controlDesktopAudio('next')" title="Next Track" style="padding: 7px; border-radius: 8px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: #fff; cursor: pointer;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2"></line></svg>
+            </button>
+          </div>
+
+          <audio id="connectorAudioPlayer" preload="auto" playsinline></audio>
+        </div>
       </div>
     </div>
 
@@ -1958,6 +2003,8 @@
         }
       } else if (packet.packetType === 'AUDIO_STATUS') {
         updateDesktopAudioIndicator(packet.payload);
+      } else if (packet.packetType === 'MUSIC_NOW_PLAYING') {
+        renderMusicNowPlaying(packet.payload);
       } else if (packet.packetType === 'TOKEN_STATS_UPDATE') {
         renderTokenStats(packet.payload);
       } else if (packet.packetType === 'AGENT_ACTIVITY_STATUS') {
@@ -2710,9 +2757,14 @@
 
     function setStreamVolume(val) {
       const player = document.getElementById('desktopAudioPlayer');
+      const connPlayer = document.getElementById('connectorAudioPlayer');
       const label = document.getElementById('audioVolumeLabel');
+      const vol = Math.max(0, Math.min(1, val / 100));
       if (player) {
-        player.volume = Math.max(0, Math.min(1, val / 100));
+        player.volume = vol;
+      }
+      if (connPlayer) {
+        connPlayer.volume = vol;
       }
       if (label) {
         label.innerText = `${val}%`;
@@ -2760,6 +2812,11 @@
     }
 
     async function controlDesktopAudio(action) {
+      // 1. Fast WebSocket dispatch
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        sendPacket('AUDIO_CONTROL', { action });
+      }
+      // 2. HTTP POST fallback
       try {
         const token = localStorage.getItem('soko_bearer_token');
         await fetch(`${getHttpBaseUrl()}/api/audio/control`, {
@@ -2770,14 +2827,13 @@
           },
           body: JSON.stringify({ action }),
         });
-      } catch (e) {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          sendWsPacket('AUDIO_CONTROL', { action });
-        }
-      }
+      } catch (e) {}
     }
 
     async function togglePcSpeakerMute() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        sendPacket('AUDIO_MUTE_SPEAKER', { action: 'toggle' });
+      }
       try {
         const token = localStorage.getItem('soko_bearer_token');
         const res = await fetch(`${getHttpBaseUrl()}/api/audio/mute-speaker`, {
@@ -2790,11 +2846,7 @@
         });
         const data = await res.json();
         showToast(data.isMuted ? 'PC Speaker Muted' : 'PC Speaker Unmuted', 'info');
-      } catch (e) {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          sendWsPacket('AUDIO_MUTE_SPEAKER', { action: 'toggle' });
-        }
-      }
+      } catch (e) {}
     }
 
     function startVisualizerAnimation() {
@@ -2839,6 +2891,10 @@
         isAudioStreaming = false;
         stopVisualizerAnimation();
 
+        if (window.SokoNative && typeof window.SokoNative.releaseNativePlayer === 'function') {
+          window.SokoNative.releaseNativePlayer();
+        }
+
         if (btn) btn.className = 'btn btn-success';
         if (btnText) btnText.innerText = 'Start Listening to PC Sound';
         if (badge) {
@@ -2850,6 +2906,13 @@
         }
         showToast('Wireless desktop audio stream paused', 'info');
       } else {
+        const connPlayer = document.getElementById('connectorAudioPlayer');
+        if (connPlayer && !connPlayer.paused) {
+          connPlayer.pause();
+          isConnectorPlaying = false;
+          updateConnectorPlayIcon(false);
+        }
+
         const streamUrl = `${getHttpBaseUrl()}/api/audio/stream?t=${Date.now()}`;
         const volSlider = document.getElementById('audioVolumeSlider');
         if (volSlider) {
@@ -2868,6 +2931,10 @@
           isAudioStreaming = true;
           startVisualizerAnimation();
 
+          if (window.SokoNative && typeof window.SokoNative.updateNativePlayer === 'function') {
+            window.SokoNative.updateNativePlayer('PC Desktop Audio', 'Live System Sound', true, 0, 0, '');
+          }
+
           if (btn) btn.className = 'btn btn-danger';
           if (btnText) btnText.innerText = 'Stop Audio Stream';
           if (badge) {
@@ -2883,6 +2950,9 @@
           isAudioStreaming = false;
           stopVisualizerAnimation();
           player.src = '';
+          if (window.SokoNative && typeof window.SokoNative.releaseNativePlayer === 'function') {
+            window.SokoNative.releaseNativePlayer();
+          }
           if (btn) btn.className = 'btn btn-success';
           if (btnText) btnText.innerText = 'Start Listening to PC Sound';
           if (badge) {
@@ -2911,6 +2981,241 @@
             showToast('Desktop audio stream disconnected', 'amber');
           }
         };
+      }
+    }
+
+    // ============================================================
+    // SOKO MUSIC CONNECTOR: AUDIO & METADATA CONTROLLER
+    // ============================================================
+    let activeConnectorTrack = null;
+    let isConnectorPlaying = false;
+
+    function formatTime(sec) {
+      if (isNaN(sec) || sec < 0) return '0:00';
+      const m = Math.floor(sec / 60);
+      const s = Math.floor(sec % 60);
+      return `${m}:${s < 10 ? '0' : ''}${s}`;
+    }
+
+    function renderMusicNowPlaying(payload) {
+      if (!payload) return;
+      activeConnectorTrack = payload;
+
+      const card = document.getElementById('musicConnectorCard');
+      const titleEl = document.getElementById('musicTrackTitle');
+      const artistEl = document.getElementById('musicTrackArtist');
+      const coverEl = document.getElementById('musicCoverArt');
+      const badgeEl = document.getElementById('musicQualityBadge');
+      const player = document.getElementById('connectorAudioPlayer');
+
+      if (!card) return;
+      card.style.display = 'block';
+
+      if (titleEl) titleEl.innerText = payload.title || 'Unknown Track';
+      if (artistEl) artistEl.innerText = payload.artist || 'YouTube Music';
+      if (badgeEl) {
+        if (payload.isDownloaded) {
+          badgeEl.innerText = '⚡ Offline File • ' + (payload.bitrate || '160k Opus');
+          badgeEl.style.color = '#818CF8';
+          badgeEl.style.borderColor = 'rgba(99, 102, 241, 0.4)';
+          badgeEl.style.background = 'rgba(99, 102, 241, 0.2)';
+        } else {
+          badgeEl.innerText = '📡 Live Stream';
+          badgeEl.style.color = '#10B981';
+          badgeEl.style.borderColor = 'rgba(16, 185, 129, 0.4)';
+          badgeEl.style.background = 'rgba(16, 185, 129, 0.2)';
+        }
+      }
+
+      const base = getHttpBaseUrl();
+      const coverPath = payload.coverUrl || payload.cover_url || '';
+      const audioPath = payload.audioUrl || payload.audio_url || '';
+      const fullCover = coverPath ? (coverPath.startsWith('http') ? coverPath : `${base}${coverPath}`) : '';
+      window._currentCoverUrl = fullCover;
+
+      if (coverEl && fullCover) {
+        coverEl.src = fullCover;
+      }
+
+      // If direct audio URL is provided and player needs updating
+      if (player && audioPath) {
+        const fullAudioUrl = audioPath.startsWith('http') ? audioPath : `${base}${audioPath}`;
+        if (player.src !== fullAudioUrl) {
+          player.src = fullAudioUrl;
+          player.currentTime = 0;
+          player.onerror = () => {
+            console.warn('[Connector Player] Audio source failed to load:', fullAudioUrl, player.error);
+            if (badgeEl) {
+              badgeEl.innerText = '⚠️ Audio load error';
+              badgeEl.style.color = '#EF4444';
+            }
+          };
+          player.play().then(() => {
+            isConnectorPlaying = true;
+            updateConnectorPlayIcon(true);
+            // Automatically pause desktop browser so only mobile plays
+            controlDesktopAudio('pause');
+          }).catch((err) => {
+            console.warn('[Connector Playback] play() error:', err);
+            isConnectorPlaying = false;
+            updateConnectorPlayIcon(false);
+          });
+        }
+      }
+
+      // Android Lockscreen Media Session integration
+      if ('mediaSession' in navigator) {
+        try {
+          const artwork = fullCover ? [{ src: fullCover, sizes: '512x512', type: 'image/jpeg' }] : [];
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: payload.title || 'Unknown Title',
+            artist: payload.artist || 'YouTube Music',
+            album: 'Soko Music Library',
+            artwork,
+          });
+
+          navigator.mediaSession.setActionHandler('play', () => handleNativeMediaAction('play'));
+          navigator.mediaSession.setActionHandler('pause', () => handleNativeMediaAction('pause'));
+          navigator.mediaSession.setActionHandler('previoustrack', () => handleNativeMediaAction('prev'));
+          navigator.mediaSession.setActionHandler('nexttrack', () => handleNativeMediaAction('next'));
+        } catch (e) {}
+      }
+
+      // Android Native System MediaSession Bridge (Quick Settings & System Lockscreen with Thumbnail)
+      if (window.SokoNative && typeof window.SokoNative.updateNativePlayer === 'function') {
+        window.SokoNative.updateNativePlayer(
+          payload.title || 'Unknown Track',
+          payload.artist || 'YouTube Music',
+          isConnectorPlaying,
+          Math.floor(payload.duration || 0),
+          0,
+          fullCover
+        );
+      }
+    }
+
+    // Unified native action handler for lockscreen, Quick Settings, and media buttons
+    window.handleNativeMediaAction = function(action) {
+      if (action === 'play' || action === 'pause' || action === 'toggle') {
+        if (isAudioStreaming) {
+          toggleAudioStreaming();
+        } else {
+          toggleConnectorPlayback();
+        }
+      } else if (action === 'next') {
+        controlDesktopAudio('next');
+      } else if (action === 'prev') {
+        controlDesktopAudio('prev');
+      }
+    };
+
+    const connectorPlayer = document.getElementById('connectorAudioPlayer');
+    if (connectorPlayer) {
+      connectorPlayer.ontimeupdate = () => {
+        const cur = connectorPlayer.currentTime || 0;
+        const dur = connectorPlayer.duration || 1;
+        const curEl = document.getElementById('musicTimeCurrent');
+        const durEl = document.getElementById('musicTimeDuration');
+        const slider = document.getElementById('musicSeekSlider');
+
+        if (curEl) curEl.innerText = formatTime(cur);
+        if (durEl) durEl.innerText = formatTime(dur);
+        if (slider && !slider.matches(':active')) {
+          slider.value = Math.floor((cur / dur) * 100) || 0;
+        }
+
+        if (window.SokoNative && typeof window.SokoNative.updateNativePlayer === 'function' && activeConnectorTrack) {
+          if (!window._lastNativeUpdateTime || (Date.now() - window._lastNativeUpdateTime) > 2500) {
+            window._lastNativeUpdateTime = Date.now();
+            window.SokoNative.updateNativePlayer(
+              activeConnectorTrack.title || 'Unknown Track',
+              activeConnectorTrack.artist || 'YouTube Music',
+              !connectorPlayer.paused,
+              Math.floor(dur),
+              Math.floor(cur),
+              window._currentCoverUrl || ''
+            );
+          }
+        }
+      };
+
+      connectorPlayer.onended = () => {
+        controlDesktopAudio('next');
+      };
+    }
+
+    function seekConnectorTrack(percent) {
+      const player = document.getElementById('connectorAudioPlayer');
+      if (player && player.duration) {
+        player.currentTime = (percent / 100) * player.duration;
+      }
+    }
+
+    function toggleConnectorPlayback() {
+      const player = document.getElementById('connectorAudioPlayer');
+      if (player && player.src) {
+        if (player.paused) {
+          const desktopPlayer = document.getElementById('desktopAudioPlayer');
+          if (desktopPlayer && isAudioStreaming) {
+            try {
+              desktopPlayer.pause();
+              desktopPlayer.src = '';
+            } catch (e) {}
+            isAudioStreaming = false;
+            stopVisualizerAnimation();
+            const btn = document.getElementById('btnToggleAudio');
+            const btnText = document.getElementById('btnAudioText');
+            const badge = document.getElementById('audioStatusBadge');
+            const playIcon = document.getElementById('audioPlayIcon');
+            if (btn) btn.className = 'btn btn-success';
+            if (btnText) btnText.innerText = 'Start Listening to PC Sound';
+            if (badge) {
+              badge.innerText = 'Idle';
+              badge.className = 'badge green';
+            }
+            if (playIcon) {
+              playIcon.innerHTML = '<polygon points="5 3 19 12 5 21 5 3"></polygon>';
+            }
+          }
+          player.play();
+          isConnectorPlaying = true;
+          updateConnectorPlayIcon(true);
+          // Ensure desktop browser is paused
+          controlDesktopAudio('pause');
+        } else {
+          player.pause();
+          isConnectorPlaying = false;
+          updateConnectorPlayIcon(false);
+        }
+      }
+
+      if (window.SokoNative && typeof window.SokoNative.updateNativePlayer === 'function' && activeConnectorTrack && player) {
+        window.SokoNative.updateNativePlayer(
+          activeConnectorTrack.title || 'Unknown Track',
+          activeConnectorTrack.artist || 'YouTube Music',
+          isConnectorPlaying,
+          Math.floor(player.duration || 0),
+          Math.floor(player.currentTime || 0),
+          window._currentCoverUrl || ''
+        );
+      }
+    }
+
+    function updateConnectorPlayIcon(playing) {
+      const icon = document.getElementById('connectorPlayIcon');
+      const badgeEl = document.getElementById('musicQualityBadge');
+      if (icon) {
+        if (playing) {
+          icon.innerHTML = '<rect x="5" y="4" width="4" height="16"></rect><rect x="15" y="4" width="4" height="16"></rect>';
+          if (badgeEl && activeConnectorTrack && activeConnectorTrack.isDownloaded) {
+            badgeEl.innerText = '▶ Playing Offline • ' + (activeConnectorTrack.bitrate || '160k Opus');
+          }
+        } else {
+          icon.innerHTML = '<polygon points="5 3 19 12 5 21 5 3"></polygon>';
+          if (badgeEl && activeConnectorTrack && activeConnectorTrack.isDownloaded) {
+            badgeEl.innerText = '⏸ Paused Offline • ' + (activeConnectorTrack.bitrate || '160k Opus');
+          }
+        }
       }
     }
 

@@ -53,6 +53,7 @@ class ConnectionManager {
   private bridgeListeners: Set<BridgeEventListener> = new Set();
   private pendingPairListeners: Set<PendingPairListener> = new Set();
   private audioStatusListeners: Set<AudioStatusListener> = new Set();
+  private gitActivityListeners: Set<(event: { action: 'commit' | 'push'; timestamp: number }) => void> = new Set();
   private tokenStatsListeners: Set<TokenStatsListener> = new Set();
   private tokenStats: AiTokenSummary | null = null;
   private agentActivityListeners: Set<AgentActivityListener> = new Set();
@@ -176,6 +177,11 @@ class ConnectionManager {
     this.audioStatusListeners.add(listener);
     listener(this.audioStatus);
     return () => this.audioStatusListeners.delete(listener);
+  }
+
+  public subscribeGitActivity(listener: (event: { action: 'commit' | 'push'; timestamp: number }) => void): () => void {
+    this.gitActivityListeners.add(listener);
+    return () => this.gitActivityListeners.delete(listener);
   }
 
   public getAudioStatus(): AudioStreamStatus {
@@ -822,6 +828,32 @@ class ConnectionManager {
             autoMuteSpeakerOnStream: packet.payload.autoMuteSpeakerOnStream !== false,
           };
           this.audioStatusListeners.forEach((l) => l(this.audioStatus));
+        }
+        break;
+
+      case 'MUSIC_NOW_PLAYING':
+        if (packet.payload) {
+          const isPaused = packet.payload.status === 'paused' || packet.payload.status === 'stopped';
+          const hasTrack = Boolean(packet.payload.title || packet.payload.id);
+          this.audioStatus = {
+            ...this.audioStatus,
+            isPlaying: !isPaused && hasTrack,
+            isStreamingToMobile: Boolean(packet.payload.audioUrl || packet.payload.audio_url),
+            activeApp: packet.payload.artist || 'YouTube Music',
+            title: packet.payload.title || this.audioStatus.title,
+            source: 'YouTube Music Connector',
+          };
+          this.audioStatusListeners.forEach((l) => l(this.audioStatus));
+        }
+        break;
+
+      case 'GIT_ACTIVITY_EVENT':
+        if (packet.payload?.action) {
+          const evt = {
+            action: packet.payload.action as 'commit' | 'push',
+            timestamp: packet.payload.timestamp || Date.now(),
+          };
+          this.gitActivityListeners.forEach((l) => l(evt));
         }
         break;
 

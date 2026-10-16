@@ -85,22 +85,27 @@ fi
 
 # Prepare temporary build directory
 rm -rf "${BUILD_DIR}"
-mkdir -p "${BUILD_DIR}/keystore"
 mkdir -p "${BUILD_DIR}/desktop"
 mkdir -p "${BUILD_DIR}/mobile"
 
-# Generate reproducible keystore for signing
-KEYSTORE="${BUILD_DIR}/keystore/soko.keystore"
+# Persistent keystore for signing (ensures signature compatibility across updates)
+KEYSTORE_DIR="${PROJECT_ROOT}/scripts/keystore"
+mkdir -p "${KEYSTORE_DIR}"
+KEYSTORE="${KEYSTORE_DIR}/soko.keystore"
 KEY_PASS="sokopassword"
-keytool -genkeypair -v \
-  -keystore "${KEYSTORE}" \
-  -alias "soko-key" \
-  -keyalg RSA \
-  -keysize 2048 \
-  -validity 10000 \
-  -storepass "${KEY_PASS}" \
-  -keypass "${KEY_PASS}" \
-  -dname "CN=Soko, OU=Mobile, O=Soko Ecosystem, L=San Francisco, ST=CA, C=US"
+
+if [ ! -f "${KEYSTORE}" ]; then
+  echo "Generating persistent signing keystore at ${KEYSTORE}..."
+  keytool -genkeypair -v \
+    -keystore "${KEYSTORE}" \
+    -alias "soko-key" \
+    -keyalg RSA \
+    -keysize 2048 \
+    -validity 10000 \
+    -storepass "${KEY_PASS}" \
+    -keypass "${KEY_PASS}" \
+    -dname "CN=Soko, OU=Mobile, O=Soko Ecosystem, L=San Francisco, ST=CA, C=US"
+fi
 
 # ------------------------------------------------------------------------------
 # Helper: Build an APK
@@ -273,13 +278,144 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.provider.Settings;
 import android.util.Log;
+import android.media.session.MediaSession;
+import android.media.session.PlaybackState;
+import android.media.MediaMetadata;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.IntentFilter;
 import java.io.InputStream;
 import java.io.ByteArrayOutputStream;
+import java.net.URL;
+import java.net.HttpURLConnection;
 
 public class MainActivity extends Activity {
     private static final int FILECHOOSER_RESULTCODE = 1001;
+    private static final String MEDIA_CHANNEL_ID = "soko_media_playback";
+    private static final int MEDIA_NOTIF_ID = 9001;
     private ValueCallback<Uri[]> uploadMessage = null;
     private WebView webView;
+    private MediaSession mediaSession;
+    private Bitmap currentCoverBitmap = null;
+    private String currentCoverUrl = null;
+    private String currentTitle = "YouTube Track";
+    private String currentArtist = "Soko Music";
+    private boolean currentIsPlaying = false;
+
+    private BroadcastReceiver mediaActionReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (intent == null || intent.getAction() == null) return;
+            String action = intent.getAction();
+            final String mappedAction;
+            if ("com.soko.mobile.ACTION_TOGGLE".equals(action)) {
+                mappedAction = "toggle";
+            } else if ("com.soko.mobile.ACTION_NEXT".equals(action)) {
+                mappedAction = "next";
+            } else if ("com.soko.mobile.ACTION_PREV".equals(action)) {
+                mappedAction = "prev";
+            } else {
+                return;
+            }
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (webView != null) webView.evaluateJavascript("handleNativeMediaAction('" + mappedAction + "')", null);
+                }
+            });
+        }
+    };
+
+    private void createMediaNotificationChannel() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                MEDIA_CHANNEL_ID,
+                "Soko Music Playback",
+                NotificationManager.IMPORTANCE_LOW
+            );
+            channel.setDescription("Shows active playback controls in Quick Settings and lock screen.");
+            channel.setShowBadge(false);
+            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null) {
+                nm.createNotificationChannel(channel);
+            }
+        }
+    }
+
+    private void postMediaNotification(String title, String artist, boolean isPlaying) {
+        try {
+            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm == null) return;
+
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                flags |= PendingIntent.FLAG_IMMUTABLE;
+            }
+
+            Intent openIntent = new Intent(this, MainActivity.class);
+            openIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            PendingIntent openPendingIntent = PendingIntent.getActivity(this, 0, openIntent, flags);
+
+            PendingIntent toggleIntent = PendingIntent.getBroadcast(
+                this, 1, new Intent("com.soko.mobile.ACTION_TOGGLE").setPackage(getPackageName()), flags
+            );
+            PendingIntent prevIntent = PendingIntent.getBroadcast(
+                this, 2, new Intent("com.soko.mobile.ACTION_PREV").setPackage(getPackageName()), flags
+            );
+            PendingIntent nextIntent = PendingIntent.getBroadcast(
+                this, 3, new Intent("com.soko.mobile.ACTION_NEXT").setPackage(getPackageName()), flags
+            );
+
+            Notification.Builder builder;
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                builder = new Notification.Builder(this, MEDIA_CHANNEL_ID);
+            } else {
+                builder = new Notification.Builder(this);
+            }
+
+            Notification.MediaStyle style = new Notification.MediaStyle();
+            if (mediaSession != null) {
+                style.setMediaSession(mediaSession.getSessionToken());
+            }
+            style.setShowActionsInCompactView(0, 1, 2);
+
+            builder.setStyle(style)
+                .setSmallIcon(android.R.drawable.ic_media_play)
+                .setContentTitle(title != null && !title.isEmpty() ? title : "YouTube Track")
+                .setContentText(artist != null && !artist.isEmpty() ? artist : "Soko Music")
+                .setContentIntent(openPendingIntent)
+                .setVisibility(Notification.VISIBILITY_PUBLIC)
+                .setOngoing(isPlaying);
+
+            builder.addAction(new Notification.Action.Builder(
+                android.R.drawable.ic_media_previous, "Previous", prevIntent
+            ).build());
+
+            builder.addAction(new Notification.Action.Builder(
+                isPlaying ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play,
+                isPlaying ? "Pause" : "Play",
+                toggleIntent
+            ).build());
+
+            builder.addAction(new Notification.Action.Builder(
+                android.R.drawable.ic_media_next, "Next", nextIntent
+            ).build());
+
+            if (currentCoverBitmap != null) {
+                builder.setLargeIcon(currentCoverBitmap);
+            }
+
+            nm.notify(MEDIA_NOTIF_ID, builder.build());
+        } catch (Exception e) {
+            Log.e("SokoApp", "Error posting media notification: " + e.getMessage());
+        }
+    }
 
     public class SokoNativeBridge {
         @JavascriptInterface
@@ -416,6 +552,115 @@ public class MainActivity extends Activity {
         public String getAppVersion() {
             return "__VERSION_NAME__ (Build __VERSION_CODE__)";
         }
+
+        @JavascriptInterface
+        public void updateNativePlayer(final String title, final String artist, final boolean isPlaying, final int durationSec, final int positionSec, final String coverUrl) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    currentTitle = (title != null && !title.isEmpty()) ? title : "YouTube Track";
+                    currentArtist = (artist != null && !artist.isEmpty()) ? artist : "Soko Music";
+                    currentIsPlaying = isPlaying;
+
+                    if (mediaSession != null) {
+                        try {
+                            PlaybackState.Builder stateBuilder = new PlaybackState.Builder();
+                            stateBuilder.setActions(
+                                PlaybackState.ACTION_PLAY |
+                                PlaybackState.ACTION_PAUSE |
+                                PlaybackState.ACTION_PLAY_PAUSE |
+                                PlaybackState.ACTION_SKIP_TO_NEXT |
+                                PlaybackState.ACTION_SKIP_TO_PREVIOUS |
+                                PlaybackState.ACTION_SEEK_TO
+                            );
+                            stateBuilder.setState(
+                                isPlaying ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED,
+                                positionSec * 1000L,
+                                isPlaying ? 1.0f : 0.0f
+                            );
+                            mediaSession.setPlaybackState(stateBuilder.build());
+
+                            MediaMetadata.Builder metaBuilder = new MediaMetadata.Builder();
+                            metaBuilder.putString(MediaMetadata.METADATA_KEY_TITLE, currentTitle);
+                            metaBuilder.putString(MediaMetadata.METADATA_KEY_ARTIST, currentArtist);
+                            metaBuilder.putString(MediaMetadata.METADATA_KEY_ALBUM, "Soko Music Library");
+                            metaBuilder.putLong(MediaMetadata.METADATA_KEY_DURATION, durationSec * 1000L);
+
+                            if (currentCoverBitmap != null) {
+                                metaBuilder.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, currentCoverBitmap);
+                                metaBuilder.putBitmap(MediaMetadata.METADATA_KEY_ART, currentCoverBitmap);
+                            }
+
+                            mediaSession.setMetadata(metaBuilder.build());
+                            mediaSession.setActive(true);
+                        } catch (Exception e) {
+                            Log.e("SokoApp", "Error updating MediaSession state: " + e.getMessage());
+                        }
+                    }
+
+                    postMediaNotification(currentTitle, currentArtist, currentIsPlaying);
+                }
+            });
+
+            if (coverUrl != null && !coverUrl.isEmpty() && !coverUrl.equals(currentCoverUrl)) {
+                currentCoverUrl = coverUrl;
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            URL url = new URL(coverUrl);
+                            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                            conn.setDoInput(true);
+                            conn.setConnectTimeout(4000);
+                            conn.setReadTimeout(6000);
+                            conn.connect();
+                            InputStream input = conn.getInputStream();
+                            final Bitmap bmp = BitmapFactory.decodeStream(input);
+                            if (bmp != null) {
+                                currentCoverBitmap = bmp;
+                                runOnUiThread(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        if (mediaSession != null && mediaSession.isActive()) {
+                                            try {
+                                                MediaMetadata currentMeta = mediaSession.getController().getMetadata();
+                                                MediaMetadata.Builder mb = currentMeta != null ? new MediaMetadata.Builder(currentMeta) : new MediaMetadata.Builder();
+                                                mb.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, bmp);
+                                                mb.putBitmap(MediaMetadata.METADATA_KEY_ART, bmp);
+                                                mediaSession.setMetadata(mb.build());
+                                            } catch (Exception e) {}
+                                        }
+                                        postMediaNotification(currentTitle, currentArtist, currentIsPlaying);
+                                    }
+                                });
+                            }
+                        } catch (Exception ex) {
+                            Log.w("SokoApp", "Could not load album art bitmap: " + ex.getMessage());
+                        }
+                    }
+                }).start();
+            }
+        }
+
+        @JavascriptInterface
+        public void releaseNativePlayer() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (mediaSession != null) {
+                        try {
+                            mediaSession.setActive(false);
+                        } catch (Exception e) {}
+                    }
+                    try {
+                        NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                        if (nm != null) {
+                            nm.cancel(MEDIA_NOTIF_ID);
+                        }
+                    } catch (Exception e) {}
+                }
+            });
+        }
     }
 
     @Override
@@ -457,6 +702,77 @@ public class MainActivity extends Activity {
             }
         }
 
+        createMediaNotificationChannel();
+        try {
+            IntentFilter filter = new IntentFilter();
+            filter.addAction("com.soko.mobile.ACTION_TOGGLE");
+            filter.addAction("com.soko.mobile.ACTION_NEXT");
+            filter.addAction("com.soko.mobile.ACTION_PREV");
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(mediaActionReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                registerReceiver(mediaActionReceiver, filter);
+            }
+        } catch (Exception e) {
+            Log.w("SokoApp", "Error registering mediaActionReceiver: " + e.getMessage());
+        }
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+            try {
+                mediaSession = new MediaSession(this, "SokoMusicPlayer");
+                mediaSession.setCallback(new MediaSession.Callback() {
+                    @Override
+                    public void onPlay() {
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (webView != null) webView.evaluateJavascript("handleNativeMediaAction('play')", null);
+                            }
+                        });
+                    }
+                    @Override
+                    public void onPause() {
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (webView != null) webView.evaluateJavascript("handleNativeMediaAction('pause')", null);
+                            }
+                        });
+                    }
+                    @Override
+                    public void onSkipToNext() {
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (webView != null) webView.evaluateJavascript("handleNativeMediaAction('next')", null);
+                            }
+                        });
+                    }
+                    @Override
+                    public void onSkipToPrevious() {
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (webView != null) webView.evaluateJavascript("handleNativeMediaAction('prev')", null);
+                            }
+                        });
+                    }
+                    @Override
+                    public void onSeekTo(final long pos) {
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (webView != null) webView.evaluateJavascript("seekConnectorTrack(" + (pos / 1000) + ")", null);
+                            }
+                        });
+                    }
+                });
+                mediaSession.setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS | MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS);
+            } catch (Exception e) {
+                Log.e("SokoApp", "Error initializing MediaSession: " + e.getMessage());
+            }
+        }
+
         webView = new WebView(this);
         webView.setBackgroundColor(Color.parseColor("#090B10"));
         webView.setFitsSystemWindows(true);
@@ -477,6 +793,9 @@ public class MainActivity extends Activity {
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(true);
         settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.JELLY_BEAN_MR1) {
+            settings.setMediaPlaybackRequiresUserGesture(false);
+        }
 
         webView.addJavascriptInterface(new SokoNativeBridge(), "SokoNative");
 
@@ -606,6 +925,25 @@ public class MainActivity extends Activity {
         } else {
             super.onBackPressed();
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (mediaSession != null) {
+            try {
+                mediaSession.setActive(false);
+                mediaSession.release();
+                mediaSession = null;
+            } catch (Exception e) {}
+        }
+        try {
+            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null) nm.cancel(MEDIA_NOTIF_ID);
+        } catch (Exception e) {}
+        try {
+            unregisterReceiver(mediaActionReceiver);
+        } catch (Exception e) {}
+        super.onDestroy();
     }
 }
 EOF

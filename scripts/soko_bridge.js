@@ -812,8 +812,31 @@ const pendingPairRequests = new Map();
 // REAL-TIME DESKTOP AUDIO STREAMING ENGINE & PIPEWIRE MONITORING
 // ------------------------------------------------------------------------------
 const activeAudioStreams = new Set();
+const activeMusicStreams = new Set();
 let audioFfmpegProc = null;
 let lastAudioPlayingState = false;
+let latestMusicNowPlaying = null;
+let lastGitActivity = null;
+let lastGitActivityBroadcastAt = 0;
+
+function broadcastGitActivity(action) {
+  if (!action) return;
+  const now = Date.now();
+  if (lastGitActivity && lastGitActivity.action === action && now - lastGitActivityBroadcastAt < 1500) {
+    return;
+  }
+  lastGitActivity = { action, timestamp: now };
+  lastGitActivityBroadcastAt = now;
+  console.log(`[Bridge Git] Emitting git ${action} activity event`);
+  broadcastPacket({
+    magic: 'SK',
+    version: 1,
+    packetId: now,
+    timestamp: now,
+    packetType: 'GIT_ACTIVITY_EVENT',
+    payload: lastGitActivity,
+  });
+}
 
 function getAudioSourceDescription() {
   if (os.platform() === 'win32') {
@@ -850,7 +873,7 @@ function getDefaultMonitorSource() {
   return '@DEFAULT_MONITOR@';
 }
 
-let autoMuteSpeakerOnStream = true;
+let autoMuteSpeakerOnStream = false;
 let previousSpeakerMuteState = null;
 let detectedActiveAudioApp = 'Music';
 let detectedActiveAudioTitle = '';
@@ -910,22 +933,38 @@ function toggleSpeakerMute() {
 function controlMediaPlayback(action) {
   const platform = os.platform();
   if (platform === 'linux') {
-    let key = '';
-    if (action === 'play-pause' || action === 'play' || action === 'pause') {
-      key = 'XF86AudioPlay';
-    } else if (action === 'next') {
-      key = 'XF86AudioNext';
-    } else if (action === 'prev') {
-      key = 'XF86AudioPrev';
-    }
-    if (key) {
-      try {
-        execSync(`xdotool key ${key}`, { timeout: 1000, stdio: ['ignore', 'ignore', 'ignore'] });
-        console.log(`[Bridge Audio] Dispatched media key: ${key}`);
-        return true;
-      } catch (err) {
-        console.warn(`[Bridge Audio] Failed to dispatch media key via xdotool:`, err.message);
-      }
+    let method = 'PlayPause';
+    if (action === 'next') method = 'Next';
+    else if (action === 'prev' || action === 'previous') method = 'Previous';
+    else if (action === 'play') method = 'Play';
+    else if (action === 'pause') method = 'Pause';
+
+    // 1. Try playerctl if installed
+    try {
+      const pctlAction = action === 'next' ? 'next' : (action === 'prev' || action === 'previous') ? 'previous' : (action === 'pause' ? 'pause' : action === 'play' ? 'play' : 'play-pause');
+      execSync(`playerctl ${pctlAction}`, { timeout: 1000, stdio: ['ignore', 'ignore', 'ignore'] });
+      console.log(`[Bridge Audio] Dispatched media action via playerctl: ${pctlAction}`);
+      return true;
+    } catch {}
+
+    // 2. Try native D-Bus MPRIS method call across all active players (Firefox, Chromium, Spotify, etc.)
+    // Uses systemd-run --user when running inside Snap/sandbox confinement to bypass AppArmor AccessDenied
+    const mprisScript = `
+      for dest in $(systemd-run --user --pipe dbus-send --session --dest=org.freedesktop.DBus --type=method_call --print-reply /org/freedesktop/DBus org.freedesktop.DBus.ListNames 2>/dev/null | grep -o 'org.mpris.MediaPlayer2.[^"]*'); do
+        systemd-run --user --pipe dbus-send --session --type=method_call --dest="$dest" /org/mpris/MediaPlayer2 org.mpris.MediaPlayer2.Player.${method} 2>/dev/null && exit 0
+      done
+      for dest in $(dbus-send --session --dest=org.freedesktop.DBus --type=method_call --print-reply /org/freedesktop/DBus org.freedesktop.DBus.ListNames 2>/dev/null | grep -o 'org.mpris.MediaPlayer2.[^"]*'); do
+        dbus-send --session --type=method_call --dest="$dest" /org/mpris/MediaPlayer2 org.mpris.MediaPlayer2.Player.${method} 2>/dev/null && exit 0
+      done
+      exit 1
+    `;
+
+    try {
+      execSync(mprisScript, { shell: '/bin/bash', timeout: 2000, stdio: ['ignore', 'ignore', 'ignore'] });
+      console.log(`[Bridge Audio] Dispatched D-Bus MPRIS method: ${method}`);
+      return true;
+    } catch (err) {
+      console.warn(`[Bridge Audio] D-Bus MPRIS dispatch failed:`, err.message);
     }
   } else if (platform === 'darwin') {
     try {
@@ -948,8 +987,20 @@ function controlMediaPlayback(action) {
 }
 
 function checkIsAudioPlaying() {
+  // Strategy 0: YouTube Music / Offline Connector Active Playback
+  if (latestMusicNowPlaying && (latestMusicNowPlaying.title || latestMusicNowPlaying.id)) {
+    const isPaused = latestMusicNowPlaying.status === 'paused' || latestMusicNowPlaying.status === 'stopped';
+    const age = Date.now() - (latestMusicNowPlaying.updatedAt || 0);
+    const durationMs = ((latestMusicNowPlaying.duration || 300) * 1000) + 15000;
+    if (!isPaused && (activeMusicStreams.size > 0 || age < durationMs)) {
+      detectedActiveAudioApp = latestMusicNowPlaying.artist || 'YouTube Music';
+      detectedActiveAudioTitle = latestMusicNowPlaying.title || 'Music Stream';
+      return true;
+    }
+  }
+
   if (os.platform() === 'win32') {
-    return activeAudioStreams.size > 0;
+    return activeAudioStreams.size > 0 || activeMusicStreams.size > 0;
   }
 
   // Strategy 1: Check PipeWire / WirePlumber status for active playback output streams
@@ -1042,6 +1093,8 @@ function broadcastAudioStatus() {
   const isPlaying = checkIsAudioPlaying();
   lastAudioPlayingState = isPlaying;
   const isMuted = getSpeakerMuteState();
+  const isConnectorActive = latestMusicNowPlaying && (latestMusicNowPlaying.title || latestMusicNowPlaying.id) && latestMusicNowPlaying.status !== 'paused' && latestMusicNowPlaying.status !== 'stopped';
+  const isStreamingToMobile = activeAudioStreams.size > 0 || activeMusicStreams.size > 0 || Boolean(isConnectorActive);
   broadcastPacket({
     magic: 'SK',
     version: 1,
@@ -1050,14 +1103,14 @@ function broadcastAudioStatus() {
     packetType: 'AUDIO_STATUS',
     payload: {
       isPlaying,
-      isStreamingToMobile: activeAudioStreams.size > 0,
-      activeListeners: activeAudioStreams.size,
+      isStreamingToMobile,
+      activeListeners: activeAudioStreams.size + activeMusicStreams.size,
       bitrate: '192 kbps',
       format: 'MP3 (48 kHz Stereo)',
-      source: getAudioSourceDescription(),
+      source: isConnectorActive ? 'YouTube Music Connector' : getAudioSourceDescription(),
       isSpeakerMuted: isMuted,
-      activeApp: detectedActiveAudioApp || 'Music',
-      title: detectedActiveAudioTitle || '',
+      activeApp: detectedActiveAudioApp || (latestMusicNowPlaying ? latestMusicNowPlaying.artist : 'Music'),
+      title: detectedActiveAudioTitle || (latestMusicNowPlaying ? latestMusicNowPlaying.title : ''),
       autoMuteSpeakerOnStream,
     },
   });
@@ -1079,27 +1132,32 @@ function startAudioBroadcaster() {
         '-ar', '48000',
         '-c:a', 'libmp3lame',
         '-b:a', '192k',
-        '-flush_packets', '1',
+        '-write_xing', '0',
+        '-id3v2_version', '0',
         '-f', 'mp3',
         '-',
       ]
     : [
-        '-fflags', 'nobuffer',
-        '-flags', 'low_delay',
         '-f', 'pulse',
         '-i', monitor,
         '-ac', '2',
         '-ar', '48000',
         '-c:a', 'libmp3lame',
         '-b:a', '192k',
-        '-flush_packets', '1',
+        '-write_xing', '0',
+        '-id3v2_version', '0',
         '-f', 'mp3',
         '-',
       ];
 
   try {
+    const env = {
+      ...process.env,
+      PIPEWIRE_LATENCY: '1024/48000',
+    };
     audioFfmpegProc = spawn('ffmpeg', ffmpegArgs, {
       stdio: ['ignore', 'pipe', 'ignore'],
+      env,
     });
   } catch (err) {
     console.warn('[Bridge Audio] Failed to spawn ffmpeg:', err.message);
@@ -1132,10 +1190,16 @@ function startAudioBroadcaster() {
 function stopAudioBroadcasterIfNoClients() {
   if (activeAudioStreams.size === 0 && audioFfmpegProc) {
     console.log('[Bridge Audio] No active listeners. Stopping audio capture.');
-    try {
-      audioFfmpegProc.kill('SIGTERM');
-    } catch {}
+    const proc = audioFfmpegProc;
     audioFfmpegProc = null;
+    try {
+      proc.kill('SIGTERM');
+      setTimeout(() => {
+        try {
+          if (!proc.killed) proc.kill('SIGKILL');
+        } catch {}
+      }, 500);
+    } catch {}
   }
 }
 
@@ -1203,6 +1267,11 @@ function formatToolCallAction(tc) {
   if (name === 'run_command') {
     let cmd = (args.CommandLine || args.command || '').replace(/^\"|\"$/g, '').trim();
     if (cmd) {
+      if (/git\s+push/i.test(cmd)) {
+        broadcastGitActivity('push');
+      } else if (/git\s+commit/i.test(cmd)) {
+        broadcastGitActivity('commit');
+      }
       if (cmd.length > 50) cmd = cmd.slice(0, 47) + '...';
       return `$ ${cmd}`;
     }
@@ -2077,28 +2146,24 @@ function sanitizeAndResolveUploadPath(rawFilename) {
     return null;
   }
 
-  // Strip path traversals across Unix and Windows separators
-  const base = path.basename(rawFilename.replace(/\\/g, '/'));
-
-  // Strict character whitelist: alphanumeric, dots, dashes, underscores
-  const clean = base
-    .replace(/[^a-zA-Z0-9.\-_]/g, '')
-    .replace(/^\.+/, ''); // Prevent hidden files like .bashrc, .ssh
-
-  if (!clean || clean.length === 0) {
+  // Always reduce filename to its safe basename to strictly eliminate directory traversal
+  const baseOnly = path.basename(rawFilename.replace(/\\/g, '/')).replace(/[^a-zA-Z0-9.\-_]/g, '');
+  if (!baseOnly || baseOnly === '..' || baseOnly.startsWith('.')) {
+    console.warn(`[Security Alert] Sandbox escape or invalid filename blocked: ${rawFilename}`);
     return null;
   }
 
-  const finalPath = path.resolve(TRANSFERS_DIR, clean);
-  const partPath = path.resolve(TRANSFERS_DIR, `${clean}.part`);
+  const finalPath = path.resolve(TRANSFERS_DIR, baseOnly);
+  const partPath = path.resolve(TRANSFERS_DIR, `${baseOnly}.part`);
 
-  // Path containment check (sandbox containment)
-  if (!finalPath.startsWith(TRANSFERS_DIR)) {
+  // Strict sandbox containment check
+  const resolvedTransfers = path.resolve(TRANSFERS_DIR);
+  if (!finalPath.startsWith(resolvedTransfers + path.sep) && finalPath !== resolvedTransfers) {
     console.warn(`[Security Alert] Sandbox escape attempt blocked: ${rawFilename}`);
     return null;
   }
 
-  return { cleanFilename: clean, finalPath, partPath };
+  return { cleanFilename: baseOnly, finalPath, partPath };
 }
 
 function getMimeType(filename) {
@@ -2106,6 +2171,7 @@ function getMimeType(filename) {
   const mimeMap = {
     '.apk': 'application/vnd.android.package-archive',
     '.mp3': 'audio/mpeg',
+    '.opus': 'audio/ogg',
     '.wav': 'audio/wav',
     '.ogg': 'audio/ogg',
     '.m4a': 'audio/mp4',
@@ -2126,6 +2192,247 @@ function getMimeType(filename) {
     '.zip': 'application/zip',
   };
   return mimeMap[ext] || 'application/octet-stream';
+}
+
+// ------------------------------------------------------------------------------
+// Soko YouTube & YT-Music Offline Connector Auto-Discovery & Safe Process Supervisor
+// ------------------------------------------------------------------------------
+let musicConnectorProcess = null;
+let musicConnectorRestartCount = 0;
+let musicConnectorRestartTimer = null;
+let musicConnectorDisabled = false;
+
+function findMusicConnector() {
+  const candidates = [
+    process.env.SOKO_MUSIC_CONNECTOR_DIR,
+    path.resolve(__dirname, '../../soko-music-connector'),
+    path.resolve(process.cwd(), '../soko-music-connector'),
+    path.resolve(os.homedir(), 'coding/soko-music-connector'),
+    path.resolve(os.homedir(), '.config/soko/soko-music-connector'),
+    path.join(process.resourcesPath || '', 'soko-music-connector'),
+  ].filter(Boolean);
+
+  for (const dir of candidates) {
+    try {
+      if (fs.existsSync(dir)) {
+        const daemonPath = path.join(dir, 'daemon.py');
+        if (fs.existsSync(daemonPath) && fs.statSync(daemonPath).isFile()) {
+          return {
+            dir: path.resolve(dir),
+            daemonPath: path.resolve(daemonPath),
+          };
+        }
+      }
+    } catch {}
+  }
+  return null;
+}
+
+function getMusicCacheDir() {
+  const connectorInfo = findMusicConnector();
+  if (connectorInfo) {
+    const cfgPath = path.join(connectorInfo.dir, 'config.json');
+    if (fs.existsSync(cfgPath)) {
+      try {
+        const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+        if (cfg && cfg.music_cache_dir && fs.existsSync(cfg.music_cache_dir)) {
+          return path.resolve(cfg.music_cache_dir);
+        }
+      } catch {}
+    }
+    const defaultMusicDir = path.join(connectorInfo.dir, 'music');
+    if (fs.existsSync(defaultMusicDir)) {
+      return path.resolve(defaultMusicDir);
+    }
+  }
+  return path.resolve(TRANSFERS_DIR, 'music');
+}
+
+function isConnectorProcessRunning() {
+  if (process.platform === 'linux' || process.platform === 'darwin') {
+    try {
+      const myPid = process.pid;
+      const out = execSync('pgrep -f "[p]ython3.*daemon\\.py"', {
+        encoding: 'utf8',
+        timeout: 800,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim();
+      const pids = out.split('\n').map(p => parseInt(p.trim(), 10)).filter(p => !isNaN(p) && p !== myPid);
+      if (pids.length > 0) return true;
+    } catch {}
+  }
+  return false;
+}
+
+function ensureMusicConnectorDaemon() {
+  if (musicConnectorDisabled) return;
+
+  const connectorInfo = findMusicConnector();
+  if (!connectorInfo) {
+    console.log('[Music Connector] soko-music-connector not detected; using standard browser audio flow.');
+    return;
+  }
+
+  // If already running (either spawned previously or run independently by user), do not duplicate
+  if (isConnectorProcessRunning()) {
+    console.log('[Music Connector] Active daemon process already running; attaching to existing instance.');
+    return;
+  }
+
+  // Validate Python 3 is available
+  try {
+    execSync('python3 --version', { timeout: 1000, stdio: ['ignore', 'ignore', 'ignore'] });
+  } catch (err) {
+    console.warn('[Music Connector] python3 not available in PATH; skipping connector daemon (standard audio active).');
+    musicConnectorDisabled = true;
+    return;
+  }
+
+  const userPath = [
+    path.join(os.homedir(), '.local/bin'),
+    process.env.PATH || '',
+  ].filter(Boolean).join(':');
+
+  const env = {
+    ...process.env,
+    PATH: userPath,
+    PYTHONUNBUFFERED: '1',
+    SOKO_BRIDGE_HTTP_URL: `http://127.0.0.1:${PORT}`,
+    SOKO_BRIDGE_WS_URL: `ws://127.0.0.1:${PORT}`,
+  };
+
+  const isSnap = !!process.env.SNAP || (fs.existsSync('/proc/self/attr/current') && (() => {
+    try { return fs.readFileSync('/proc/self/attr/current', 'utf8').includes('snap.'); } catch { return false; }
+  })());
+
+  const useSystemdRun = isSnap && (() => {
+    try {
+      execSync('systemd-run --user --version', { timeout: 1000, stdio: ['ignore', 'ignore', 'ignore'] });
+      return true;
+    } catch { return false; }
+  })();
+
+  try {
+    let spawnCmd = 'python3';
+    let spawnArgs = [connectorInfo.daemonPath];
+
+    if (useSystemdRun) {
+      spawnCmd = 'systemd-run';
+      spawnArgs = [
+        '--user',
+        '--same-dir',
+        '--pipe',
+        '--quiet',
+        `--setenv=PATH=${userPath}`,
+        'python3',
+        connectorInfo.daemonPath,
+      ];
+    }
+
+    console.log(`[Music Connector] Auto-launching safe daemon from ${connectorInfo.dir}...`);
+    const proc = spawn(spawnCmd, spawnArgs, {
+      cwd: connectorInfo.dir,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: false,
+    });
+
+    musicConnectorProcess = proc;
+
+    proc.stdout.on('data', (data) => {
+      const line = data.toString().trim();
+      if (line) {
+        console.log(`[Music Connector] ${line}`);
+      }
+    });
+
+    proc.stderr.on('data', (data) => {
+      const line = data.toString().trim();
+      if (line) {
+        console.warn(`[Music Connector:Err] ${line}`);
+      }
+    });
+
+    proc.on('exit', (code, signal) => {
+      console.log(`[Music Connector] Daemon process exited (code: ${code}, signal: ${signal})`);
+      musicConnectorProcess = null;
+
+      // Resilient supervision: Allow up to 3 restarts within backoff window if unexpected exit
+      if (code !== 0 && !musicConnectorDisabled) {
+        musicConnectorRestartCount++;
+        if (musicConnectorRestartCount <= 3) {
+          const delay = musicConnectorRestartCount * 2500;
+          console.log(`[Music Connector] Scheduling restart attempt ${musicConnectorRestartCount}/3 in ${delay}ms...`);
+          musicConnectorRestartTimer = setTimeout(() => {
+            ensureMusicConnectorDaemon();
+          }, delay);
+        } else {
+          console.warn('[Music Connector] Maximum restarts exceeded; disabling auto-launch (fallback to standard audio flow).');
+          musicConnectorDisabled = true;
+        }
+      }
+    });
+
+    proc.on('error', (err) => {
+      console.warn('[Music Connector] Failed to spawn daemon:', err.message);
+      musicConnectorProcess = null;
+      musicConnectorDisabled = true;
+    });
+
+  } catch (err) {
+    console.warn('[Music Connector] Exception launching daemon:', err.message);
+    musicConnectorDisabled = true;
+  }
+}
+
+function cleanupMusicConnector() {
+  if (musicConnectorRestartTimer) {
+    clearTimeout(musicConnectorRestartTimer);
+    musicConnectorRestartTimer = null;
+  }
+  if (musicConnectorProcess) {
+    console.log('[Music Connector] Gracefully stopping music connector daemon...');
+    try {
+      musicConnectorProcess.kill('SIGTERM');
+      const p = musicConnectorProcess;
+      setTimeout(() => {
+        try {
+          if (p && !p.killed) p.kill('SIGKILL');
+        } catch {}
+      }, 1000);
+    } catch {}
+    musicConnectorProcess = null;
+  }
+}
+
+process.on('SIGINT', () => {
+  cleanupMusicConnector();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  cleanupMusicConnector();
+  process.exit(0);
+});
+
+process.on('exit', () => {
+  cleanupMusicConnector();
+});
+
+function resolveMusicFilePath(filename) {
+  const safeFilename = path.basename(filename || '');
+  if (!safeFilename) return null;
+
+  // 1. Check configured custom connector music cache directory
+  const customDir = getMusicCacheDir();
+  const candidate1 = path.resolve(customDir, safeFilename);
+  if (fs.existsSync(candidate1)) return candidate1;
+
+  // 2. Fallback to default soko/transfers/music
+  const candidate2 = path.resolve(TRANSFERS_DIR, 'music', safeFilename);
+  if (fs.existsSync(candidate2)) return candidate2;
+
+  return null;
 }
 
 function openFileOrFolder(targetPath) {
@@ -3038,7 +3345,20 @@ function handleWsFrame(socket, buffer) {
     // Media player control over WebSocket (play-pause, next, prev)
     if (packet.packetType === 'AUDIO_CONTROL') {
       const action = packet.payload?.action || 'play-pause';
+      if (latestMusicNowPlaying) {
+        if (action === 'pause') {
+          latestMusicNowPlaying.status = 'paused';
+          latestMusicNowPlaying.updatedAt = Date.now();
+        } else if (action === 'play') {
+          latestMusicNowPlaying.status = 'playing';
+          latestMusicNowPlaying.updatedAt = Date.now();
+        } else if (action === 'play-pause' || action === 'toggle') {
+          latestMusicNowPlaying.status = latestMusicNowPlaying.status === 'paused' ? 'playing' : 'paused';
+          latestMusicNowPlaying.updatedAt = Date.now();
+        }
+      }
       controlMediaPlayback(action);
+      broadcastPacket(packet, socket);
       setTimeout(() => broadcastAudioStatus(), 150);
       return;
     }
@@ -3051,6 +3371,33 @@ function handleWsFrame(socket, buffer) {
         toggleSpeakerMute();
       }
       broadcastAudioStatus();
+      return;
+    }
+
+    // YouTube / Offline Music Connector Track Broadcast
+    if (packet.packetType === 'MUSIC_NOW_PLAYING') {
+      latestMusicNowPlaying = {
+        ...packet.payload,
+        updatedAt: Date.now(),
+      };
+      console.log(`[Bridge Music] Now Playing: "${packet.payload?.title || 'Unknown'}" by ${packet.payload?.artist || 'Unknown'}`);
+      broadcastPacket({
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'MUSIC_NOW_PLAYING',
+        payload: latestMusicNowPlaying,
+      });
+      broadcastAudioStatus();
+      return;
+    }
+
+    // Git Activity Event
+    if (packet.packetType === 'GIT_ACTIVITY_EVENT') {
+      if (packet.payload?.action) {
+        broadcastGitActivity(packet.payload.action);
+      }
       return;
     }
 
@@ -4278,7 +4625,8 @@ const server = http.createServer((req, res) => {
 
   // 11. Download / Stream transferred file to client (Protected: mobile or desktop browser/viewer)
   if ((url.pathname.startsWith('/transfers/') || url.pathname === '/api/transfers/download') && (req.method === 'GET' || req.method === 'HEAD')) {
-    if (!isRequestAuthorized(req)) {
+    const isMusicCache = url.pathname.startsWith('/transfers/music/');
+    if (!isMusicCache && !isRequestAuthorized(req)) {
       rejectUnauthorized(res);
       return;
     }
@@ -4289,26 +4637,77 @@ const server = http.createServer((req, res) => {
       rawFilename = decodeURIComponent(url.pathname.replace(/^\/transfers\//, ''));
     }
 
-    const pathInfo = sanitizeAndResolveUploadPath(rawFilename);
-    if (!pathInfo || !fs.existsSync(pathInfo.finalPath)) {
-      res.writeHead(404, { 'Content-Type': 'text/plain' });
-      res.end('File not found in storage');
-      return;
+    let finalPath = '';
+    let cleanFilename = '';
+
+    if (isMusicCache) {
+      const musicFilename = path.basename(decodeURIComponent(url.pathname.replace(/^\/transfers\/music\//, '')));
+      finalPath = resolveMusicFilePath(musicFilename);
+      cleanFilename = musicFilename;
+      if (!finalPath) {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('Music file not found in storage');
+        return;
+      }
+      activeMusicStreams.add(res);
+      broadcastAudioStatus();
+      res.on('close', () => {
+        activeMusicStreams.delete(res);
+        broadcastAudioStatus();
+      });
+    } else {
+      const pathInfo = sanitizeAndResolveUploadPath(rawFilename);
+      if (!pathInfo || !fs.existsSync(pathInfo.finalPath)) {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('File not found in storage');
+        return;
+      }
+      finalPath = pathInfo.finalPath;
+      cleanFilename = pathInfo.cleanFilename;
     }
 
-    const stat = fs.statSync(pathInfo.finalPath);
-    const mime = getMimeType(pathInfo.cleanFilename);
+    const stat = fs.statSync(finalPath);
+    const mime = getMimeType(cleanFilename);
     const disposition = url.searchParams.get('download') === '1' ? 'attachment' : 'inline';
+    const range = req.headers.range;
+
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+
+      if (isNaN(start) || start >= stat.size || end >= stat.size) {
+        res.writeHead(416, {
+          'Content-Range': `bytes */${stat.size}`,
+          'Access-Control-Allow-Origin': '*',
+        });
+        res.end();
+        return;
+      }
+
+      const chunkSize = end - start + 1;
+      res.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunkSize,
+        'Content-Type': mime,
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+      });
+      fs.createReadStream(finalPath, { start, end }).pipe(res);
+      return;
+    }
 
     res.writeHead(200, {
       'Content-Type': mime,
       'Content-Length': stat.size,
-      'Content-Disposition': `${disposition}; filename="${pathInfo.cleanFilename}"`,
+      'Content-Disposition': `${disposition}; filename="${cleanFilename}"`,
       'Accept-Ranges': 'bytes',
+      'Access-Control-Allow-Origin': '*',
       'Cache-Control': 'no-cache',
     });
 
-    fs.createReadStream(pathInfo.finalPath).pipe(res);
+    fs.createReadStream(finalPath).pipe(res);
     return;
   }
 
@@ -4349,6 +4748,14 @@ const server = http.createServer((req, res) => {
         const data = body ? JSON.parse(body) : {};
         const action = data.action || 'play-pause';
         const success = controlMediaPlayback(action);
+        broadcastPacket({
+          magic: 'SK',
+          version: 1,
+          packetId: Date.now(),
+          timestamp: Date.now(),
+          packetType: 'AUDIO_CONTROL',
+          payload: { action }
+        });
         setTimeout(() => broadcastAudioStatus(), 150);
         res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
         res.end(JSON.stringify({ success, action, isPlaying: checkIsAudioPlaying() }));
@@ -4412,6 +4819,62 @@ const server = http.createServer((req, res) => {
         broadcastAudioStatus();
         res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
         res.end(JSON.stringify({ success: true, autoMuteSpeakerOnStream }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // 12e. Music Connector Now Playing Endpoint
+  if (url.pathname === '/api/music/now-playing' && (req.method === 'GET' || req.method === 'POST')) {
+    if (req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify(latestMusicNowPlaying || { isPlaying: false }));
+      return;
+    }
+    if (req.method === 'POST') {
+      let body = '';
+      req.on('data', (chunk) => (body += chunk));
+      req.on('end', () => {
+        try {
+          const data = body ? JSON.parse(body) : {};
+          latestMusicNowPlaying = {
+            ...data,
+            updatedAt: Date.now(),
+          };
+          broadcastPacket({
+            magic: 'SK',
+            version: 1,
+            packetId: Date.now(),
+            timestamp: Date.now(),
+            packetType: 'MUSIC_NOW_PLAYING',
+            payload: latestMusicNowPlaying,
+          });
+          broadcastAudioStatus();
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ success: true, payload: latestMusicNowPlaying }));
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+  }
+
+  // 12f. Git Activity Event Endpoint
+  if (url.pathname === '/api/git/event' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (chunk) => (body += chunk));
+    req.on('end', () => {
+      try {
+        const data = body ? JSON.parse(body) : {};
+        const action = data.action === 'push' ? 'push' : 'commit';
+        broadcastGitActivity(action);
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ success: true, action }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
@@ -4505,6 +4968,9 @@ function startServer(portToTry) {
     console.log(' REST Endpoints:    POST /api/notify | POST /api/cli | POST /api/transfer');
     console.log(' File Endpoints:    POST /api/transfer/cancel | POST /api/transfer/retry | POST /api/upload');
     console.log('================================================================');
+
+    // Auto-discover and safely supervise soko-music-connector sidecar if available
+    ensureMusicConnectorDaemon();
   });
 }
 
