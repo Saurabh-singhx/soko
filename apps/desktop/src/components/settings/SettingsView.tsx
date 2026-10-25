@@ -123,23 +123,43 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
 
   const [discoveredDevices, setDiscoveredDevices] = useState<DiscoveredDevice[]>([]);
   const [isScanningDevices, setIsScanningDevices] = useState(false);
+  const [showDiscoveredWhileConnected, setShowDiscoveredWhileConnected] = useState(false);
   const [selectedDeviceToPair, setSelectedDeviceToPair] = useState<DiscoveredDevice | null>(null);
   const [isPairingInFlight, setIsPairingInFlight] = useState(false);
+  const isSettingsMountedRef = useRef(true);
+  const hasAutoScannedRef = useRef(false);
+
+  useEffect(() => {
+    isSettingsMountedRef.current = true;
+    return () => {
+      isSettingsMountedRef.current = false;
+    };
+  }, []);
 
   const fetchDiscoveredDevices = async () => {
+    if (isScanningDevices) return;
     setIsScanningDevices(true);
     try {
       const list = await connectionService.scanForDevices();
+      if (!isSettingsMountedRef.current) return;
       setDiscoveredDevices(list);
     } catch (e) {
       console.warn('Failed to scan devices:', e);
     } finally {
-      setIsScanningDevices(false);
+      if (isSettingsMountedRef.current) {
+        setIsScanningDevices(false);
+      }
     }
   };
 
   useEffect(() => {
-    if (connectionStatus !== 'connected' && activeTab === 'pairing') {
+    // Edge case: If already connected, do NOT scan automatically.
+    if (connectionStatus === 'connected' || pairedDevice) {
+      return;
+    }
+    // Only scan ONE time automatically when visiting the pairing tab
+    if (activeTab === 'pairing' && !hasAutoScannedRef.current && !connectionService.hasPerformedAutoScan()) {
+      hasAutoScannedRef.current = true;
       fetchDiscoveredDevices();
     }
   }, [connectionStatus, activeTab]);
@@ -581,7 +601,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
               </div>
               <div className="flex justify-between py-1.5 border-b border-white/5">
                 <span className="text-linear-text-secondary">Execution Target</span>
-                <span className="font-mono text-linear-text-primary">/opt/Soko/soko --ozone-platform=x11</span>
+                <span className="font-mono text-linear-text-primary">
+                  {window.electronAPI?.platform === 'win32'
+                    ? 'soko.exe (Portable Windows x64)'
+                    : '/opt/Soko/soko --ozone-platform=x11'}
+                </span>
               </div>
               <div className="flex justify-between py-1.5">
                 <span className="text-linear-text-secondary">Bridge Daemon</span>
@@ -626,33 +650,99 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
             {/* Paired Device or Discovered Devices Card */}
             <div className="linear-card rounded-lg p-4 flex flex-col gap-3">
               {connectionStatus === 'connected' && pairedDevice ? (
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-md bg-[#5E6AD2]/15 border border-[#5E6AD2]/30 flex items-center justify-center text-[#5E6AD2]">
-                      <Smartphone size={16} />
-                    </div>
-                    <div>
-                      <h3 className="text-xs font-semibold text-linear-text-primary tracking-tight">
-                        {pairedDevice.name}
-                      </h3>
-                      <div className="flex items-center gap-2 text-[11px] text-linear-text-secondary mt-0.5 font-mono">
-                        <span className="text-linear-green flex items-center gap-1 font-medium">
-                          <CheckCircle2 size={11} /> Paired & Authenticated
-                        </span>
-                        <span className="text-linear-text-tertiary">•</span>
-                        <span className="text-linear-text-tertiary">RSSI: {pairedDevice.rssi} dBm</span>
-                        <span className="text-linear-text-tertiary">•</span>
-                        <span className="text-linear-text-tertiary">Ping: {pairedDevice.pingMs}ms</span>
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-md bg-[#5E6AD2]/15 border border-[#5E6AD2]/30 flex items-center justify-center text-[#5E6AD2]">
+                        <Smartphone size={16} />
                       </div>
+                      <div>
+                        <h3 className="text-xs font-semibold text-linear-text-primary tracking-tight">
+                          {pairedDevice.name}
+                        </h3>
+                        <div className="flex items-center gap-2 text-[11px] text-linear-text-secondary mt-0.5 font-mono">
+                          <span className="text-linear-green flex items-center gap-1 font-medium">
+                            <CheckCircle2 size={11} /> Paired & Authenticated
+                          </span>
+                          <span className="text-linear-text-tertiary">•</span>
+                          <span className="text-linear-text-tertiary">RSSI: {pairedDevice.rssi} dBm</span>
+                          <span className="text-linear-text-tertiary">•</span>
+                          <span className="text-linear-text-tertiary">Ping: {pairedDevice.pingMs}ms</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          setShowDiscoveredWhileConnected(true);
+                          fetchDiscoveredDevices();
+                        }}
+                        disabled={isScanningDevices}
+                        className="px-2.5 py-1 rounded-md bg-[#5E6AD2]/15 hover:bg-[#5E6AD2]/25 text-[#818cf8] hover:text-white border border-[#5E6AD2]/30 text-xs font-medium flex items-center gap-1.5 transition-all disabled:opacity-50 active:scale-95"
+                      >
+                        <RefreshCw size={11} className={isScanningDevices ? 'animate-spin' : ''} />
+                        <span>{isScanningDevices ? 'Scanning...' : 'Scan Devices'}</span>
+                      </button>
+                      <button
+                        onClick={() => connectionService.disconnectDevice()}
+                        className="px-2.5 py-1 rounded-md bg-linear-red/10 hover:bg-linear-red/20 text-linear-red text-xs font-medium border border-linear-red/20 transition-colors"
+                      >
+                        Unpair
+                      </button>
                     </div>
                   </div>
 
-                  <button
-                    onClick={() => connectionService.disconnectDevice()}
-                    className="px-2.5 py-1 rounded-md bg-linear-red/10 hover:bg-linear-red/20 text-linear-red text-xs font-medium border border-linear-red/20 transition-colors"
-                  >
-                    Unpair
-                  </button>
+                  {/* Discovered nearby devices list while connected */}
+                  {showDiscoveredWhileConnected && (
+                    <div className="pt-3 border-t border-white/[0.08] flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-white">Other Nearby Devices</span>
+                        <button
+                          onClick={() => setShowDiscoveredWhileConnected(false)}
+                          className="text-[11px] text-linear-text-tertiary hover:text-white"
+                        >
+                          Hide
+                        </button>
+                      </div>
+                      {isScanningDevices && discoveredDevices.length === 0 ? (
+                        <div className="py-4 text-center text-xs text-linear-text-secondary flex items-center justify-center gap-2">
+                          <RefreshCw size={13} className="animate-spin text-[#5E6AD2]" />
+                          <span>Scanning for nearby Bluetooth and Wi-Fi devices...</span>
+                        </div>
+                      ) : discoveredDevices.length > 0 ? (
+                        <div className="flex flex-col gap-1.5 max-h-[160px] overflow-y-auto pr-1 custom-scrollbar">
+                          {discoveredDevices.map((dev) => (
+                            <div
+                              key={dev.id}
+                              className="flex items-center justify-between p-2 rounded-lg bg-black/40 border border-white/[0.06] text-xs"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                {dev.transport === 'ble' ? (
+                                  <Bluetooth size={14} className="text-[#5E6AD2]" />
+                                ) : (
+                                  <Wifi size={14} className="text-emerald-400" />
+                                )}
+                                <span className="text-white font-medium truncate">{dev.name}</span>
+                                <span className="text-[10px] text-linear-text-tertiary font-mono">({dev.model || dev.transport})</span>
+                                <span className="text-[10px] text-linear-text-tertiary font-mono">{dev.rssi} dBm</span>
+                              </div>
+                              <button
+                                onClick={() => setSelectedDeviceToPair(dev)}
+                                className="px-2.5 py-0.5 rounded bg-[#5E6AD2]/25 hover:bg-[#5E6AD2] text-white text-[11px] font-medium transition-colors"
+                              >
+                                Pair
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="py-2 text-center text-xs text-linear-text-tertiary">
+                          No other devices found nearby.
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               ) : selectedDeviceToPair ? (
                 <div className="flex flex-col gap-3">
@@ -758,10 +848,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                     <button
                       onClick={fetchDiscoveredDevices}
                       disabled={isScanningDevices}
-                      className="flex items-center gap-1.5 text-xs text-[#5E6AD2] hover:text-[#7C88E8] font-mono transition-colors disabled:opacity-50"
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#5E6AD2]/15 hover:bg-[#5E6AD2]/25 border border-[#5E6AD2]/30 text-xs text-[#818cf8] hover:text-white font-medium transition-all disabled:opacity-50 active:scale-95"
                     >
                       <RefreshCw size={12} className={isScanningDevices ? 'animate-spin' : ''} />
-                      <span>{isScanningDevices ? 'Scanning...' : 'Scan for Devices'}</span>
+                      <span>{isScanningDevices ? 'Scanning...' : 'Scan Devices'}</span>
                     </button>
                   </div>
 
@@ -824,9 +914,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                       </div>
                       <button
                         onClick={fetchDiscoveredDevices}
-                        className="linear-button-primary px-3 py-1 text-xs mt-1"
+                        disabled={isScanningDevices}
+                        className="linear-button-primary px-3 py-1.5 text-xs mt-1 flex items-center gap-1.5 disabled:opacity-50"
                       >
-                        Scan Again
+                        <RefreshCw size={12} className={isScanningDevices ? 'animate-spin' : ''} />
+                        <span>{isScanningDevices ? 'Scanning...' : 'Scan Devices'}</span>
                       </button>
                     </div>
                   )}

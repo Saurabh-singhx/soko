@@ -78,6 +78,9 @@ class ConnectionManager {
   private currentTransferStatus: FileTransferStatus | null = null;
   private transferHistoryListeners: Set<TransferHistoryListener> = new Set();
   private transferHistory: TransferHistoryItem[] = [];
+  private hasAutoScanned: boolean = false;
+  private activeScanPromise: Promise<DiscoveredDevice[]> | null = null;
+  private isScanning: boolean = false;
 
   private constructor() {
     this.loadTransferHistory();
@@ -129,6 +132,18 @@ class ConnectionManager {
 
   public getActiveClients(): number {
     return this.activeClients;
+  }
+
+  public hasPerformedAutoScan(): boolean {
+    return this.hasAutoScanned;
+  }
+
+  public markAutoScanPerformed(): void {
+    this.hasAutoScanned = true;
+  }
+
+  public isCurrentlyScanning(): boolean {
+    return this.isScanning;
   }
 
   public setBridgeUrl(url: string) {
@@ -980,44 +995,74 @@ class ConnectionManager {
 
   /**
    * Scans for available devices (Bluetooth peripherals and Wi-Fi Companion).
+   * Edge-case guarded:
+   * 1. Preserves active 'connected' state if already connected.
+   * 2. Debounces concurrent in-flight scans by sharing the active promise.
+   * 3. Sets hasAutoScanned to true.
    */
-  public async scanForDevices(): Promise<DiscoveredDevice[]> {
-    this.status = 'scanning';
-    this.notifyStatus();
-
-    const httpBase = this.bridgeUrl.replace(/^ws/, 'http');
-    try {
-      const res = await fetch(`${httpBase}/api/devices/scan`);
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data.devices)) {
-          if (this.status === 'scanning') {
-            this.status = 'disconnected';
-            this.notifyStatus();
-          }
-          return data.devices;
-        }
-      }
-    } catch (err) {
-      console.warn('[ConnectionManager] Failed to scan devices via bridge:', err);
+  public scanForDevices(): Promise<DiscoveredDevice[]> {
+    if (this.activeScanPromise) {
+      return this.activeScanPromise;
     }
 
-    if (this.status === 'scanning') {
-      this.status = 'disconnected';
+    this.hasAutoScanned = true;
+    this.isScanning = true;
+    const wasConnected = this.status === 'connected' || this.activeDevice !== null;
+
+    if (!wasConnected) {
+      this.status = 'scanning';
       this.notifyStatus();
     }
 
-    const primaryIp = this.localIps[0] || '192.168.31.210';
-    return [
-      {
-        id: `wifi-companion-${primaryIp}`,
-        name: 'Mobile Companion',
-        model: `Local Companion (${primaryIp}:8766)`,
-        transport: 'wifi',
-        rssi: -45,
-        ipAddress: primaryIp,
-      },
-    ];
+    const runScan = async (): Promise<DiscoveredDevice[]> => {
+      const httpBase = this.bridgeUrl.replace(/^ws/, 'http');
+      try {
+        const res = await fetch(`${httpBase}/api/devices/scan`);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.devices)) {
+            return data.devices;
+          }
+        }
+      } catch (err) {
+        console.warn('[ConnectionManager] Failed to scan devices via bridge:', err);
+      }
+
+      const primaryIp = this.localIps[0] || '192.168.31.210';
+      return [
+        {
+          id: `wifi-companion-${primaryIp}`,
+          name: 'Mobile Companion',
+          model: `Local Companion (${primaryIp}:8766)`,
+          transport: 'wifi',
+          rssi: -45,
+          ipAddress: primaryIp,
+        },
+      ];
+    };
+
+    this.activeScanPromise = runScan()
+      .finally(() => {
+        this.isScanning = false;
+        this.activeScanPromise = null;
+        if (!wasConnected && this.status === 'scanning') {
+          this.status = 'disconnected';
+          this.notifyStatus();
+        }
+      });
+
+    return this.activeScanPromise;
+  }
+
+  /**
+   * Auto-scan helper: executes a scan at most ONCE automatically across the entire app lifecycle,
+   * and ONLY if no device is already connected.
+   */
+  public async autoScanOnce(): Promise<DiscoveredDevice[] | null> {
+    if (this.hasAutoScanned || this.status === 'connected' || this.activeDevice !== null) {
+      return null;
+    }
+    return this.scanForDevices();
   }
 
   /**
