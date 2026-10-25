@@ -49,10 +49,11 @@ function getAutoStart() {
 function setAutoStart(enable) {
   // 1. Electron Native Login Item Settings (Windows & macOS)
   try {
+    const startupArgs = process.platform === 'linux' ? ['--ozone-platform=x11'] : [];
     app.setLoginItemSettings({
       openAtLogin: Boolean(enable),
       path: process.execPath,
-      args: ['--ozone-platform=x11'],
+      args: startupArgs,
     });
   } catch (err) {
     console.warn('[AutoStart] setLoginItemSettings error:', err.message);
@@ -130,7 +131,7 @@ const TRANSFERS_DIR = app.isPackaged
 const DIST_PATH = path.resolve(__dirname, '../dist/index.html');
 const candidateBridgeScripts = [
   process.env.SOKO_BRIDGE_SCRIPT,
-  path.resolve(process.env.HOME || '', 'coding/soko/scripts/soko_bridge.js'),
+  path.resolve(os.homedir(), 'coding/soko/scripts/soko_bridge.js'),
   path.resolve(__dirname, '../../../scripts/soko_bridge.js'),
   path.resolve(__dirname, '../../scripts/soko_bridge.js'),
   path.resolve(process.cwd(), 'scripts/soko_bridge.js'),
@@ -170,6 +171,7 @@ async function ensureBridgeServer() {
       const bridgeEnv = {
         ...process.env,
         PORT: '8766',
+        SOKO_TRANSFERS_DIR: TRANSFERS_DIR,
         ELECTRON_RUN_AS_NODE: '1',
       };
       const bridgeCwd = app.isPackaged
@@ -201,8 +203,8 @@ function createIslandWindow() {
   const primaryDisplay = screen.getPrimaryDisplay();
   const { x: workX, y: workY, width: workWidth } = primaryDisplay.workArea;
 
-  currentIslandWidth = 440;
-  currentIslandHeight = 68;
+  currentIslandWidth = 380;
+  currentIslandHeight = 64;
   islandCenterX = Math.round(workX + workWidth / 2);
   islandX = Math.round(islandCenterX - currentIslandWidth / 2);
   islandY = Math.max(workY + 4, 8);
@@ -501,24 +503,40 @@ ipcMain.handle('soko:get-version', () => {
 
 ipcMain.on('soko:set-window-size', (_event, { width, height }) => {
   if (islandWindow && !islandWindow.isDestroyed()) {
-    // Keep window width locked at 440px so horizontal center (islandX) NEVER shifts
-    const targetW = 440;
-    const targetH = Math.max(50, Math.round(height || currentIslandHeight));
+    // Dynamically resize physical window bounds matching active island content (compact, sleep, notification, popover)
+    // Horizontal center (islandCenterX) remains pinned so island NEVER jumps or drifts
+    const targetW = Math.max(68, Math.min(800, Math.round(width || currentIslandWidth)));
+    const targetH = Math.max(50, Math.min(800, Math.round(height || currentIslandHeight)));
     if (targetW === currentIslandWidth && targetH === currentIslandHeight) {
       return;
     }
+
+    const widthChanged = targetW !== currentIslandWidth;
     currentIslandWidth = targetW;
     currentIslandHeight = targetH;
-    islandX = Math.round(islandCenterX - currentIslandWidth / 2);
-    try {
-      islandWindow.setBounds({
-        x: islandX,
-        y: islandY,
-        width: currentIslandWidth,
-        height: currentIslandHeight,
-      }, false);
-    } catch (e) {
-      console.warn('[Soko Desktop] setBounds error:', e.message);
+
+    if (widthChanged) {
+      // Horizontal width changed (e.g. sleep orb <-> awake mode)
+      islandX = Math.round(islandCenterX - currentIslandWidth / 2);
+      try {
+        islandWindow.setBounds({
+          x: islandX,
+          y: islandY,
+          width: currentIslandWidth,
+          height: currentIslandHeight,
+        }, false);
+      } catch (e) {
+        console.warn('[Soko Desktop] setBounds error:', e.message);
+      }
+    } else {
+      // Width is identical (opening/closing popovers, vertical sizing)
+      // setSize modifies height without sending X/Y coordinates to X11/Wayland compositors,
+      // completely eliminating window repositioning flicker!
+      try {
+        islandWindow.setSize(currentIslandWidth, currentIslandHeight, false);
+      } catch (e) {
+        console.warn('[Soko Desktop] setSize error:', e.message);
+      }
     }
   }
 });

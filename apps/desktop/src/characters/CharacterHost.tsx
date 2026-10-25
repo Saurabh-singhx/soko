@@ -185,8 +185,9 @@ export const CharacterHost: React.FC<CharacterHostProps> = (props) => {
     return null;
   }
 
-  // Key only changes when switching character ID or when the character actually switches between distinct state components
-  const renderKey = `${currentChar.id}-${activeStateKey}`;
+  // Key only changes when switching character ID or when the character actually switches between distinct major state components
+  // Hover preserves the base key so AnimatePresence does NOT unmount/remount the mascot SVG when cursor enters or leaves!
+  const renderKey = activeStateKey === 'hover' ? `${currentChar.id}-base` : `${currentChar.id}-${activeStateKey}`;
 
   return (
     <div className="relative flex items-center justify-center select-none">
@@ -200,7 +201,7 @@ export const CharacterHost: React.FC<CharacterHostProps> = (props) => {
           }}
         />
       )}
-      <AnimatePresence mode="popLayout" initial={false}>
+      <AnimatePresence initial={false}>
         <motion.div
           key={renderKey}
           initial={{ opacity: 0.88 }}
