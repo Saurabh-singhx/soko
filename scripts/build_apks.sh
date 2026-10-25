@@ -9,6 +9,7 @@ set -e
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${PROJECT_ROOT}/build_apk_tmp"
+trap 'rm -rf "${BUILD_DIR}"' EXIT
 
 # Detect Android SDK Home
 SDK_HOME="${ANDROID_HOME:-/home/saurabh/Android/Sdk}"
@@ -1283,11 +1284,9 @@ EOF
     $(find "${WORK}/obj" -name "*.class")
 
   # 7. Add DEX to APK
-  cd "${WORK}/dex"
-  zip -u "${WORK}/unaligned.apk" classes.dex
+  (cd "${WORK}/dex" && zip -u "${WORK}/unaligned.apk" classes.dex)
 
   # 8. Align APK with Zipalign
-  cd "${WORK}"
   "${ZIPALIGN}" -p -f 4 "${WORK}/unaligned.apk" "${WORK}/aligned.apk"
 
   # 9. Sign APK with apksigner
@@ -1305,7 +1304,7 @@ EOF
   echo "Successfully generated signed APK: ${FINAL_OUT} ($(du -h "${FINAL_OUT}" | cut -f1))"
 }
 
-OUTPUT_DIR="${PROJECT_ROOT}/apks"
+OUTPUT_DIR="${SOKO_APK_DIR:-${PROJECT_ROOT}/apks}"
 mkdir -p "${OUTPUT_DIR}"
 
 # Build Soko Desktop (Dynamic Island HUD for Android)
@@ -1317,19 +1316,10 @@ build_apk "mobile" "com.soko.mobile" "Soko Mobile" "soko-mobile.apk" "${PROJECT_
 # Build Soko Mobile Lite (Clean companion without BIND_NOTIFICATION_LISTENER_SERVICE - 0 Play Protect warnings)
 build_apk "companion" "com.soko.companion" "Soko Companion Lite" "soko-mobile-lite.apk" "${PROJECT_ROOT}/apps/mobile/companion"
 
-# Also create release & debug alias copies in the apks directory and copy to project root
-cd "${OUTPUT_DIR}"
-cp soko-desktop.apk soko-release.apk
-cp soko-mobile.apk soko-debug.apk
-cp soko-desktop.apk "${PROJECT_ROOT}/soko-desktop.apk"
-cp soko-mobile.apk "${PROJECT_ROOT}/soko-mobile.apk"
-cp soko-mobile-lite.apk "${PROJECT_ROOT}/soko-mobile-lite.apk"
-
 echo "----------------------------------------------------"
-echo "ALL APKS SUCCESSFULLY GENERATED IN apks/ AND ROOT:"
+echo "ALL APKS SUCCESSFULLY GENERATED IN ${OUTPUT_DIR}:"
 echo "----------------------------------------------------"
 ls -lh "${OUTPUT_DIR}"/*.apk
-ls -lh "${PROJECT_ROOT}"/*.apk
 
 # Cleanup temp files
 rm -rf "${BUILD_DIR}"
