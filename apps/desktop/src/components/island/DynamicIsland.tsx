@@ -339,7 +339,16 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
   ]);
   const islandRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const isFileDialogOpenRef = useRef(false);
   const [measuredNotificationHeight, setMeasuredNotificationHeight] = useState<number | null>(null);
+
+  // Stable refs to prevent unmount / teardown loops on hover or popover toggles
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const isConnectionPopoverOpenRef = useRef(isConnectionPopoverOpen);
+  isConnectionPopoverOpenRef.current = isConnectionPopoverOpen;
+  const isHoveredRef = useRef(isHovered);
+  isHoveredRef.current = isHovered;
 
   // Idle Mascot Mode Configuration & Timers
   const getIdleTimeoutMs = () => {
@@ -360,7 +369,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     }
     setIsIdleMascotOnly(false);
     const timeoutMs = getIdleTimeoutMs();
-    if (timeoutMs > 0 && mode === 'compact' && !isConnectionPopoverOpen && !isHovered) {
+    if (timeoutMs > 0 && modeRef.current === 'compact' && !isConnectionPopoverOpenRef.current && !isHoveredRef.current) {
       const delay = Math.max(timeoutMs, gracePeriodMs || 0);
       idleTimerRef.current = setTimeout(() => {
         setIsIdleMascotOnly(true);
@@ -372,7 +381,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     wakeToNormalMode();
   };
 
-  // Subscribe to live CLI Agent watcher status
+  // Subscribe to live CLI Agent watcher status (Subscribed once on mount)
   useEffect(() => {
     const unsubAgent = connectionService.subscribeAgentActivity((status) => {
       setAgentStatus(status);
@@ -412,13 +421,14 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
       }
     });
     return unsubAgent;
-  }, [mode, isConnectionPopoverOpen, isHovered]);
+  }, []);
 
   // Dynamic status text: strictly event-driven, only changes when something is happening
   const dynamicStatusText = useMemo(() => {
-    // 0. Dragging window or file
-    if (effectiveDragging) {
-      return isDragOver ? 'Drop to send to phone' : 'Moving Dynamic Island';
+    // 0. External file dragged over island (drop target)
+    // Note: Moving the island window itself does NOT scramble the status text!
+    if (isDragOver) {
+      return 'Drop to send to phone';
     }
 
     // 0b. Git operations
@@ -510,13 +520,35 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     pairedDevice,
   ]);
 
-  // Auto-close Connection Popover when desktop window loses focus
+  // Auto-close Connection Popover when desktop window loses focus,
+  // but preserve popover while the native OS file picker is active
   useEffect(() => {
     const cleanup = window.electronAPI?.onWindowBlur?.(() => {
+      if (isFileDialogOpenRef.current) {
+        return;
+      }
       setIsConnectionPopoverOpen(false);
     });
+
+    const handleWindowFocus = () => {
+      setTimeout(() => {
+        isFileDialogOpenRef.current = false;
+      }, 350);
+    };
+
+    window.addEventListener('focus', handleWindowFocus);
+
     return () => {
       cleanup?.();
+      window.removeEventListener('focus', handleWindowFocus);
+    };
+  }, []);
+
+  // Proactively warm and synchronize AI token telemetry in background
+  useEffect(() => {
+    const unsubTokens = connectionService.subscribeTokenStats(() => {});
+    return () => {
+      unsubTokens();
     };
   }, []);
 
@@ -742,115 +774,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
       window.removeEventListener('soko:preview-mascot-mode', handlePreview);
       window.removeEventListener('storage', handleSettingsChange);
     };
-  }, [mode, isConnectionPopoverOpen, isHovered]);
-
-  // Window vertical sizing: Expand IMMEDIATELY (0ms) so popover/card has full height,
-  // Shrink AFTER exit animation settles (300ms) so content is unmounted before clipping.
-  // Window width stays rock-solid at 440px so horizontal center (islandX) NEVER moves.
-  const currentWindowHeightRef = useRef(68);
-
-  // Dynamically measure rendered notification height directly from the DOM
-  useEffect(() => {
-    if (mode !== 'notification') {
-      setMeasuredNotificationHeight(null);
-      return;
-    }
-
-    const updateHeight = () => {
-      if (islandRef.current) {
-        const rect = islandRef.current.getBoundingClientRect();
-        const scrollH = islandRef.current.scrollHeight;
-        const pillH = Math.max(rect.height, scrollH);
-        if (pillH > 0) {
-          // Window has pt-1 (4px). Add 20px transparent clearance so pill shadow & corners never touch window boundary.
-          const neededWindowH = Math.ceil(pillH + 20);
-          setMeasuredNotificationHeight((prev) => (prev !== neededWindowH ? neededWindowH : prev));
-        }
-      }
-    };
-
-    updateHeight();
-    const frame = requestAnimationFrame(updateHeight);
-    const ro = new ResizeObserver(() => {
-      updateHeight();
-    });
-
-    if (islandRef.current) {
-      ro.observe(islandRef.current);
-    }
-
-    return () => {
-      cancelAnimationFrame(frame);
-      ro.disconnect();
-    };
-  }, [mode, activeNotification]);
-
-  useEffect(() => {
-    let timer: any = null;
-
-    let targetH = 68;
-
-    if (isConnectionPopoverOpen) {
-      targetH = 560;
-    } else if (isIdleMascotOnly) {
-      targetH = 76;
-    } else if (mode === 'notification') {
-      const rawBody = (activeNotification?.body || '').trim();
-      const paragraphs = rawBody ? rawBody.split('\n') : [''];
-      let totalLines = 0;
-      for (const p of paragraphs) {
-        if (p.length === 0) {
-          totalLines += 0.5;
-        } else {
-          totalLines += Math.max(1, Math.ceil(p.length / 36));
-        }
-      }
-      // Base overhead:
-      // Window pt-1 (4px) + pill pt-2.5 pb-3.5 (24px) + border (2px) + header (~26px) + gap (6px) + bottom clearance buffer (18px) = 80px
-      // Plus 21px per line of text
-      const calculatedH = Math.max(110, 80 + Math.ceil(totalLines * 21) + (isBotClicked ? 24 : 0));
-      const measuredH = measuredNotificationHeight || 0;
-      targetH = Math.min(320, Math.max(calculatedH, measuredH));
-    } else if (mode === 'cli') {
-      targetH = 152;
-    } else if (mode === 'transfer') {
-      targetH = 110;
-    } else if (mode === 'pairing') {
-      targetH = 96;
-    } else {
-      targetH = 68;
-    }
-
-    const currentH = currentWindowHeightRef.current;
-
-    if (targetH === currentH) {
-      return;
-    }
-
-    if (targetH > currentH) {
-      // Expanding vertically: immediately grant canvas height for expanding content
-      window.electronAPI?.setWindowSize?.(440, targetH);
-      currentWindowHeightRef.current = targetH;
-    } else {
-      // Shrinking vertically: keep window large while exit spring settles (300ms)
-      timer = setTimeout(() => {
-        window.electronAPI?.setWindowSize?.(440, targetH);
-        currentWindowHeightRef.current = targetH;
-      }, 300);
-    }
-
-    return () => {
-      if (timer) clearTimeout(timer);
-    };
-  }, [mode, isConnectionPopoverOpen, activeNotification, isIdleMascotOnly, measuredNotificationHeight, isBotClicked]);
-
-  // Critically damped Apple spring physics (Zero bounce, zero overshoot, zero shaking)
-  const springTransition = {
-    type: 'spring',
-    stiffness: 260,
-    damping: 32,
-    mass: 0.8,
-  };
+  }, []);
 
   // Dynamic avatar size: significantly increased when idle or notification is visible & when clicked
   const getAvatarSize = () => {
@@ -926,16 +850,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         }
 
         const textLen = dynamicStatusText?.length || 0;
-        let baseWidth = 270;
-        if (dynamicStatusText === 'Connected') {
-          baseWidth = 230;
-        } else if (dynamicStatusText === 'Not Connected') {
-          baseWidth = 250;
-        } else if (textLen > 24) {
-          baseWidth = 320;
-        } else if (textLen > 16) {
-          baseWidth = 295;
-        }
+        let baseWidth = textLen > 22 ? 320 : 260;
         if (isBotClicked) baseWidth += 30;
         return { width: Math.min(350, baseWidth), height: isBotClicked ? 62 : 54 };
       }
@@ -956,11 +871,153 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
 
   const dims = getIslandDimensions();
 
+  // Critically damped Apple spring physics (Zero bounce, zero overshoot, zero shaking)
+  const springTransition = {
+    type: 'spring',
+    stiffness: 260,
+    damping: 32,
+    mass: 0.8,
+  };
+
+  // Window sizing: Dynamically hugs visible island bounds (compact, sleep orb, notification, popover).
+  // - Expand IMMEDIATELY (0ms) so popovers/cards have full canvas instantly.
+  // - Shrink AFTER exit spring animation settles (240ms) so content finishes exit before window canvas shrinks.
+  // - Eliminates any invisible click barriers on the left or right of the pill or sleep orb!
+  const currentWindowWidthRef = useRef(0);
+  const currentWindowHeightRef = useRef(0);
+
+  // Dynamically measure rendered notification height directly from the DOM
+  useEffect(() => {
+    if (mode !== 'notification') {
+      setMeasuredNotificationHeight(null);
+      return;
+    }
+
+    const updateHeight = () => {
+      if (islandRef.current) {
+        const rect = islandRef.current.getBoundingClientRect();
+        const scrollH = islandRef.current.scrollHeight;
+        const pillH = Math.max(rect.height, scrollH);
+        if (pillH > 0) {
+          // Window has pt-1 (4px). Add 20px transparent clearance so pill shadow & corners never touch window boundary.
+          const neededWindowH = Math.ceil(pillH + 20);
+          setMeasuredNotificationHeight((prev) => (prev !== neededWindowH ? neededWindowH : prev));
+        }
+      }
+    };
+
+    updateHeight();
+    const frame = requestAnimationFrame(updateHeight);
+    const ro = new ResizeObserver(() => {
+      updateHeight();
+    });
+
+    if (islandRef.current) {
+      ro.observe(islandRef.current);
+    }
+
+    return () => {
+      cancelAnimationFrame(frame);
+      ro.disconnect();
+    };
+  }, [mode, activeNotification]);
+
+  useEffect(() => {
+    let timer: any = null;
+
+    // Stable window width for awake mode (380px) avoids X11 compositor repositioning/flicker
+    // when toggling between compact pill and the 360px Connection Popover.
+    // In sleep mode, window dynamically contracts to 74px to completely free up background clicks.
+    let targetW = isIdleMascotOnly ? 74 : Math.max(380, dims.width + 4);
+    let targetH = 68;
+
+    if (isIdleMascotOnly) {
+      targetW = 74;
+      targetH = 72;
+    } else if (isConnectionPopoverOpen) {
+      targetW = Math.max(380, dims.width + 4);
+      targetH = 580;
+    } else if (mode === 'notification') {
+      const rawBody = (activeNotification?.body || '').trim();
+      const paragraphs = rawBody ? rawBody.split('\n') : [''];
+      let totalLines = 0;
+      for (const p of paragraphs) {
+        if (p.length === 0) {
+          totalLines += 0.5;
+        } else {
+          totalLines += Math.max(1, Math.ceil(p.length / 36));
+        }
+      }
+      // Base overhead:
+      // Window pt-1 (4px) + pill pt-2.5 pb-3.5 (24px) + border (2px) + header (~26px) + gap (6px) + bottom clearance buffer (18px) = 80px
+      // Plus 21px per line of text
+      const calculatedH = Math.max(110, 80 + Math.ceil(totalLines * 21) + (isBotClicked ? 24 : 0));
+      const measuredH = measuredNotificationHeight || 0;
+      targetH = Math.min(320, Math.max(calculatedH, measuredH));
+      targetW = Math.max(380, dims.width + 4);
+    } else if (mode === 'cli') {
+      targetH = 152;
+      targetW = Math.max(380, dims.width + 4);
+    } else if (mode === 'transfer') {
+      targetH = 110;
+      targetW = Math.max(380, dims.width + 4);
+    } else if (mode === 'pairing') {
+      targetH = 96;
+      targetW = Math.max(380, dims.width + 4);
+    } else {
+      targetH = Math.max(54, (dims.height || 54) + 6);
+      targetW = Math.max(380, dims.width + 4);
+    }
+
+    const currentW = currentWindowWidthRef.current;
+    const currentH = currentWindowHeightRef.current;
+
+    if (targetW === currentW && targetH === currentH) {
+      return;
+    }
+
+    const isExpanding = targetW > currentW || targetH > currentH;
+
+    if (isExpanding || currentW === 0) {
+      // Expanding horizontally or vertically: immediately grant window canvas so content is never clipped
+      window.electronAPI?.setWindowSize?.(targetW, targetH);
+      currentWindowWidthRef.current = targetW;
+      currentWindowHeightRef.current = targetH;
+    } else {
+      // Shrinking: wait for spring exit animation to settle before shrinking physical window canvas
+      timer = setTimeout(() => {
+        window.electronAPI?.setWindowSize?.(targetW, targetH);
+        currentWindowWidthRef.current = targetW;
+        currentWindowHeightRef.current = targetH;
+      }, 240);
+    }
+
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [
+    mode,
+    isConnectionPopoverOpen,
+    activeNotification,
+    isIdleMascotOnly,
+    measuredNotificationHeight,
+    isBotClicked,
+    dims.width,
+    dims.height,
+  ]);
+
+  const handleTriggerSendFile = () => {
+    isFileDialogOpenRef.current = true;
+    fileInputRef.current?.click();
+  };
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    isFileDialogOpenRef.current = false;
     const file = e.target.files?.[0];
     if (file) {
       setMood('working');
       setMode('transfer');
+      setIsConnectionPopoverOpen(false);
       connectionService.sendRealFile(file);
       e.target.value = '';
     }
@@ -1019,8 +1076,10 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
       lastY = moveEvent.screenY;
 
       if (Math.abs(deltaX) > 0 || Math.abs(deltaY) > 0) {
-        isDraggingRef.current = true;
-        setIsDragging(true);
+        if (!isDraggingRef.current) {
+          isDraggingRef.current = true;
+          setIsDragging(true);
+        }
         (window as any).electronAPI?.moveWindow?.(deltaX, deltaY);
       }
     };
@@ -1070,6 +1129,9 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         type="file"
         className="hidden"
         onChange={handleFileSelect}
+        onClick={(e) => {
+          (e.target as HTMLInputElement).value = '';
+        }}
       />
 
       {/* Morphing Dynamic Island Pill */}
@@ -1083,7 +1145,6 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         transition={springTransition}
         style={{
           background: characterBg || undefined,
-          transition: 'background 0.3s ease',
         }}
         onMouseDown={handleDragStart}
         onDoubleClick={handleDoubleClick}
@@ -1144,7 +1205,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         {/* Dynamic Eye-Color Ambient Backlight Aura behind Mascot */}
         {!isIdleMascotOnly && (
           <div
-            className="absolute -left-6 top-1/2 -translate-y-1/2 w-32 h-32 rounded-full pointer-events-none transition-all duration-700 ease-out"
+            className="absolute -left-6 top-1/2 -translate-y-1/2 w-32 h-32 rounded-full pointer-events-none transition-opacity duration-300 ease-out"
             style={{
               background: `radial-gradient(circle at center, ${activeEyeColor}2A 0%, transparent 70%)`,
             }}
@@ -1152,17 +1213,18 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         )}
 
         <div className={`flex ${isIdleMascotOnly ? 'items-center justify-center w-full h-full' : mode === 'notification' ? 'items-start w-full' : 'items-center w-full my-auto'}`}>
-          {/* Left Anchor: Mascot Character Avatar */}
+          {/* Left Anchor: Mascot Character Avatar (Highest stacking layer to guarantee face is never overlapped) */}
           <div
             data-no-drag="true"
-            className={`shrink-0 cursor-pointer flex items-center justify-center ${
+            className={`relative z-20 shrink-0 cursor-pointer flex items-center justify-center ${
               isIdleMascotOnly
                 ? 'p-0 m-0'
                 : mode === 'notification'
                 ? 'pr-2.5 self-start pt-1'
-                : 'pr-2.5 self-center my-auto'
+                : 'pr-3 self-center my-auto'
             }`}
-          onClick={(e) => {
+            style={{ minWidth: isIdleMascotOnly ? undefined : avatarSize }}
+            onClick={(e) => {
             if (isIdleMascotOnly) {
               e.stopPropagation();
               resetIdleTimer();
@@ -1213,30 +1275,28 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
           />
         </div>
 
-        {/* Center / Body Section */}
+        {/* Center / Body Section (Strictly bounds content to the right of avatar) */}
         <AnimatePresence>
           {!isIdleMascotOnly && (
             <motion.div
               key="island-body-content"
-              initial={{ opacity: 0, width: 0 }}
-              animate={{ opacity: 1, width: 'auto' }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
               exit={{
                 opacity: 0,
-                width: 0,
-                transition: { duration: 0.16, ease: 'easeOut' },
+                transition: { duration: 0.15, ease: 'easeOut' },
               }}
-              className={`flex-1 min-w-0 flex overflow-hidden ${mode === 'notification' ? 'items-start w-full' : 'items-center my-auto'}`}
+              className={`relative z-10 flex-1 min-w-0 flex overflow-hidden ${mode === 'notification' ? 'items-start w-full' : 'items-center my-auto'}`}
             >
               <AnimatePresence mode="wait" initial={false}>
             {mode === 'compact' && (
               <motion.div
                 key="compact"
-                initial={{ opacity: 0, scale: 0.94 }}
+                initial={{ opacity: 0, scale: 0.98 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{
                   opacity: 0,
-                  scale: 0.94,
-                  filter: 'blur(2px)',
+                  scale: 0.98,
                   transition: { duration: 0.12, ease: 'easeOut' },
                 }}
                 transition={{
@@ -1244,15 +1304,15 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                   delay: 0.05,
                   ease: [0.16, 1, 0.3, 1],
                 }}
-                className="flex items-center justify-center w-full select-none min-w-0 pr-1"
+                className="flex items-center justify-start w-full select-none min-w-0 pr-1 overflow-hidden"
               >
                 {completedTaskNotice ? (
                   <motion.div
                     key={`completed-${completedTaskNotice.sessionId || completedTaskNotice.agent || 'agent'}-${completedTaskNotice.workspaceName || ''}`}
-                    initial={{ opacity: 0, y: 3, filter: 'blur(2px)' }}
-                    animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-                    exit={{ opacity: 0, y: -3, filter: 'blur(2px)' }}
-                    transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
+                    initial={{ opacity: 0, y: 2 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -2 }}
+                    transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
                     className="w-full flex flex-col justify-center min-w-0 pr-0.5 cursor-pointer group/msg"
                     onClick={(e) => {
                       e.stopPropagation();
@@ -1269,14 +1329,21 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                         <span className="text-[10px] font-semibold text-emerald-400 tracking-wide uppercase shrink-0">
                           {completedTaskNotice.name || completedTaskNotice.agent || 'Agent'}
                         </span>
-                        {completedTaskNotice.workspaceName && completedTaskTheme && (
-                          <span
-                            className={`text-[9px] font-mono font-medium px-1.5 py-[1px] rounded border shrink-0 truncate max-w-[120px] transition-colors ${completedTaskTheme.bg} ${completedTaskTheme.text} ${completedTaskTheme.border}`}
-                            title={`Project: ${completedTaskNotice.workspaceName}\nPath: ${completedTaskNotice.workspace || completedTaskNotice.workspaceName}`}
-                          >
-                            📁 {completedTaskNotice.workspaceName}
-                          </span>
-                        )}
+                        {(() => {
+                          const wsName = completedTaskNotice.workspaceName ||
+                            (completedTaskNotice.workspace ? completedTaskNotice.workspace.split('/').filter(Boolean).pop() : '') ||
+                            agentStatus?.workspaceName ||
+                            'soko';
+                          const wsPath = completedTaskNotice.workspace || agentStatus?.workspace || wsName;
+                          return wsName && completedTaskTheme ? (
+                            <span
+                              className={`text-[9px] font-mono font-medium px-1.5 py-[1px] rounded border shrink-0 truncate max-w-[120px] transition-colors ${completedTaskTheme.bg} ${completedTaskTheme.text} ${completedTaskTheme.border}`}
+                              title={`Project: ${wsName}\nPath: ${wsPath}`}
+                            >
+                              📁 {wsName}
+                            </span>
+                          ) : null;
+                        })()}
                       </div>
 
                       {/* Right: Highlighted Tokens Used Badge */}
@@ -1297,18 +1364,11 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
 
                     {/* Message Row: Full Width Clear Text */}
                     <div className="flex items-center gap-1.5 w-full min-w-0 mt-0.5 h-[18px] overflow-hidden">
-                      <AnimatePresence mode="wait" initial={false}>
-                        <motion.span
-                          key={completedTaskNotice.message}
-                          initial={{ opacity: 0, y: 2 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: -2 }}
-                          transition={{ duration: 0.16, ease: 'easeOut' }}
-                          className="text-[12px] text-white/95 font-medium tracking-tight truncate min-w-0 flex-1 group-hover/msg:text-emerald-200 transition-colors"
-                        >
-                          {completedTaskNotice.message}
-                        </motion.span>
-                      </AnimatePresence>
+                      <span
+                        className="text-[12px] text-white/95 font-medium tracking-tight truncate min-w-0 flex-1 group-hover/msg:text-emerald-200 transition-colors"
+                      >
+                        {completedTaskNotice.message}
+                      </span>
                     </div>
                   </motion.div>
                 ) : (
@@ -1321,7 +1381,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                     }}
                     title={
                       isAgentRunning && currentSession
-                        ? `${currentSession.name || currentSession.agent}: ${currentSession.detail || 'In progress'} (${currentSession.workspaceName || 'root'}) • Click to manage`
+                        ? `${currentSession.name || currentSession.agent}: ${currentSession.detail || 'In progress'} (${currentSession.workspaceName || agentStatus?.workspaceName || 'soko'}) • Click to manage`
                         : connectionStatus === 'connected'
                         ? `Connected to ${pairedDevice?.name || 'Phone'} • Click to manage`
                         : connectionStatus === 'discovered'
@@ -1332,11 +1392,11 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                     <AnimatePresence mode="wait" initial={false}>
                       {isAgentRunning && currentSession && currentSession.agent ? (
                         <motion.div
-                          key={`agent-${currentSession.sessionId || currentSession.agent}-${currentSession.workspaceName || ''}`}
-                          initial={{ opacity: 0, y: 3, filter: 'blur(2px)' }}
-                          animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-                          exit={{ opacity: 0, y: -3, filter: 'blur(2px)' }}
-                          transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                          key={`agent-${currentSession.sessionId || currentSession.agent}-${currentSession.workspaceName || agentStatus?.workspaceName || ''}`}
+                          initial={{ opacity: 0, y: 2 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -2 }}
+                          transition={{ duration: 0.18, ease: 'easeOut' }}
                           className="w-full flex flex-col justify-center min-w-0"
                         >
                           {/* Header Row: Agent Title + Project Badge + Multi-Agent Pill */}
@@ -1346,14 +1406,21 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                                 <span>{currentSession.agent === 'antigravity' ? '⚡ Antigravity' : currentSession.agent === 'codex' ? '⚡ Codex' : '⚡ Claude'}</span>
                               </span>
 
-                              {currentSession.workspaceName && currentSessionTheme && (
-                                <span
-                                  className={`text-[9px] font-mono font-medium px-1.5 py-[1px] rounded border shrink-0 truncate max-w-[120px] transition-colors ${currentSessionTheme.bg} ${currentSessionTheme.text} ${currentSessionTheme.border}`}
-                                  title={`Project: ${currentSession.workspaceName}\nPath: ${currentSession.workspace || currentSession.workspaceName}`}
-                                >
-                                  📁 {currentSession.workspaceName}
-                                </span>
-                              )}
+                              {(() => {
+                                const wsName = currentSession.workspaceName ||
+                                  (currentSession.workspace ? currentSession.workspace.split('/').filter(Boolean).pop() : '') ||
+                                  agentStatus?.workspaceName ||
+                                  'soko';
+                                const wsPath = currentSession.workspace || agentStatus?.workspace || wsName;
+                                return wsName && currentSessionTheme ? (
+                                  <span
+                                    className={`text-[9px] font-mono font-medium px-1.5 py-[1px] rounded border shrink-0 truncate max-w-[120px] transition-colors ${currentSessionTheme.bg} ${currentSessionTheme.text} ${currentSessionTheme.border}`}
+                                    title={`Project: ${wsName}\nPath: ${wsPath}`}
+                                  >
+                                    📁 {wsName}
+                                  </span>
+                                ) : null;
+                              })()}
                             </div>
 
                             {/* Multi-Agent Concurrent Session Switcher Pill */}
@@ -1383,28 +1450,21 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
 
                           {/* Message Row: Full Width Clear Agent Action / Detail */}
                           <div className="flex items-center gap-1.5 w-full min-w-0 mt-0.5 h-[18px] overflow-hidden">
-                            <AnimatePresence mode="wait" initial={false}>
-                              <motion.span
-                                key={currentSession.detail || currentSession.message || currentSession.status || 'running'}
-                                initial={{ opacity: 0, y: 2 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: -2 }}
-                                transition={{ duration: 0.16, ease: 'easeOut' }}
-                                className="text-[12px] text-white/95 font-medium tracking-tight truncate min-w-0 flex-1 hover:text-white transition-colors"
-                                title={currentSession.detail || currentSession.message || (currentSession.status === 'waiting' ? 'Waiting for background task...' : 'Working on task...')}
-                              >
-                                {currentSession.detail || currentSession.message || (currentSession.status === 'waiting' ? 'Waiting for background task...' : 'Working on task...')}
-                              </motion.span>
-                            </AnimatePresence>
+                            <span
+                              className="text-[12px] text-white/95 font-medium tracking-tight truncate min-w-0 flex-1 hover:text-white transition-colors"
+                              title={currentSession.detail || currentSession.message || (currentSession.status === 'waiting' ? 'Waiting for background task...' : 'Working on task...')}
+                            >
+                              {currentSession.detail || currentSession.message || (currentSession.status === 'waiting' ? 'Waiting for background task...' : 'Working on task...')}
+                            </span>
                           </div>
                         </motion.div>
                       ) : (audioStatus.isPlaying || audioStatus.isStreamingToMobile || showRecentAudioControls) ? (
                         <motion.div
                           key="audio-player-controls"
-                          initial={{ opacity: 0, y: 3, filter: 'blur(2px)' }}
-                          animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-                          exit={{ opacity: 0, y: -3, filter: 'blur(2px)' }}
-                          transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                          initial={{ opacity: 0, y: 2 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -2 }}
+                          transition={{ duration: 0.18, ease: 'easeOut' }}
                           className="w-full flex items-center justify-between gap-1.5 min-w-0 pr-0.5"
                           onClick={(e) => e.stopPropagation()}
                         >
@@ -1539,11 +1599,11 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                         </motion.div>
                       ) : currentSession && currentSession.agent && currentSession.status === 'completed' ? (
                         <motion.div
-                          key={`done-${currentSession.sessionId || currentSession.agent}-${currentSession.workspaceName || ''}`}
-                          initial={{ opacity: 0, y: 3, filter: 'blur(2px)' }}
-                          animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-                          exit={{ opacity: 0, y: -3, filter: 'blur(2px)' }}
-                          transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                          key={`done-${currentSession.sessionId || currentSession.agent}-${currentSession.workspaceName || agentStatus?.workspaceName || ''}`}
+                          initial={{ opacity: 0, y: 2 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -2 }}
+                          transition={{ duration: 0.18, ease: 'easeOut' }}
                           className="w-full flex flex-col justify-center min-w-0"
                         >
                           {/* Header Row: Agent Name + Project Badge */}
@@ -1554,14 +1614,21 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                                 <span>{currentSession.name || 'Agent'}</span>
                               </span>
 
-                              {currentSession.workspaceName && currentSessionTheme && (
-                                <span
-                                  className={`text-[9px] font-mono font-medium px-1.5 py-[1px] rounded border shrink-0 truncate max-w-[120px] transition-colors ${currentSessionTheme.bg} ${currentSessionTheme.text} ${currentSessionTheme.border}`}
-                                  title={`Project: ${currentSession.workspaceName}\nPath: ${currentSession.workspace || currentSession.workspaceName}`}
-                                >
-                                  📁 {currentSession.workspaceName}
-                                </span>
-                              )}
+                              {(() => {
+                                const wsName = currentSession.workspaceName ||
+                                  (currentSession.workspace ? currentSession.workspace.split('/').filter(Boolean).pop() : '') ||
+                                  agentStatus?.workspaceName ||
+                                  'soko';
+                                const wsPath = currentSession.workspace || agentStatus?.workspace || wsName;
+                                return wsName && currentSessionTheme ? (
+                                  <span
+                                    className={`text-[9px] font-mono font-medium px-1.5 py-[1px] rounded border shrink-0 truncate max-w-[120px] transition-colors ${currentSessionTheme.bg} ${currentSessionTheme.text} ${currentSessionTheme.border}`}
+                                    title={`Project: ${wsName}\nPath: ${wsPath}`}
+                                  >
+                                    📁 {wsName}
+                                  </span>
+                                ) : null;
+                              })()}
                             </div>
 
                             <span className="text-[9.5px] font-mono text-emerald-400/90 font-medium shrink-0">Done ✓</span>
@@ -1569,31 +1636,24 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
 
                           {/* Message Row */}
                           <div className="flex items-center gap-1.5 w-full min-w-0 mt-0.5 h-[18px] overflow-hidden">
-                            <AnimatePresence mode="wait" initial={false}>
-                              <motion.span
-                                key={currentSession.message || currentSession.taskSummary || currentSession.detail || 'done'}
-                                initial={{ opacity: 0, y: 2 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: -2 }}
-                                transition={{ duration: 0.16, ease: 'easeOut' }}
-                                className="text-[12px] text-white/95 font-medium tracking-tight truncate min-w-0 flex-1"
-                                title={currentSession.message || currentSession.taskSummary || currentSession.detail || 'Task completed successfully'}
-                              >
-                                {currentSession.message || currentSession.taskSummary || currentSession.detail || 'Task completed successfully'}
-                              </motion.span>
-                            </AnimatePresence>
+                            <span
+                              className="text-[12px] text-white/95 font-medium tracking-tight truncate min-w-0 flex-1"
+                              title={currentSession.message || currentSession.taskSummary || currentSession.detail || 'Task completed successfully'}
+                            >
+                              {currentSession.message || currentSession.taskSummary || currentSession.detail || 'Task completed successfully'}
+                            </span>
                           </div>
                         </motion.div>
                       ) : (
                         <motion.div
-                          key={dynamicStatusText}
-                          initial={{ opacity: 0, y: 3, filter: 'blur(2px)' }}
-                          animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-                          exit={{ opacity: 0, y: -3, filter: 'blur(2px)' }}
-                          transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                          key="default-status-pill"
+                          initial={{ opacity: 0, y: 2 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -2 }}
+                          transition={{ duration: 0.18, ease: 'easeOut' }}
                           className="w-full flex items-center justify-center"
                         >
-                          <span className="text-[12px] text-linear-text-primary font-medium tracking-tight whitespace-nowrap truncate max-w-[280px]">
+                          <span className="text-[12px] text-linear-text-primary font-medium tracking-tight whitespace-nowrap truncate max-w-[280px] transition-colors duration-150">
                             {dynamicStatusText}
                           </span>
                         </motion.div>
@@ -1737,6 +1797,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
               onOpenSettings(tab);
             }}
             onClose={() => setIsConnectionPopoverOpen(false)}
+            onSendFile={handleTriggerSendFile}
           />
         )}
       </AnimatePresence>

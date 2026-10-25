@@ -246,6 +246,7 @@ async function runTests() {
     function findUploadedFile(name) {
       const candidates = [
         path.resolve(TRANSFERS_DIR, name),
+        path.resolve(os.homedir(), 'Downloads/Soko Transfers', name),
         path.resolve(__dirname, '../transfers', name),
         path.resolve(process.cwd(), 'transfers', name),
         path.resolve(os.homedir(), '.config/soko/transfers', name),
@@ -531,6 +532,18 @@ async function runTests() {
   console.log('\n================================================================');
   console.log(` RESULTS: ${passedTests} / ${totalTests} tests passed (${Math.round((passedTests / totalTests) * 100)}%)`);
   console.log('================================================================\n');
+
+  // Clean up any simulated transfer test artifact
+  const cleanupPaths = [
+    path.resolve(TRANSFERS_DIR, 'soko-v1.0.0-release.apk'),
+    path.resolve(__dirname, '../transfers/soko-v1.0.0-release.apk'),
+    path.resolve(process.cwd(), 'transfers/soko-v1.0.0-release.apk'),
+  ];
+  for (const p of cleanupPaths) {
+    if (fs.existsSync(p)) {
+      try { fs.unlinkSync(p); } catch {}
+    }
+  }
 
   if (spawnedBridge) {
     try {

@@ -64,25 +64,54 @@ function normalizeIp(ip) {
 function scanAvailableDevices() {
   const devices = [];
 
-  // 1. Scan for real Bluetooth devices via bluetoothctl
-  try {
-    const btOut = execSync('bluetoothctl devices', { encoding: 'utf8', timeout: 1500 });
-    const lines = btOut.trim().split('\n');
-    for (const line of lines) {
-      const match = line.match(/^Device\s+([0-9A-Fa-f:]+)\s+(.+)$/);
-      if (match && match[2].trim()) {
-        const devName = match[2].trim();
-        devices.push({
-          id: `bt-${match[1].replace(/:/g, '')}`,
-          name: devName,
-          model: devName.toLowerCase().includes('bud') || devName.toLowerCase().includes('ear') ? 'Bluetooth Audio / Wearable' : 'Bluetooth Companion Device',
-          transport: 'ble',
-          rssi: -56,
-          mac: match[1],
-        });
+  // 1. Scan for real Bluetooth devices
+  if (os.platform() === 'linux') {
+    try {
+      const btOut = execSync('bluetoothctl devices', { encoding: 'utf8', timeout: 1500 });
+      const lines = btOut.trim().split('\n');
+      for (const line of lines) {
+        const match = line.match(/^Device\s+([0-9A-Fa-f:]+)\s+(.+)$/);
+        if (match && match[2].trim()) {
+          const devName = match[2].trim();
+          devices.push({
+            id: `bt-${match[1].replace(/:/g, '')}`,
+            name: devName,
+            model: devName.toLowerCase().includes('bud') || devName.toLowerCase().includes('ear') ? 'Bluetooth Audio / Wearable' : 'Bluetooth Companion Device',
+            transport: 'ble',
+            rssi: -56,
+            mac: match[1],
+          });
+        }
       }
-    }
-  } catch {}
+    } catch {}
+  } else if (os.platform() === 'win32') {
+    try {
+      const psCmd = 'Get-PnpDevice -Class Bluetooth -Status OK | Where-Object { $_.FriendlyName -notmatch "Adapter|Enumerator|Radio|Wireless|Generic|Bluetooth Device \\(Personal Area Network\\)" } | Select-Object FriendlyName, InstanceId | ConvertTo-Json -Compress';
+      const btOut = execSync(`powershell -NoProfile -NonInteractive -Command "${psCmd}"`, {
+        encoding: 'utf8',
+        timeout: 2000,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      if (btOut && btOut.trim()) {
+        const parsed = JSON.parse(btOut.trim());
+        const list = Array.isArray(parsed) ? parsed : [parsed];
+        for (const dev of list) {
+          if (dev && dev.FriendlyName) {
+            const devName = dev.FriendlyName.trim();
+            const rawId = dev.InstanceId || devName;
+            const cleanId = rawId.replace(/[^a-zA-Z0-9]/g, '').slice(-12) || 'winbt';
+            devices.push({
+              id: `bt-${cleanId}`,
+              name: devName,
+              model: devName.toLowerCase().includes('bud') || devName.toLowerCase().includes('ear') ? 'Bluetooth Audio / Wearable' : 'Bluetooth Companion Device',
+              transport: 'ble',
+              rssi: -58,
+            });
+          }
+        }
+      }
+    } catch {}
+  }
 
   // 2. Discover local mobile companion on the Wi-Fi / Hotspot LAN
   const localIps = getLocalIps();
@@ -919,6 +948,15 @@ function setSpeakerMute(mute) {
       execSync(`osascript -e "set volume output muted ${mute ? 'true' : 'false'}"`, { timeout: 600, stdio: ['ignore', 'ignore', 'ignore'] });
       return true;
     } catch {}
+  } else if (os.platform() === 'win32') {
+    try {
+      execSync('powershell -NoProfile -NonInteractive -Command "(New-Object -ComObject Wscript.Shell).SendKeys([char]0xAD)"', {
+        timeout: 1000,
+        stdio: ['ignore', 'ignore', 'ignore'],
+      });
+      console.log(`[Bridge Audio] Toggled Windows master volume mute via VK_VOLUME_MUTE`);
+      return true;
+    } catch {}
   }
   return false;
 }
@@ -975,11 +1013,12 @@ function controlMediaPlayback(action) {
     } catch {}
   } else if (platform === 'win32') {
     try {
-      let vk = 0xB3;
-      if (action === 'next') vk = 0xB0;
-      if (action === 'prev') vk = 0xB1;
-      const psCmd = `powershell -command "$wscript = New-Object -ComObject Wscript.Shell; $wscript.SendKeys([char]${vk})"`;
-      execSync(psCmd, { timeout: 1000, stdio: ['ignore', 'ignore', 'ignore'] });
+      let vk = 0xB3; // VK_MEDIA_PLAY_PAUSE
+      if (action === 'next') vk = 0xB0; // VK_MEDIA_NEXT_TRACK
+      if (action === 'prev' || action === 'previous') vk = 0xB1; // VK_MEDIA_PREV_TRACK
+      if (action === 'stop') vk = 0xB2; // VK_MEDIA_STOP
+      const psCmd = `powershell -NoProfile -NonInteractive -Command "$wscript = New-Object -ComObject Wscript.Shell; $wscript.SendKeys([char]${vk})"`;
+      execSync(psCmd, { timeout: 1500, stdio: ['ignore', 'ignore', 'ignore'] });
       return true;
     } catch {}
   }
@@ -1116,39 +1155,59 @@ function broadcastAudioStatus() {
   });
 }
 
+function getWindowsAudioInputArgs() {
+  // 1. Probe DirectShow audio devices to find Stereo Mix or loopback
+  try {
+    const probeOut = execSync('ffmpeg -list_devices true -f dshow -i dummy 2>&1', {
+      encoding: 'utf8',
+      timeout: 1500,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const matches = [...probeOut.matchAll(/"([^"]+)"\s+\(audio\)/g)];
+    if (matches.length > 0) {
+      const loopbackMatch = matches.find((m) => /stereo\s*mix|loopback|what\s*u\s*hear|virtual/i.test(m[1]));
+      const devName = loopbackMatch ? loopbackMatch[1] : matches[0][1];
+      console.log(`[Bridge Audio] Windows DirectShow audio capture using: "${devName}"`);
+      return ['-f', 'dshow', '-i', `audio=${devName}`];
+    }
+  } catch (err) {
+    const errText = (err.stdout || '') + (err.stderr || '') + (err.message || '');
+    const matches = [...errText.matchAll(/"([^"]+)"\s+\(audio\)/g)];
+    if (matches.length > 0) {
+      const loopbackMatch = matches.find((m) => /stereo\s*mix|loopback|what\s*u\s*hear|virtual/i.test(m[1]));
+      const devName = loopbackMatch ? loopbackMatch[1] : matches[0][1];
+      console.log(`[Bridge Audio] Windows DirectShow audio capture using: "${devName}"`);
+      return ['-f', 'dshow', '-i', `audio=${devName}`];
+    }
+  }
+
+  // 2. Fallback: try wasapi default if DirectShow device list is empty
+  return ['-f', 'wasapi', '-i', 'default'];
+}
+
 function startAudioBroadcaster() {
   if (audioFfmpegProc) return;
   const isWin = os.platform() === 'win32';
   const monitor = getDefaultMonitorSource();
   console.log(`[Bridge Audio] Starting Option 1 low-latency audio capture from: ${monitor} (OS: ${os.platform()})`);
 
-  const ffmpegArgs = isWin
-    ? [
-        '-fflags', 'nobuffer',
-        '-flags', 'low_delay',
-        '-f', 'wasapi',
-        '-i', 'default',
-        '-ac', '2',
-        '-ar', '48000',
-        '-c:a', 'libmp3lame',
-        '-b:a', '192k',
-        '-write_xing', '0',
-        '-id3v2_version', '0',
-        '-f', 'mp3',
-        '-',
-      ]
-    : [
-        '-f', 'pulse',
-        '-i', monitor,
-        '-ac', '2',
-        '-ar', '48000',
-        '-c:a', 'libmp3lame',
-        '-b:a', '192k',
-        '-write_xing', '0',
-        '-id3v2_version', '0',
-        '-f', 'mp3',
-        '-',
-      ];
+  const inputArgs = isWin
+    ? getWindowsAudioInputArgs()
+    : ['-f', 'pulse', '-i', monitor];
+
+  const ffmpegArgs = [
+    '-fflags', 'nobuffer',
+    '-flags', 'low_delay',
+    ...inputArgs,
+    '-ac', '2',
+    '-ar', '48000',
+    '-c:a', 'libmp3lame',
+    '-b:a', '192k',
+    '-write_xing', '0',
+    '-id3v2_version', '0',
+    '-f', 'mp3',
+    '-',
+  ];
 
   try {
     const env = {
@@ -1317,10 +1376,141 @@ function formatToolCallAction(tc) {
   return name ? `Executing ${name}` : 'Executing task';
 }
 
+function getDefaultWorkspace() {
+  if (process.env.SOKO_WORKSPACE && fs.existsSync(process.env.SOKO_WORKSPACE)) {
+    return process.env.SOKO_WORKSPACE;
+  }
+  const candidateFromScripts = path.resolve(__dirname, '..');
+  if (fs.existsSync(path.join(candidateFromScripts, 'package.json'))) {
+    return candidateFromScripts;
+  }
+  const candidateFromCwd = process.cwd();
+  if (fs.existsSync(path.join(candidateFromCwd, 'package.json'))) {
+    return candidateFromCwd;
+  }
+  return candidateFromScripts || candidateFromCwd;
+}
+
+const antigravityWorkspaceCache = new Map();
+
+/**
+ * Robustly resolves the workspace directory for an Antigravity agent session.
+ * 1. Checks conversation_summaries.db in ~/.gemini/antigravity* directories.
+ * 2. Checks conversations/<sessionId>.db trajectory metadata.
+ * 3. Inspects parsed tool calls for file path arguments.
+ * 4. Falls back to host project directory / Git repo root.
+ */
+function resolveAntigravityWorkspace(tPath, sessionId, parsedItems) {
+  if (sessionId && antigravityWorkspaceCache.has(sessionId)) {
+    return antigravityWorkspaceCache.get(sessionId);
+  }
+
+  let ws = '';
+
+  try {
+    const home = os.homedir();
+    const candidateDirs = [
+      path.resolve(tPath, '../../../../..'),
+      path.join(home, '.gemini/antigravity-cli'),
+      path.join(home, '.gemini/antigravity'),
+      path.join(home, '.gemini/antigravity-ide'),
+    ];
+
+    for (const appDir of candidateDirs) {
+      if (!fs.existsSync(appDir)) continue;
+
+      // 1. Check conversation_summaries.db
+      const dbPath = path.join(appDir, 'conversation_summaries.db');
+      if (fs.existsSync(dbPath)) {
+        try {
+          const buf = fs.readFileSync(dbPath);
+          const str = buf.toString('latin1');
+          let pos = str.indexOf(sessionId);
+          while (pos !== -1) {
+            const chunk = str.slice(pos, pos + 1500);
+            const match = chunk.match(/\["file:\/\/([^"\]]+)"\]/);
+            if (match && match[1]) {
+              ws = match[1];
+              break;
+            }
+            pos = str.indexOf(sessionId, pos + 1);
+          }
+        } catch {}
+      }
+      if (ws) break;
+
+      // 2. Check conversations/<sessionId>.db
+      const sDbPath = path.join(appDir, 'conversations', `${sessionId}.db`);
+      if (fs.existsSync(sDbPath)) {
+        try {
+          const buf = fs.readFileSync(sDbPath);
+          const str = buf.toString('latin1');
+          const match = str.match(/file:\/\/([a-zA-Z0-9_\-\/\.]+)/);
+          if (match && match[1]) {
+            let p = match[1];
+            try {
+              if (fs.existsSync(p) && fs.statSync(p).isFile()) p = path.dirname(p);
+            } catch {}
+            let cur = p;
+            while (cur && cur !== '/' && cur !== path.dirname(cur)) {
+              if (fs.existsSync(path.join(cur, '.git')) || fs.existsSync(path.join(cur, 'package.json'))) {
+                ws = cur;
+                break;
+              }
+              cur = path.dirname(cur);
+            }
+            if (!ws) ws = p;
+            break;
+          }
+        } catch {}
+      }
+      if (ws) break;
+    }
+  } catch {}
+
+  // 3. Inspect tool calls for absolute file paths
+  if (!ws && parsedItems && Array.isArray(parsedItems)) {
+    for (let i = parsedItems.length - 1; i >= 0; i--) {
+      const item = parsedItems[i];
+      if (item.tool_calls && Array.isArray(item.tool_calls)) {
+        for (const tc of item.tool_calls) {
+          const raw = tc.args?.Path || tc.args?.path || tc.args?.filePath || tc.args?.Cwd || tc.args?.cwd;
+          if (raw && typeof raw === 'string') {
+            const p = raw.replace(/^\"|\"$/g, '');
+            if (p.startsWith('/') && !p.startsWith('/tmp') && !p.startsWith('/dev')) {
+              let cur = fs.existsSync(p) && fs.statSync(p).isDirectory() ? p : path.dirname(p);
+              while (cur && cur !== '/' && cur !== path.dirname(cur)) {
+                if (fs.existsSync(path.join(cur, '.git')) || fs.existsSync(path.join(cur, 'package.json'))) {
+                  ws = cur;
+                  break;
+                }
+                cur = path.dirname(cur);
+              }
+              if (ws) break;
+            }
+          }
+        }
+      }
+      if (ws) break;
+    }
+  }
+
+  // 4. Default fallback: repo root / working directory
+  if (!ws) {
+    ws = getDefaultWorkspace();
+  }
+
+  if (ws && sessionId) {
+    antigravityWorkspaceCache.set(sessionId, ws);
+  }
+
+  return ws;
+}
+
 /**
  * Parses an Antigravity session transcript into structured session state.
  */
-function parseAntigravitySession(tPath, stat, now) {
+function parseAntigravitySession(tPath, stat, now, passedSessionId) {
   const cached = transcriptParseCache.get(tPath);
   if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
     return cached.data;
@@ -1333,6 +1523,7 @@ function parseAntigravitySession(tPath, stat, now) {
   let turnTokens = 0;
   let taskSummary = '';
   let workspace = '';
+  let parsed = [];
 
   try {
     const bufferSize = Math.min(stat.size, 262144);
@@ -1342,7 +1533,7 @@ function parseAntigravitySession(tPath, stat, now) {
     fs.closeSync(fd);
 
     const lines = buffer.toString('utf8').trim().split('\n');
-    const parsed = [];
+    parsed = [];
     let lastUserIdx = -1;
 
     for (let i = 0; i < lines.length; i++) {
@@ -1444,7 +1635,7 @@ function parseAntigravitySession(tPath, stat, now) {
         if (last.content && typeof last.content === 'string' && /exit(ed)?\s+with\s+code\s+[1-9]/i.test(last.content)) {
           detail = prevToolAction ? `Failed: ${prevToolAction}` : 'Action failed';
         } else if (prevToolAction) {
-          detail = `Completed: ${prevToolAction}`;
+          detail = prevToolAction;
         } else {
           detail = taskSummary ? `Working on: ${taskSummary}` : 'Reasoning next step';
         }
@@ -1509,6 +1700,11 @@ function parseAntigravitySession(tPath, stat, now) {
         } catch {}
       }
     } catch {}
+  }
+
+  if (!workspace) {
+    const sId = passedSessionId || path.basename(path.resolve(tPath, '../../..'));
+    workspace = resolveAntigravityWorkspace(tPath, sId, parsed);
   }
 
   const workspaceName = workspace ? path.basename(workspace) : '';
@@ -1667,7 +1863,7 @@ function checkActiveAgentActivity() {
             continue;
           }
 
-          const parsed = parseAntigravitySession(tPath, stat, now);
+          const parsed = parseAntigravitySession(tPath, stat, now, sessionId);
           const existing = agentSessionRegistry.get(regKey);
 
           if (parsed.isWaiting) {
@@ -1816,6 +2012,9 @@ function checkActiveAgentActivity() {
                   const m = raw.match(/"cwd":"([^"]+)"/);
                   if (m) cwd = m[1];
                 }
+                if (!cwd) {
+                  cwd = process.env.SOKO_WORKSPACE || path.resolve(__dirname, '..') || process.cwd();
+                }
 
                 const workspaceName = cwd ? path.basename(cwd) : '';
 
@@ -1899,6 +2098,14 @@ function checkActiveAgentActivity() {
                   isDone = true;
                 }
 
+                let claudeCwd = '';
+                const cwdMatch = raw.match(/"cwd":"([^"]+)"/);
+                if (cwdMatch) claudeCwd = cwdMatch[1];
+                if (!claudeCwd) {
+                  claudeCwd = process.env.SOKO_WORKSPACE || path.resolve(__dirname, '..') || process.cwd();
+                }
+                const claudeWsName = claudeCwd ? path.basename(claudeCwd) : '';
+
                 if (isDone) {
                   if (now - s.mtimeMs <= AGENT_COMPLETION_RETENTION_MS) {
                     agentSessionRegistry.set(regKey, {
@@ -1910,8 +2117,8 @@ function checkActiveAgentActivity() {
                       message: summary,
                       taskSummary: summary,
                       tokensUsed: claudeTokens,
-                      workspace: '',
-                      workspaceName: '',
+                      workspace: claudeCwd,
+                      workspaceName: claudeWsName,
                       timestamp: s.mtimeMs,
                       mtimeMs: s.mtimeMs,
                       expiresAt: s.mtimeMs + AGENT_COMPLETION_RETENTION_MS,
@@ -1929,8 +2136,8 @@ function checkActiveAgentActivity() {
                     message: summary,
                     taskSummary: summary,
                     tokensUsed: claudeTokens,
-                    workspace: '',
-                    workspaceName: '',
+                    workspace: claudeCwd,
+                    workspaceName: claudeWsName,
                     timestamp: s.mtimeMs,
                     mtimeMs: s.mtimeMs,
                   });
@@ -1984,6 +2191,8 @@ function checkActiveAgentActivity() {
   }
 
   if (!primary) {
+    const defaultWorkspace = getDefaultWorkspace();
+    const defaultWorkspaceName = defaultWorkspace ? path.basename(defaultWorkspace) : '';
     return {
       agent: null,
       activeAgent: null,
@@ -1993,6 +2202,8 @@ function checkActiveAgentActivity() {
       message: '',
       tokensUsed: 0,
       timestamp: now,
+      workspace: defaultWorkspace,
+      workspaceName: defaultWorkspaceName,
       activeCount: 0,
       activeSessions: [],
     };
@@ -2056,51 +2267,77 @@ setInterval(() => {
 const CLI_WHITELIST = {
   'sysinfo': {
     title: 'System Specs & Health',
+    handler: () => {
+      const isWin = os.platform() === 'win32';
+      const totalMemGb = (os.totalmem() / (1024 ** 3)).toFixed(1);
+      const freeMemGb = (os.freemem() / (1024 ** 3)).toFixed(1);
+      const usedMemGb = (totalMemGb - freeMemGb).toFixed(1);
+      const uptimeHrs = Math.floor(os.uptime() / 3600);
+      const uptimeMins = Math.floor((os.uptime() % 3600) / 60);
+      const osDesc = isWin
+        ? `Windows ${os.release()} (${os.arch()})`
+        : `Linux ${os.release()} (${os.arch()})`;
+      const uptimeDesc = `up ${uptimeHrs} hour${uptimeHrs === 1 ? '' : 's'}, ${uptimeMins} minute${uptimeMins === 1 ? '' : 's'}`;
+      const memDesc = `RAM: ${usedMemGb}GB / ${totalMemGb}GB (free: ${freeMemGb}GB)`;
+      return `OS: ${osDesc}\nUptime: ${uptimeDesc}\n${memDesc}`;
+    },
     cmd: 'echo "OS: $(uname -srm 2>/dev/null || uname -a)"; echo "Uptime: $(uptime -p 2>/dev/null || uptime)"; free -h 2>/dev/null | awk \'/Mem:/ {print "RAM: "$3" / "$2" (free: "$4")"}\'; df -h / 2>/dev/null | awk \'NR==2 {print "Disk (/): "$3" / "$2" ("$5" used)"}\'',
+    cmdWin: 'powershell -NoProfile -NonInteractive -Command "echo \"OS: Windows $([System.Environment]::OSVersion.Version) ($([System.Environment]::GetEnvironmentVariable(\'PROCESSOR_ARCHITECTURE\')))\"; echo \"Uptime: $((Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime)\"; Get-CimInstance Win32_OperatingSystem | ForEach-Object { \'RAM: \' + [Math]::Round(($_.TotalVisibleMemorySize - $_.FreePhysicalMemory)/1024/1024, 1) + \'GB / \' + [Math]::Round($_.TotalVisibleMemorySize/1024/1024, 1) + \'GB\' }"',
   },
   'mem': {
     title: 'Memory & Swap Telemetry',
     cmd: 'free -h',
+    cmdWin: 'powershell -NoProfile -NonInteractive -Command "Get-CimInstance Win32_OperatingSystem | ForEach-Object { $tot=[Math]::Round($_.TotalVisibleMemorySize/1024,1); $fr=[Math]::Round($_.FreePhysicalMemory/1024,1); [PSCustomObject]@{ \'Total(MB)\'=$tot; \'Used(MB)\'=[Math]::Round($tot-$fr,1); \'Free(MB)\'=$fr; \'Usage(%)\'=[Math]::Round((($tot-$fr)/$tot)*100,1) } } | Format-Table -AutoSize"',
   },
   'disk': {
     title: 'Storage & Filesystems',
     cmd: 'df -h -x tmpfs -x devtmpfs',
+    cmdWin: 'powershell -NoProfile -NonInteractive -Command "Get-CimInstance Win32_LogicalDisk | Where-Object DriveType -eq 3 | Select-Object DeviceID, @{N=\'Size(GB)\';E={[Math]::Round($_.Size/1GB,1)}}, @{N=\'Free(GB)\';E={[Math]::Round($_.FreeSpace/1GB,1)}}, @{N=\'Used(%)\';E={[Math]::Round((($_.Size-$_.FreeSpace)/$_.Size)*100,1)}} | Format-Table -AutoSize"',
   },
   'top-procs': {
     title: 'Top CPU Processes',
     cmd: 'ps -eo pid,comm,%cpu,%mem --sort=-%cpu | head -n 6',
+    cmdWin: 'powershell -NoProfile -NonInteractive -Command "Get-Process | Sort-Object CPU -Descending | Select-Object -First 6 Id, ProcessName, CPU, @{N=\'WorkingSet(MB)\';E={[Math]::Round($_.WorkingSet64/1MB,1)}} | Format-Table -AutoSize"',
   },
   'battery': {
     title: 'Power & Battery',
     cmd: 'upower -i $(upower -e 2>/dev/null | grep battery | head -n 1) 2>/dev/null | grep -E "state|percentage|time to" || cat /sys/class/power_supply/BAT*/capacity 2>/dev/null && echo "%" || echo "AC Desktop Power (Online)"',
+    cmdWin: 'powershell -NoProfile -NonInteractive -Command "$b = Get-CimInstance Win32_Battery; if ($b) { [PSCustomObject]@{ Status = switch($b.BatteryStatus){1{\'Discharging\'} 2{\'AC Connected\'} 3{\'Fully Charged\'} 4{\'Low\'} default{\'Online\'}}; \'Level(%)\' = $b.EstimatedChargeRemaining } | Format-List } else { \'AC Desktop Power (Online)\' }"',
   },
   'net-stats': {
     title: 'Network Interfaces',
     cmd: 'ip -brief addr 2>/dev/null || ip route get 1.1.1.1 2>/dev/null || hostname -I',
+    cmdWin: 'powershell -NoProfile -NonInteractive -Command "Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notmatch \'Loopback\' } | Select-Object InterfaceAlias, IPAddress, PrefixOrigin | Format-Table -AutoSize"',
   },
   'ports': {
     title: 'Active Ports & Services',
     cmd: 'ss -tlpn 2>/dev/null | grep -E "8766|3000|5173" || echo "Soko Bridge active on :8766"',
+    cmdWin: 'netstat -ano | findstr 8766 2>nul || echo Soko Bridge active on :8766',
   },
   'git-status': {
     title: 'Git Status & Workspace',
     cmd: 'git status -s && git log -1 --oneline 2>/dev/null',
+    cmdWin: 'git status -s & git log -1 --oneline 2>nul',
   },
   'status': {
     title: 'Antigravity Status',
     cmd: 'agy status 2>/dev/null || (node -v && git branch --show-current)',
+    cmdWin: 'agy status 2>nul || (node -v & git branch --show-current 2>nul)',
   },
   'agy-status': {
     title: 'Antigravity Status',
     cmd: 'agy status 2>/dev/null || (node -v && git branch --show-current)',
+    cmdWin: 'agy status 2>nul || (node -v & git branch --show-current 2>nul)',
   },
   'test': {
     title: 'Integration Test Suite',
     cmd: 'node tests/test_integration.js',
+    cmdWin: 'node tests/test_integration.js',
   },
   'agy-test': {
     title: 'Integration Test Suite',
     cmd: 'node tests/test_integration.js',
+    cmdWin: 'node tests/test_integration.js',
   },
 };
 
@@ -2153,12 +2390,25 @@ function sanitizeAndResolveUploadPath(rawFilename) {
     return null;
   }
 
+  // Block reserved Windows DOS device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9)
+  const nameWithoutExt = baseOnly.split('.')[0].toUpperCase();
+  const DOS_RESERVED = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
+  if (DOS_RESERVED.test(nameWithoutExt)) {
+    console.warn(`[Security Alert] Reserved Windows device name blocked: ${rawFilename}`);
+    return null;
+  }
+
   const finalPath = path.resolve(TRANSFERS_DIR, baseOnly);
   const partPath = path.resolve(TRANSFERS_DIR, `${baseOnly}.part`);
 
   // Strict sandbox containment check
   const resolvedTransfers = path.resolve(TRANSFERS_DIR);
-  if (!finalPath.startsWith(resolvedTransfers + path.sep) && finalPath !== resolvedTransfers) {
+  const isWin = os.platform() === 'win32';
+  const normFinal = isWin ? finalPath.toLowerCase() : finalPath;
+  const normTransfers = isWin ? (resolvedTransfers + path.sep).toLowerCase() : (resolvedTransfers + path.sep);
+  const normTransfersExact = isWin ? resolvedTransfers.toLowerCase() : resolvedTransfers;
+
+  if (!normFinal.startsWith(normTransfers) && normFinal !== normTransfersExact) {
     console.warn(`[Security Alert] Sandbox escape attempt blocked: ${rawFilename}`);
     return null;
   }
@@ -2249,6 +2499,7 @@ function getMusicCacheDir() {
 }
 
 function isConnectorProcessRunning() {
+  if (musicConnectorProcess && !musicConnectorProcess.killed) return true;
   if (process.platform === 'linux' || process.platform === 'darwin') {
     try {
       const myPid = process.pid;
@@ -2259,6 +2510,15 @@ function isConnectorProcessRunning() {
       }).trim();
       const pids = out.split('\n').map(p => parseInt(p.trim(), 10)).filter(p => !isNaN(p) && p !== myPid);
       if (pids.length > 0) return true;
+    } catch {}
+  } else if (process.platform === 'win32') {
+    try {
+      const out = execSync('tasklist /FI "IMAGENAME eq python.exe" /FO CSV /NH', {
+        encoding: 'utf8',
+        timeout: 1000,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      if (out && out.toLowerCase().includes('python.exe')) return true;
     } catch {}
   }
   return false;
@@ -2527,14 +2787,12 @@ function startSimulatedTransfer(filename = 'soko-v1.0.0-release.apk') {
   const destPath = path.resolve(TRANSFERS_DIR, filename);
   try {
     const candidateApks = [
-      path.resolve(__dirname, '../apks/soko-mobile.apk'),
       path.resolve(__dirname, '../apks/soko-mobile-lite.apk'),
       path.resolve(__dirname, '../apks/soko-desktop.apk'),
-      path.resolve(__dirname, '../soko-mobile.apk'),
-      path.resolve(__dirname, '../soko-desktop.apk'),
+      path.resolve(__dirname, '../apks/soko-mobile.apk'),
     ];
     const sourceApk = candidateApks.find((p) => fs.existsSync(p));
-    if (sourceApk) {
+    if (sourceApk && !fs.existsSync(destPath)) {
       fs.copyFileSync(sourceApk, destPath);
     } else if (!fs.existsSync(destPath)) {
       fs.writeFileSync(destPath, Buffer.alloc(1024 * 1024, 0));
@@ -3527,7 +3785,38 @@ function executeWhitelistedCli(command, onFinished = null) {
     },
   });
 
-  const shellCmd = whitelisted.cmd;
+  const isWin = os.platform() === 'win32';
+  if (isWin && typeof whitelisted.handler === 'function') {
+    try {
+      const output = whitelisted.handler();
+      const lines = output.split('\n').map((l) => l.trim()).filter(Boolean);
+      const firstLine = lines[0] || output;
+      const successPayload = {
+        commandId: `cmd-${command}`,
+        title: whitelisted.title,
+        command: command,
+        status: 'completed',
+        startedAt: Date.now() - 50,
+        lastOutputLine: firstLine,
+        output: output,
+        exitCode: 0,
+      };
+      broadcastPacket({
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'CLI_OUTPUT_STREAM',
+        payload: successPayload,
+      });
+      if (onFinished) onFinished(200, { success: true, ...successPayload });
+      return;
+    } catch (e) {
+      // Fallback to shell execution below
+    }
+  }
+
+  const shellCmd = isWin && whitelisted.cmdWin ? whitelisted.cmdWin : whitelisted.cmd;
   if (!shellCmd) {
     const successPayload = {
       commandId: `cmd-${command}`,

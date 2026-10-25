@@ -35,6 +35,7 @@ interface ConnectionPopoverProps {
   onRegeneratePin: () => void;
   onOpenSettings: (tab?: string) => void;
   onClose: () => void;
+  onSendFile?: () => void;
 }
 
 /**
@@ -52,6 +53,7 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
   onRegeneratePin,
   onOpenSettings,
   onClose,
+  onSendFile,
 }) => {
   const [copiedIp, setCopiedIp] = useState(false);
   const [idleTimeoutVal, setIdleTimeoutVal] = useState<number>(() => {
@@ -66,20 +68,32 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
   });
   const [discoveredDevices, setDiscoveredDevices] = useState<DiscoveredDevice[]>([]);
   const [isScanningDevices, setIsScanningDevices] = useState(false);
+  const [showDiscoveredWhileConnected, setShowDiscoveredWhileConnected] = useState(false);
   const [selectedDeviceToPair, setSelectedDeviceToPair] = useState<DiscoveredDevice | null>(null);
   const [isPairingInFlight, setIsPairingInFlight] = useState(false);
 
+  const isMountedRef = useRef(true);
+  const hasAutoScannedRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isConnected = status === 'connected' && Boolean(device?.isAuthorized);
-  const isScanning = isScanningDevices || status === 'scanning' || status === 'connecting';
+  const isScanning = isScanningDevices || (!isConnected && status === 'scanning') || status === 'connecting';
   const localIps = connectionService.getLocalIps();
   const primaryIp = localIps[0] || '192.168.31.210';
   const mobileUrl = `http://${primaryIp}:8766`;
 
+  React.useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   const fetchDiscoveredDevices = async () => {
+    if (isScanningDevices) return;
     setIsScanningDevices(true);
     try {
       const list = await connectionService.scanForDevices();
+      if (!isMountedRef.current) return;
       const disc = connectionService.getDiscoveredDevice();
       if (disc && !list.some((d) => d.id === disc.id)) {
         list.unshift(disc);
@@ -88,19 +102,27 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
     } catch (e) {
       console.warn('Failed to scan devices:', e);
     } finally {
-      setIsScanningDevices(false);
+      if (isMountedRef.current) {
+        setIsScanningDevices(false);
+      }
     }
   };
 
   React.useEffect(() => {
-    if (!isConnected) {
+    // Edge case: If already connected, do NOT scan automatically.
+    if (isConnected || status === 'connected' || Boolean(device?.isAuthorized)) {
+      return;
+    }
+    // Only scan ONE time automatically across the session
+    if (!hasAutoScannedRef.current && !connectionService.hasPerformedAutoScan()) {
+      hasAutoScannedRef.current = true;
       const disc = connectionService.getDiscoveredDevice();
       if (disc) {
         setDiscoveredDevices((prev) => (prev.some((d) => d.id === disc.id) ? prev : [disc, ...prev]));
       }
       fetchDiscoveredDevices();
     }
-  }, [isConnected, status]);
+  }, [isConnected]);
 
   const [tokenSummary, setTokenSummary] = useState<AiTokenSummary | null>(() => connectionService.getTokenSummary());
   const [agentActivity, setAgentActivity] = useState<AgentActivityStatus | null>(() => connectionService.getAgentActivity());
@@ -126,11 +148,12 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
     };
   }, []);
 
-  const formatTokens = (num: number) => {
-    if (num >= 1_000_000_000) return `${(num / 1_000_000_000).toFixed(2)}B`;
-    if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(2)}M`;
-    if (num >= 1_000) return `${(num / 1_000).toFixed(1)}k`;
-    return num.toLocaleString();
+  const formatTokens = (num?: number) => {
+    const n = num || 0;
+    if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+    return n.toLocaleString();
   };
 
   const [pairError, setPairError] = useState<string | null>(null);
@@ -224,6 +247,19 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
           <span className="text-[10px] font-mono font-medium text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded-md border border-emerald-500/30">
             :8766
           </span>
+          {Boolean(
+            (agentActivity?.activeCount && agentActivity.activeCount > 0) ||
+            agentActivity?.status === 'working' ||
+            agentActivity?.status === 'thinking' ||
+            agentActivity?.status === 'waiting'
+          ) && (
+            <span
+              className="text-[9.5px] font-mono font-medium px-1.5 py-0.5 rounded-md bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 shrink-0 truncate max-w-[110px]"
+              title={`Active Agent Working Directory: ${agentActivity?.workspaceName || 'soko'}\nPath: ${agentActivity?.workspace || '/home/saurabh/coding/soko'}`}
+            >
+              📁 {agentActivity?.workspaceName || 'soko'}
+            </span>
+          )}
         </div>
 
         <button
@@ -287,6 +323,77 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
                   <Wifi size={11} className="text-emerald-400" /> Direct LAN 42MB/s
                 </span>
               </div>
+
+              {/* Manual Scan Devices while Connected */}
+              <div className="pt-2 border-t border-white/[0.06] flex items-center justify-between">
+                <span className="text-[10px] text-linear-text-tertiary font-mono">
+                  {showDiscoveredWhileConnected && discoveredDevices.length > 0
+                    ? `${discoveredDevices.length} nearby device(s)`
+                    : 'Discover other devices'}
+                </span>
+                <button
+                  onClick={() => {
+                    setShowDiscoveredWhileConnected(true);
+                    fetchDiscoveredDevices();
+                  }}
+                  disabled={isScanningDevices}
+                  className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-[#5E6AD2]/15 hover:bg-[#5E6AD2]/25 border border-[#5E6AD2]/30 text-[10.5px] text-[#818cf8] hover:text-white font-medium transition-all active:scale-95 disabled:opacity-50"
+                  title="Scan for other nearby devices"
+                >
+                  <RefreshCw size={10} className={isScanningDevices ? 'animate-spin' : ''} />
+                  <span>{isScanningDevices ? 'Scanning...' : 'Scan Devices'}</span>
+                </button>
+              </div>
+
+              {/* Discovered nearby devices list while connected */}
+              {showDiscoveredWhileConnected && (
+                <div className="pt-2 border-t border-white/[0.06] flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-semibold text-white/90">Nearby Discovered</span>
+                    <button
+                      onClick={() => setShowDiscoveredWhileConnected(false)}
+                      className="text-[9.5px] text-linear-text-tertiary hover:text-white transition-colors"
+                    >
+                      Hide
+                    </button>
+                  </div>
+                  {isScanningDevices && discoveredDevices.length === 0 ? (
+                    <div className="py-2.5 text-center text-[10px] text-linear-text-secondary flex items-center justify-center gap-1.5">
+                      <RefreshCw size={11} className="animate-spin text-[#5E6AD2]" />
+                      <span>Scanning nearby devices...</span>
+                    </div>
+                  ) : discoveredDevices.length > 0 ? (
+                    <div className="flex flex-col gap-1 max-h-[120px] overflow-y-auto pr-0.5 custom-scrollbar">
+                      {discoveredDevices.map((dev) => (
+                        <div
+                          key={dev.id}
+                          className="flex items-center justify-between p-1.5 rounded-lg bg-black/30 border border-white/[0.05] text-[10.5px]"
+                        >
+                          <div className="flex items-center gap-1.5 min-w-0 mr-1.5">
+                            {dev.transport === 'ble' ? (
+                              <Bluetooth size={11} className="text-[#5E6AD2] shrink-0" />
+                            ) : (
+                              <Wifi size={11} className="text-emerald-400 shrink-0" />
+                            )}
+                            <span className="text-white truncate font-medium">{dev.name}</span>
+                            <span className="text-[9px] text-linear-text-tertiary font-mono">{dev.rssi}dBm</span>
+                          </div>
+                          <button
+                            onClick={() => setSelectedDeviceToPair(dev)}
+                            className="px-2 py-0.5 rounded bg-[#5E6AD2]/30 hover:bg-[#5E6AD2] text-white text-[10px] font-medium transition-colors"
+                          >
+                            Pair
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="py-2 text-center text-[10px] text-linear-text-tertiary">
+                      No additional devices found.
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           ) : selectedDeviceToPair ? (
             <div className="flex flex-col gap-2.5">
@@ -399,12 +506,12 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
                 </div>
                 <button
                   onClick={fetchDiscoveredDevices}
-                  disabled={isScanning}
-                  className="flex items-center gap-1 text-[10.5px] text-[#5E6AD2] hover:text-[#7C88E8] font-mono transition-colors disabled:opacity-50"
-                  title="Rescan nearby devices"
+                  disabled={isScanningDevices}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#5E6AD2]/20 hover:bg-[#5E6AD2]/30 border border-[#5E6AD2]/40 text-[10.5px] text-[#818cf8] hover:text-white font-medium transition-all disabled:opacity-50 active:scale-95 shadow-[0_0_12px_rgba(94,106,210,0.15)]"
+                  title="Scan for nearby devices"
                 >
-                  <RefreshCw size={11} className={isScanning ? 'animate-spin' : ''} />
-                  <span>{isScanning ? 'Scanning...' : 'Scan'}</span>
+                  <RefreshCw size={11} className={isScanningDevices ? 'animate-spin' : ''} />
+                  <span>{isScanningDevices ? 'Scanning...' : 'Scan Devices'}</span>
                 </button>
               </div>
 
@@ -467,9 +574,11 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
                   </div>
                   <button
                     onClick={fetchDiscoveredDevices}
-                    className="mt-1 px-3 py-1 rounded-lg bg-[#5E6AD2] hover:bg-[#6875E3] text-white text-[10.5px] font-medium shadow-[0_0_12px_rgba(94,106,210,0.3)] active:scale-95 transition-all"
+                    disabled={isScanningDevices}
+                    className="mt-1 px-3.5 py-1.5 rounded-lg bg-[#5E6AD2] hover:bg-[#6875E3] text-white text-[10.5px] font-medium shadow-[0_0_12px_rgba(94,106,210,0.3)] active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-50"
                   >
-                    Scan Again
+                    <RefreshCw size={11} className={isScanningDevices ? 'animate-spin' : ''} />
+                    <span>{isScanningDevices ? 'Scanning...' : 'Scan Devices'}</span>
                   </button>
                 </div>
               )}
@@ -590,14 +699,18 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
                         <span className={`text-[9px] font-mono font-medium px-1.5 py-0.2 rounded border ${agentBadgeColor}`}>
                           {s.name || s.agent}
                         </span>
-                        {s.workspaceName && (
-                          <span
-                            className={`text-[9.5px] font-mono px-1.5 py-0.2 rounded border truncate max-w-[110px] shrink-0 transition-colors ${sessionTheme.bg} ${sessionTheme.text} ${sessionTheme.border}`}
-                            title={`Project: ${s.workspaceName}\nPath: ${s.workspace || s.workspaceName}`}
-                          >
-                            📁 {s.workspaceName}
-                          </span>
-                        )}
+                        {(() => {
+                          const wsName = s.workspaceName || (s.workspace ? s.workspace.split('/').filter(Boolean).pop() : '') || agentActivity?.workspaceName || 'soko';
+                          const wsPath = s.workspace || agentActivity?.workspace || wsName;
+                          return (
+                            <span
+                              className={`text-[9.5px] font-mono px-1.5 py-0.2 rounded border truncate max-w-[110px] shrink-0 transition-colors ${sessionTheme.bg} ${sessionTheme.text} ${sessionTheme.border}`}
+                              title={`Project: ${wsName}\nPath: ${wsPath}`}
+                            >
+                              📁 {wsName}
+                            </span>
+                          );
+                        })()}
                       </div>
 
                       <div className="flex items-center gap-1 shrink-0 text-[9.5px] font-mono">
@@ -671,7 +784,7 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
             <div className="flex flex-col">
               <span className="text-[8.5px] uppercase text-linear-text-tertiary">Today's Tokens</span>
               <span className="text-white font-bold text-xs tracking-tight">
-                {tokenSummary ? formatTokens(tokenSummary.todayTokens) : '...'}
+                {formatTokens(tokenSummary?.todayTokens ?? connectionService.getTokenSummary()?.todayTokens ?? 0)}
               </span>
             </div>
             <div className="flex items-center gap-1 text-[9px] text-linear-text-secondary">
@@ -703,7 +816,13 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
           </div>
           <div className="grid grid-cols-3 gap-1.5">
             <button
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => {
+                if (onSendFile) {
+                  onSendFile();
+                } else {
+                  fileInputRef.current?.click();
+                }
+              }}
               title="Select files from desktop to send to phone"
               className="flex items-center justify-center gap-1.5 py-2 px-1 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/25 hover:border-emerald-500/40 hover:shadow-[0_0_16px_rgba(52,211,153,0.3)] active:scale-[0.96] transition-all duration-150 text-[10.5px] font-semibold"
             >
@@ -862,7 +981,7 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
               <button
                 onClick={() => {
                   onClose();
-                  onOpenSettings();
+                  onOpenSettings('files');
                 }}
                 className="text-[10px] text-linear-text-secondary hover:text-white font-mono"
               >
