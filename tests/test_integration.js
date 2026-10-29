@@ -22,7 +22,7 @@ const path = require('path');
 
 const os = require('os');
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8766;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8799;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 function getTransfersDir() {
   if (process.env.SOKO_TRANSFERS_DIR) return process.env.SOKO_TRANSFERS_DIR;
