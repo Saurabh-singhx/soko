@@ -40,8 +40,10 @@ Whether you need to beam 100MB+ APKs and media files across devices in seconds w
 
 ### 🏝️ Dynamic Island Desktop HUD
 - **Top-Center Floating Island**: Frameless, transparent, and spring-physics animated desktop HUD styled with Linear dark glassmorphic aesthetics.
-- **Click-Through & Screen Adaptive**: Seamlessly floats above your IDE and active windows without blocking your cursor or screen content. Dismisses on `Escape` or outside click.
+- **Click-Through & Screen Adaptive**: Dynamic OS-level window resizing (`setBounds`) tracks exact island dimensions in real time, eliminating transparent click deadzones over browser tabs and IDE titlebars. Dismisses on `Escape` or outside click.
+- **Micro-Stutter Free & Hardware Accelerated**: Framer Motion `popLayout` transitions with GPU-promoted layout (`willChange`, `backfaceVisibility: hidden`), 60ms `ResizeObserver` debouncing, and React 18 `startTransition` rendering to eliminate jitter under heavy telemetry loads.
 - **Multi-State Fluid Layout**: Expands smoothly when notifications arrive, file transfers initiate, or CLI commands stream output.
+- **Graceful Lifecycle & In-App Quit**: Clean application shutdown (`forceQuitApp`) terminates background bridge daemons, disposes the system tray, releases single-instance locks, and intercepts `SIGINT`/`SIGTERM` with in-app quit triggers in Settings and Connection Popover.
 
 ### 🤖 Living Soko Bot Mascot
 - **OLED Micro-Avatar**: High-framerate animated cyber-mascot living inside the island.
@@ -69,6 +71,13 @@ Whether you need to beam 100MB+ APKs and media files across devices in seconds w
 - **Mobile Control Terminal**: Trigger, inspect, and monitor local command-line tasks (such as `antigravity-cli` / `agy`, Git status, or custom shell operations) straight from your phone.
 - **Live Streaming stdout**: Real-time ANSI terminal logs stream over WebSockets to your mobile companion deck.
 - **Whitelisted Sandbox**: Only commands explicitly registered in the desktop configuration can be executed, preventing arbitrary remote code execution (RCE).
+- **Active Workspace & Project Folder Discovery**: Automatically detects active project directories (e.g. `soko`, `frontend`, `backend`) for AI developer agents (Antigravity, Claude Code, Codex) by introspecting session registries, SQLite conversation summaries, and tool-call paths.
+- **Multi-Session Live Telemetry & Completion Badges**: Displays agent chips with project badges, live token usage counters (`14.5k tokens`), and wakes Soko from idle orb mode to normal mode when background tasks complete.
+
+### 🔍 Resilient Device Discovery & Scanning Guardrails
+- **One-Time Startup Scan & Manual Triggers**: Automatically scans nearby devices once on boot without overwhelming the CPU, while enabling on-demand manual rescan triggers with concurrency debounce protection.
+- **Cross-Platform Native Hardware Discovery**: Scans real Bluetooth LE peripherals via `bluetoothctl` on Linux and PowerShell `Get-PnpDevice` on Windows.
+- **Zero-Clobber Connected Defense**: Performing a manual scan while paired never disconnects or corrupts the active companion session.
 
 ### 🎵 Low-Latency Desktop Audio Streaming (Option 1 HTTP Stream)
 - **Zero-Bloat Desktop-to-Phone Audio**: Stream desktop sound (YouTube, Spotify, IDE build alerts, movies) directly to your mobile device or Bluetooth earbuds without adding a single megabyte to your APK.
@@ -248,14 +257,19 @@ Desktop clients can configure their raw Gist feed URL directly in **Settings > A
 
 ## 🧪 Testing
 
-Soko includes a comprehensive end-to-end integration test suite verifying health telemetry, notification dispatch, remote CLI whitelist enforcement, path traversal protection, and SHA-256 upload verification:
+Soko features a comprehensive multi-layered automated test suite covering zero-trust security, dynamic window layouts, character validation, workspace resolution, and full-duplex integration. The test harness auto-spawns an isolated bridge daemon on port `8799` to guarantee zero interference with running desktop sessions:
 
 ```bash
-# Start bridge and execute full test suite
-node scripts/soko_bridge.js &
-PID=$!
-npm test
-kill $PID
+# Run the complete test suite (all 6 test suites)
+npm run test:all
+
+# Run individual test suites:
+npm run test:characters    # Modular character validation & atmospheric state backgrounds
+npm run test:security      # Zero-trust SAS PIN pairing, auth tokens, & sandbox defenses
+npm run test:scanning      # Device auto-scan guardrails, concurrency debounce, & state preservation
+npm run test:workspace     # Active CLI agent workspace & working folder resolution
+npm run test:island        # Dynamic Island idle mode, token formatting, & layout defenses
+npm test                   # Character system tests & full integration suite (Port 8799)
 ```
 
 ---

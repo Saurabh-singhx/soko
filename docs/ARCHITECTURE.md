@@ -120,16 +120,24 @@ soko/
 
 ### 4.1 Desktop: Dynamic Island HUD & Multi-Window Architecture
 
-To achieve the Apple Dynamic Island experience on desktop without interfering with normal user workflow, Tauri v2's multi-window capabilities are leveraged:
+To achieve the Apple Dynamic Island experience on desktop without interfering with normal user workflow, Soko leverages a multi-window architecture with real-time physical window bounds synchronization:
 
 1. **Island Window (`dynamic-island`)**:
-   - Position: `x: (screen_width - island_width) / 2`, `y: 0`.
-   - Attributes: `always_on_top: true`, `decorations: false`, `transparent: true`, `skip_taskbar: true`.
-   - **Click-Through / Hit Testing**:
-     - When idle (compact pill), mouse events outside the pill border must pass through to whatever window is behind it (`set_ignore_cursor_events(true)` on transparent margins, or dynamically re-sizing the physical OS window dimensions to match the pill).
-     - When expanded (user hovers or notification opens), window bounds expand and capture mouse clicks.
+   - **Position**: `x: (screen_width - island_width) / 2`, `y: 0` (top-center of primary monitor).
+   - **Attributes**: `always_on_top: true`, `decorations: false`, `transparent: true`, `skip_taskbar: true`.
+   - **Click-Through & Deadzone Elimination**:
+     - Rather than keeping an oversized transparent strip that intercepts mouse clicks aimed at browser tabs or IDE titlebars, the host backend dynamically synchronizes the physical OS window boundaries (`win.setBounds()`) to match the exact pixel bounding box of the island element.
+     - When idle (compact pill), the OS window shrinks to ~180px x 36px, leaving the surrounding screen 100% click-through.
+     - When expanded (notifications, CLI streaming, file transfers), bounds expand dynamically with spring physics.
+   - **Rendering & Animation Stability**:
+     - **Debounced ResizeObserver**: Employs a 60ms debounce window on DOM size observations to break the circular feedback loop (`ResizeObserver` ➔ `setState` ➔ `win.setBounds` ➔ `ResizeObserver`).
+     - **React 18 Concurrent Transitions**: Telemetry updates, agent statuses, and pairing events are processed inside `startTransition` blocks, preventing high-frequency bridge messages from dropping frames.
+     - **Hardware Compositing**: Uses `popLayout` transitions with `willChange: transform, opacity, width, height` and `backfaceVisibility: hidden` for hardware-accelerated rendering.
+   - **Clean Lifecycle & Signal Management**:
+     - Complete application shutdown (`forceQuitApp`) terminates child bridge daemons, disposes the system notification tray, tears down open windows, and releases single-instance mutexes upon receiving `SIGINT`, `SIGTERM`, or in-app Quit actions.
+     - Startup awareness: Detects `--autostart` / `--hidden` launch arguments to keep the desktop interface quiet during system boot while automatically presenting the Settings Hub during manual user launches.
 2. **Settings Window (`main-settings`)**:
-   - A traditional decorative window used for device discovery, PIN entry, setting command whitelists, and monitoring connection health.
+   - A traditional decorative window used for device discovery, PIN entry, setting command whitelists, character customization, and monitoring connection health.
 
 ### 4.2 Reactive Mascot Character
 
@@ -178,6 +186,15 @@ Controlling developer tools like `antigravity-cli` (`agy`) or custom build scrip
    }
    ```
 3. **PTY Virtual Stream**: Output is captured in chunks and sent back to mobile over the BLE channel or buffered in memory for real-time inspection.
+4. **Multi-Session CLI Agent Registry**: The universal bridge continuously watches background CLI coding agents (Antigravity CLI, Claude Code, Codex) via `/api/agent-activity` and `/api/agent-sessions`, tracking active states, task messages, and token usage metrics.
+5. **Robust Workspace Directory Resolution**: Soko resolves the agent's exact project folder name through a 4-tier pipeline:
+   - **SQLite Database Inspection**: Queries `conversation_summaries.db` and session trajectories in `~/.gemini/antigravity*`.
+   - **Tool Parameter Trajectory Extraction**: Analyzes recent tool calls (`read_file`, `write_file`, `run_command`) to extract targeted file system paths.
+   - **Git Root & Package Boundaries**: Derives directory basenames from the nearest `.git` or `package.json` boundaries.
+   - **Environment Variable Fallback**: Honors `SOKO_WORKSPACE` when specified.
+6. **Dynamic Island Task Completion Badges & Auto-Wake**:
+   - Active agent sessions render project folder chips (`[soko]`, `[frontend]`) and cognitive mood avatars.
+   - Upon task completion, Soko automatically wakes the island from idle orb mode, highlights token statistics (`14.5k tokens`), and presents task summaries.
 
 ### 4.5 Low-Latency Desktop Audio Streaming (Option 1: HTTP Chunked Stream)
 
@@ -199,6 +216,16 @@ On Android smartphones (including OnePlus OxygenOS 14/15):
 1. **Architectural Separation**: Rather than injecting a fragile, invasive third-party window overlay (`TYPE_APPLICATION_OVERLAY`) that creates touch dead zones and clashes with native status bar notification icons or system Live Alerts, Soko relies on a clean, low-importance native background daemon (`SokoBackgroundService`).
 2. **Zero-Distraction Daemon (`soko_foreground_link`)**: Keeps local LAN / Hotspot WebSockets persistent and auto-restarts on phone reboot (`BOOT_COMPLETED`) without intrusive heads-up banners or notification shade spam.
 3. **Hardware & Compositor Analysis**: For an exhaustive technical breakdown of the display compositor conflicts, Pantanal cloud-push constraints, and why custom mobile floating overlays fail on OnePlus devices, refer to [docs/features/09-mobile-dynamic-island-fluid-cloud.md](features/09-mobile-dynamic-island-fluid-cloud.md).
+
+### 4.7 Cross-Platform Device Discovery & Scanning Guardrails
+
+To enable effortless zero-configuration pairing across diverse operating environments without incurring CPU spikes or dropped connections:
+1. **One-Time Startup Auto-Scan**: Soko triggers a single discovery scan upon initial bridge boot. Subsequent auto-scan calls are strictly no-ops, preserving battery and CPU resources.
+2. **Native Hardware Enumeration**:
+   - **Linux**: Interrogates `bluetoothctl devices` to locate real Bluetooth LE peripherals and companion headsets.
+   - **Windows**: Executes non-interactive PowerShell `Get-PnpDevice` to discover authenticated Bluetooth radios and paired peripherals without hanging on driver dialogs.
+3. **Connection State Defense**: Invoking manual scan triggers (`POST /api/devices/scan`) while a companion is actively paired preserves the active connection and socket without state clobbering.
+4. **Concurrency Debounce**: Concurrent scan triggers coalesce onto a shared in-flight promise to prevent race conditions or subprocess contention.
 
 ---
 

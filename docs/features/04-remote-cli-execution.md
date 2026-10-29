@@ -118,3 +118,31 @@ The desktop daemon maintains an explicit whitelist that can be edited in the Set
 - **Zero Shell Invocation**: The command execution never calls `/bin/sh`, `bash`, or `cmd.exe`. Arguments are passed as discrete string slices directly to the OS kernel `execve` system call.
 - **Process Isolation & Timeouts**: If a command exceeds a maximum allowed execution limit (default: 300 seconds), the desktop daemon automatically terminates the child process (`SIGKILL`).
 - **Resource Throttling**: Only **one** active CLI task can run at a time to prevent denial-of-service or runaway background jobs.
+
+---
+
+## 6. Multi-Session Telemetry & Active Project Folder Resolution
+
+In modern developer workflows, multiple AI coding agents (`Antigravity CLI`, `Claude Code`, `Codex`, `OpenCodeInterpreter`) often run in the background. Soko includes a dedicated telemetry subsystem to monitor, resolve, and display active agent operations on the Dynamic Island HUD.
+
+### 6.1 Four-Tier Workspace Resolution Pipeline
+Rather than displaying a generic agent label or blank directory, `soko_bridge.js` automatically derives the exact active project directory through a robust four-tier resolution pipeline:
+
+1. **SQLite Database Trajectory Inspection**:
+   - Queries `conversation_summaries.db` in `~/.gemini/antigravity*` to locate matching session IDs and read the recorded `workspace_dir`.
+   - Reads session trajectory JSON in `conversations/<sessionId>.db` to extract session metadata.
+2. **Tool-Call Trajectory Parsing**:
+   - Parses the active session's tool call arguments (`read_file`, `write_file`, `run_command`, `edit_file`).
+   - Extracts absolute file paths and normalizes them to determine the project root directory.
+3. **Repository Root Boundary Derivation**:
+   - Inspects the working directory tree upwards to locate `.git` or `package.json` boundaries, extracting the project basename (e.g. `soko`, `frontend-service`).
+4. **Environment Override**:
+   - Supports the `SOKO_WORKSPACE` environment variable for explicitly bounded developer environments.
+
+### 6.2 Island HUD Presentation & Auto-Wake Transitions
+- **Project Folder Chips**: Active agents display a styled project badge (e.g., `[soko]`, `[backend]`) inside the Dynamic Island HUD and the Quick Settings popover.
+- **Cognitive Mood Synchronization**: The mascot dynamically shifts moods (`working`, `thinking`, `alert`) based on agent execution states.
+- **Task Completion Notifications & Token Metrics**:
+  - When an agent completes its task, Soko automatically wakes from idle orb mode to normal mode.
+  - Displays a high-visibility completion banner highlighting formatted token usage (e.g. `14.5k tokens`) and task summaries.
+  - Automatically resets to idle after 20 seconds unless interacted with.

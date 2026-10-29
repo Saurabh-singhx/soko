@@ -33,12 +33,19 @@
 - **Why it Failed**:
   - Even with CSS `pointer-events: none` on the transparent backdrop, the operating system window manager still assigned cursor focus to the invisible window, preventing users from clicking browser tabs, window minimize/maximize buttons, or title bars.
 
-### Attempt 3: Native Dynamic Window Sizing with Tauri v2 (Selected Architecture)
-- **Concept**: Use Tauri v2 with native Rust window control. Instead of keeping a large invisible window, the Rust backend dynamically resizes the actual OS window boundaries (`window.set_size()`) and positions (`window.set_position()`) in lockstep with the UI animation.
+### Attempt 3: Tauri Native Window Sizing (Explored)
+- **Concept**: Use Tauri v2 with native Rust window control to resize actual OS window boundaries (`window.set_size()`) and positions in lockstep with UI animation.
+- **Why it was Pivoted**:
+  - While lightweight, Rust cross-compilation for varied Linux desktop compositors (GNOME Wayland, KDE KWin, XFCE) introduced complex window positioning quirks and inconsistent transparent window input pass-through on non-wlroots environments.
+
+### Attempt 4: Dynamic IPC Bounds Tracking & Debounced Feedback Loop (Production Architecture)
+- **Concept**: Use Electron + React 18 with explicit IPC window bounds tracking (`win.setBounds({ x, y, width, height })`), coupled with a 60ms `ResizeObserver` debounce and React 18 `startTransition` rendering.
 - **Why it Succeeded**:
-  - Minimal footprint: Idle memory sits under **35 MB RAM**.
-  - No hit-testing dead zones: The physical OS window only spans the exact pixel bounding box of the island.
-  - Native window handles allow setting platform-specific flags (`WS_EX_TOPMOST` on Windows, `_NET_WM_STATE_ABOVE` on Linux X11).
+  - **Zero Click Deadzones**: The native OS window strictly tracks the physical pixel bounding box of the island DOM element. When in compact pill mode, clicks directly to the left, right, or below pass directly through to underlying browser tabs and IDE titlebars.
+  - **Feedback-Loop Elimination**: DOM resizing observed by `ResizeObserver` is debounced by 60ms, permanently breaking the recursive feedback loop (`ResizeObserver` ➔ `setState` ➔ `win.setBounds` ➔ `ResizeObserver`).
+  - **Micro-Stutter Free Compositing**: Framer Motion `popLayout` transitions combined with CSS `willChange: 'transform, opacity, width, height'` and `backfaceVisibility: 'hidden'` eliminate rendering judder during rapid telemetry updates.
+  - **Clean Termination & Single-Instance Safety**: Implemented `forceQuitApp()` to gracefully kill child bridge processes, clean up system tray icons, tear down window instances, and release single-instance mutex locks on `SIGINT`/`SIGTERM` or in-app Quit.
+  - **Linux Ubuntu 24.04+ Compatibility**: Added automatic detection for unprivileged user namespaces in `run-desktop.sh`, injecting `--no-sandbox` if `chrome-sandbox` lacks root SUID.
 
 ---
 
