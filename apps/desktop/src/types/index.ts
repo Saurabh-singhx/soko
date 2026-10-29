@@ -239,7 +239,7 @@ declare global {
   interface Window {
     electronAPI?: {
       platform: string;
-      openSettings: () => void;
+      openSettings: (tab?: string) => void;
       closeSettings: () => void;
       openTransfersFolder: () => void;
       openFile: (filename: string) => void;

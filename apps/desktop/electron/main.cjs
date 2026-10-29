@@ -15,6 +15,12 @@ if (process.platform === 'linux' && !process.argv.some((arg) => arg.startsWith('
   child.on('exit', (code) => {
     process.exit(code !== null ? code : 0);
   });
+  process.on('SIGINT', () => {
+    try { child.kill('SIGINT'); } catch {}
+  });
+  process.on('SIGTERM', () => {
+    try { child.kill('SIGTERM'); } catch {}
+  });
   return;
 }
 
@@ -49,7 +55,7 @@ function getAutoStart() {
 function setAutoStart(enable) {
   // 1. Electron Native Login Item Settings (Windows & macOS)
   try {
-    const startupArgs = process.platform === 'linux' ? ['--ozone-platform=x11'] : [];
+    const startupArgs = process.platform === 'linux' ? ['--ozone-platform=x11', '--autostart'] : ['--autostart'];
     app.setLoginItemSettings({
       openAtLogin: Boolean(enable),
       path: process.execPath,
@@ -67,8 +73,8 @@ function setAutoStart(enable) {
           fs.mkdirSync(AUTOSTART_DIR, { recursive: true });
         }
         const execCmd = (app.isPackaged || fs.existsSync('/opt/Soko/soko'))
-          ? '/opt/Soko/soko --ozone-platform=x11'
-          : `${process.execPath} --ozone-platform=x11`;
+          ? '/opt/Soko/soko --ozone-platform=x11 --autostart'
+          : `${process.execPath} --ozone-platform=x11 --autostart`;
 
         const desktopContent = [
           '[Desktop Entry]',
@@ -121,6 +127,62 @@ let islandY = 0;
 let islandCenterX = 0;
 let currentIslandWidth = 330;
 let currentIslandHeight = 68;
+let isQuitting = false;
+
+function forceQuitApp() {
+  if (isQuitting) return;
+  isQuitting = true;
+  console.log('[Soko Desktop] Cleanly shutting down Soko and releasing resources...');
+
+  // 1. Gracefully terminate background bridge daemon and child processes
+  if (bridgeProcess) {
+    try {
+      bridgeProcess.kill('SIGTERM');
+    } catch {}
+  }
+
+  // 2. Destroy windows cleanly
+  try {
+    if (settingsWindow && !settingsWindow.isDestroyed()) {
+      settingsWindow.destroy();
+      settingsWindow = null;
+    }
+  } catch {}
+
+  try {
+    if (islandWindow && !islandWindow.isDestroyed()) {
+      islandWindow.destroy();
+      islandWindow = null;
+    }
+  } catch {}
+
+  // 3. Destroy tray icon so it doesn't linger in system notification area
+  try {
+    if (tray && !tray.isDestroyed()) {
+      tray.destroy();
+      tray = null;
+    }
+  } catch {}
+
+  // 4. Request Electron app quit
+  try {
+    app.quit();
+  } catch {}
+
+  // 5. Hard exit fallback to guarantee process termination and single-instance lock release
+  setTimeout(() => {
+    if (bridgeProcess) {
+      try {
+        bridgeProcess.kill('SIGKILL');
+      } catch {}
+    }
+    process.exit(0);
+  }, 350).unref();
+}
+
+// Intercept OS termination signals for clean exit
+process.on('SIGINT', () => forceQuitApp());
+process.on('SIGTERM', () => forceQuitApp());
 
 const TRANSFERS_DIR = app.isPackaged
   ? (fs.existsSync(path.resolve(process.cwd(), 'transfers'))
@@ -267,8 +329,17 @@ function createIslandWindow() {
     } catch {}
   });
 
+  islandWindow.on('close', () => {
+    if (!isQuitting) {
+      forceQuitApp();
+    }
+  });
+
   islandWindow.on('closed', () => {
     islandWindow = null;
+    if (!isQuitting) {
+      forceQuitApp();
+    }
   });
 }
 
@@ -378,7 +449,7 @@ function createTray() {
       { type: 'separator' },
       {
         label: 'Quit Soko',
-        click: () => app.quit(),
+        click: () => forceQuitApp(),
       },
     ]);
 
@@ -417,15 +488,28 @@ if (!gotTheLock) {
       try {
         islandWindow.setAlwaysOnTop(true);
       } catch {}
+      try {
+        islandWindow.webContents.send('soko:wake-to-normal-mode');
+      } catch {}
     } else {
       createIslandWindow();
     }
+    // Also bring forward or open Settings Hub so user gets immediate visual feedback
+    try {
+      openSettingsWindow();
+    } catch {}
   });
 
   app.whenReady().then(async () => {
     await ensureBridgeServer();
     createIslandWindow();
     createTray();
+
+    // If launched manually (not system boot autostart), open the main Settings & Hub window
+    const isAutostart = process.argv.includes('--autostart') || process.argv.includes('--hidden');
+    if (!isAutostart) {
+      openSettingsWindow();
+    }
 
     // Auto-register startup if not previously disabled (defaults to true for background HUD)
     try {
@@ -564,20 +648,15 @@ ipcMain.on('soko:reset-window-pos', () => {
 });
 
 ipcMain.on('soko:quit', () => {
-  app.quit();
+  forceQuitApp();
 });
 
 app.on('window-all-closed', () => {
-  // On desktop platforms, keep island running or quit if intentional
-  if (process.platform !== 'darwin' && !islandWindow) {
-    app.quit();
+  if (process.platform !== 'darwin') {
+    forceQuitApp();
   }
 });
 
 app.on('before-quit', () => {
-  if (bridgeProcess) {
-    try {
-      bridgeProcess.kill();
-    } catch {}
-  }
+  forceQuitApp();
 });

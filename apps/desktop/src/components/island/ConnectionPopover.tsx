@@ -1005,13 +1005,24 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
           <span className="text-[10px] text-linear-text-tertiary font-mono">Status: Offline</span>
         )}
 
-        <button
-          onClick={() => onOpenSettings()}
-          className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-white bg-white/[0.08] hover:bg-white/[0.14] text-[11px] font-semibold border border-white/[0.12] hover:border-white/20 hover:shadow-[0_0_14px_rgba(255,255,255,0.15)] active:scale-[0.96] transition-all duration-150 ml-auto"
-        >
-          <span>Open Settings</span>
-          <ExternalLink size={12} />
-        </button>
+        <div className="flex items-center gap-2 ml-auto">
+          <button
+            onClick={() => (window as any).electronAPI?.quitApp?.()}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 text-[11px] font-semibold border border-rose-500/25 hover:border-rose-500/40 hover:shadow-[0_0_12px_rgba(244,63,94,0.2)] active:scale-[0.96] transition-all duration-150"
+            title="Quit Soko Application"
+          >
+            <Power size={11} />
+            <span>Quit</span>
+          </button>
+
+          <button
+            onClick={() => onOpenSettings()}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-white bg-white/[0.08] hover:bg-white/[0.14] text-[11px] font-semibold border border-white/[0.12] hover:border-white/20 hover:shadow-[0_0_14px_rgba(255,255,255,0.15)] active:scale-[0.96] transition-all duration-150"
+          >
+            <span>Open Settings</span>
+            <ExternalLink size={12} />
+          </button>
+        </div>
       </div>
     </motion.div>
   );

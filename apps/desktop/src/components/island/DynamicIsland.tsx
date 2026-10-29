@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, startTransition } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Check, Zap, Play, Pause, SkipBack, SkipForward, Volume2, VolumeX } from 'lucide-react';
 import { CharacterHost } from '../../characters/CharacterHost.tsx';
@@ -384,41 +384,43 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
   // Subscribe to live CLI Agent watcher status (Subscribed once on mount)
   useEffect(() => {
     const unsubAgent = connectionService.subscribeAgentActivity((status) => {
-      setAgentStatus(status);
-      if (!status) return;
+      startTransition(() => {
+        setAgentStatus(status);
+        if (!status) return;
 
-      if (status.status === 'completed') {
-        // Agent task is done! If in idle mode, wake Soko to normal mode immediately
-        wakeToNormalMode(20000);
-        setMood('happy');
-        setTimeout(() => {
-          setMood((prev) => (prev === 'happy' ? 'idle' : prev));
-        }, 4000);
+        if (status.status === 'completed') {
+          // Agent task is done! If in idle mode, wake Soko to normal mode immediately
+          wakeToNormalMode(20000);
+          setMood('happy');
+          setTimeout(() => {
+            setMood((prev) => (prev === 'happy' ? 'idle' : prev));
+          }, 4000);
 
-        const taskMessage = status.message || status.detail || `${status.name || 'Agent'}: Task completed`;
-        setCompletedTaskNotice({
-          message: taskMessage,
-          tokensUsed: status.tokensUsed,
-          agent: status.agent,
-          name: status.name,
-          workspace: status.workspace,
-          workspaceName: status.workspaceName,
-          sessionId: status.sessionId,
-          timestamp: Date.now(),
-        });
+          const taskMessage = status.message || status.detail || `${status.name || 'Agent'}: Task completed`;
+          setCompletedTaskNotice({
+            message: taskMessage,
+            tokensUsed: status.tokensUsed,
+            agent: status.agent,
+            name: status.name,
+            workspace: status.workspace,
+            workspaceName: status.workspaceName,
+            sessionId: status.sessionId,
+            timestamp: Date.now(),
+          });
 
-        if (completedTaskTimerRef.current) {
-          clearTimeout(completedTaskTimerRef.current);
-        }
-        completedTaskTimerRef.current = setTimeout(() => {
+          if (completedTaskTimerRef.current) {
+            clearTimeout(completedTaskTimerRef.current);
+          }
+          completedTaskTimerRef.current = setTimeout(() => {
+            setCompletedTaskNotice(null);
+          }, 20000);
+        } else if (status.status === 'working' || status.status === 'thinking' || status.status === 'waiting') {
+          // Active agent running or waiting: wake Soko to normal mode
+          wakeToNormalMode(10000);
+          setMood(status.status === 'working' ? 'working' : 'thinking');
           setCompletedTaskNotice(null);
-        }, 20000);
-      } else if (status.status === 'working' || status.status === 'thinking' || status.status === 'waiting') {
-        // Active agent running or waiting: wake Soko to normal mode
-        wakeToNormalMode(10000);
-        setMood(status.status === 'working' ? 'working' : 'thinking');
-        setCompletedTaskNotice(null);
-      }
+        }
+      });
     });
     return unsubAgent;
   }, []);
@@ -555,53 +557,65 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
   // Subscribe to live connection manager events
   useEffect(() => {
     const unsubStatus = connectionService.subscribeStatus((status, dev) => {
-      setConnectionStatus(status);
-      setPairedDevice(dev);
-      setSasPin(connectionService.getSasPin());
-      if (status === 'disconnected') {
-        setMood('searching');
-      } else if (status === 'connected' && mode === 'compact') {
-        setMood('idle');
-      }
+      startTransition(() => {
+        setConnectionStatus(status);
+        setPairedDevice(dev);
+        setSasPin(connectionService.getSasPin());
+        if (status === 'disconnected') {
+          setMood('searching');
+        } else if (status === 'connected' && modeRef.current === 'compact') {
+          setMood('idle');
+        }
+      });
     });
 
     const unsubNotif = connectionService.onNotification((notif) => {
-      wakeToNormalMode();
-      setActiveNotification(notif);
-      setMood('alert');
-      setMode('notification');
-      setIsConnectionPopoverOpen(false);
+      startTransition(() => {
+        wakeToNormalMode();
+        setActiveNotification(notif);
+        setMood('alert');
+        setMode('notification');
+        setIsConnectionPopoverOpen(false);
+      });
     });
 
     const unsubCli = connectionService.onCli((cli) => {
-      wakeToNormalMode();
-      setActiveCli(cli);
-      setMood(cli.status === 'running' ? 'working' : 'happy');
-      setMode('cli');
-      setIsConnectionPopoverOpen(false);
+      startTransition(() => {
+        wakeToNormalMode();
+        setActiveCli(cli);
+        setMood(cli.status === 'running' ? 'working' : 'happy');
+        setMode('cli');
+        setIsConnectionPopoverOpen(false);
+      });
     });
 
     const unsubTransfer = connectionService.onTransfer((transfer) => {
-      wakeToNormalMode();
-      setActiveTransfer(transfer);
-      setMood(transfer.status === 'active' ? 'working' : 'happy');
-      setMode('transfer');
-      setIsConnectionPopoverOpen(false);
+      startTransition(() => {
+        wakeToNormalMode();
+        setActiveTransfer(transfer);
+        setMood(transfer.status === 'active' ? 'working' : 'happy');
+        setMode('transfer');
+        setIsConnectionPopoverOpen(false);
+      });
     });
 
     const unsubPair = connectionService.onPendingPair((pairReq) => {
-      wakeToNormalMode();
-      setPendingPair(pairReq);
-      setMood('alert');
-      setMode('pairing');
-      setIsConnectionPopoverOpen(false);
+      startTransition(() => {
+        wakeToNormalMode();
+        setPendingPair(pairReq);
+        setMood('alert');
+        setMode('pairing');
+        setIsConnectionPopoverOpen(false);
+      });
     });
 
     const unsubAudio = connectionService.onAudioStatus((status) => {
-      setAudioStatus(status);
-      if (status.isPlaying) {
-        wakeToNormalMode();
-      }
+      startTransition(() => {
+        setAudioStatus(status);
+        if (status.isPlaying) {
+          wakeToNormalMode();
+        }
+      });
     });
 
     const handleWakeEvent = () => {
@@ -618,7 +632,8 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
       unsubAudio();
       window.removeEventListener('soko:wake-to-normal-mode', handleWakeEvent);
     };
-  }, [mode]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Auto-collapse notification after delay if not actively hovered
   useEffect(() => {
@@ -685,7 +700,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
   useEffect(() => {
     const handleGlobalClick = (e: MouseEvent) => {
       if (islandRef.current && !islandRef.current.contains(e.target as Node)) {
-        if (mode === 'notification') {
+        if (modeRef.current === 'notification') {
           setMode('compact');
           setMood('idle');
           setIsBotClicked(false);
@@ -696,7 +711,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (mode === 'notification') {
+        if (modeRef.current === 'notification') {
           setMode('compact');
           setMood('idle');
           setIsBotClicked(false);
@@ -715,7 +730,8 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
       window.removeEventListener('click', handleGlobalClick);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [mode]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Arm, disarm, or reset idle timer based on mode, popover, hover state, completedTaskNotice, music playback, and active agent
   useEffect(() => {
@@ -908,8 +924,11 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
 
     updateHeight();
     const frame = requestAnimationFrame(updateHeight);
+    let roTimer: ReturnType<typeof setTimeout> | null = null;
     const ro = new ResizeObserver(() => {
-      updateHeight();
+      // Debounce to break ResizeObserver → setState → resize → ResizeObserver feedback loop
+      if (roTimer) clearTimeout(roTimer);
+      roTimer = setTimeout(updateHeight, 60);
     });
 
     if (islandRef.current) {
@@ -918,6 +937,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
 
     return () => {
       cancelAnimationFrame(frame);
+      if (roTimer) clearTimeout(roTimer);
       ro.disconnect();
     };
   }, [mode, activeNotification]);
@@ -1145,6 +1165,8 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         transition={springTransition}
         style={{
           background: characterBg || undefined,
+          willChange: 'transform, opacity, width, height',
+          backfaceVisibility: 'hidden',
         }}
         onMouseDown={handleDragStart}
         onDoubleClick={handleDoubleClick}
@@ -1288,7 +1310,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
               }}
               className={`relative z-10 flex-1 min-w-0 flex overflow-hidden ${mode === 'notification' ? 'items-start w-full' : 'items-center my-auto'}`}
             >
-              <AnimatePresence mode="wait" initial={false}>
+              <AnimatePresence mode="popLayout" initial={false}>
             {mode === 'compact' && (
               <motion.div
                 key="compact"
@@ -1389,7 +1411,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                         : 'Click to connect a device'
                     }
                   >
-                    <AnimatePresence mode="wait" initial={false}>
+                    <AnimatePresence mode="popLayout" initial={false}>
                       {isAgentRunning && currentSession && currentSession.agent ? (
                         <motion.div
                           key={`agent-${currentSession.sessionId || currentSession.agent}-${currentSession.workspaceName || agentStatus?.workspaceName || ''}`}

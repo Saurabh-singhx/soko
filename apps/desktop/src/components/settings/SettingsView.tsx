@@ -498,6 +498,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
           </div>
           <Sliders size={12} className="text-linear-text-tertiary" />
         </div>
+
+        {/* Sidebar In-App Quit Button */}
+        <button
+          onClick={() => (window as any).electronAPI?.quitApp?.()}
+          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/25 transition-all text-xs font-semibold active:scale-[0.98] shadow-sm"
+          title="Quit Soko Application"
+        >
+          <Power size={13} />
+          <span>Quit Soko App</span>
+        </button>
       </aside>
 
       {/* Main Content View */}

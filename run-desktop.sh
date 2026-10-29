@@ -39,10 +39,16 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # Linux Desktop Runner (supports Wayland and X11 via XWayland)
-if [ -x "$UNPACKED_BIN" ]; then
-  "$UNPACKED_BIN" "${STABILITY_FLAGS[@]}" "$@"
+if [ -x "/opt/Soko/soko" ]; then
+  exec /opt/Soko/soko "${STABILITY_FLAGS[@]}" "$@"
+elif [ -x "$UNPACKED_BIN" ]; then
+  # On Ubuntu 24.04+, unprivileged user namespaces require --no-sandbox if chrome-sandbox lacks root SUID
+  if [ ! -u "$SCRIPT_DIR/dist-desktop/linux-unpacked/chrome-sandbox" ]; then
+    STABILITY_FLAGS+=("--no-sandbox")
+  fi
+  exec "$UNPACKED_BIN" "${STABILITY_FLAGS[@]}" "$@"
 elif [ -x "$APPIMAGE_BIN" ]; then
-  "$APPIMAGE_BIN" --appimage-extract-and-run "${STABILITY_FLAGS[@]}" "$@"
+  exec "$APPIMAGE_BIN" --appimage-extract-and-run "${STABILITY_FLAGS[@]}" "$@"
 else
   echo "Desktop binary not found. Run 'npm run build:linux' first."
   exit 1

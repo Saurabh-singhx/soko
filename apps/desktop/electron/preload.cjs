@@ -31,3 +31,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   quitApp: () => ipcRenderer.send('soko:quit'),
 });
+
+// Forward IPC wake signal to window DOM event
+ipcRenderer.on('soko:wake-to-normal-mode', () => {
+  window.dispatchEvent(new CustomEvent('soko:wake-to-normal-mode'));
+});
