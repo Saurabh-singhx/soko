@@ -22,10 +22,12 @@ import {
   CheckCircle2,
   Zap,
   AlertTriangle,
+  QrCode,
 } from 'lucide-react';
 import { ConnectionStatus, PairedDevice, DiscoveredDevice, AiTokenSummary, AgentActivityStatus, FileTransferStatus } from '../../types/index.ts';
 import { connectionService } from '../../services/connection.ts';
 import { getAgentProjectTheme } from '../../utils/agentTheme.ts';
+import { generateQrSvg } from '../../utils/qrCode.ts';
 
 interface ConnectionPopoverProps {
   status: ConnectionStatus;
@@ -71,6 +73,8 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
   const [showDiscoveredWhileConnected, setShowDiscoveredWhileConnected] = useState(false);
   const [selectedDeviceToPair, setSelectedDeviceToPair] = useState<DiscoveredDevice | null>(null);
   const [isPairingInFlight, setIsPairingInFlight] = useState(false);
+  const [showQrModal, setShowQrModal] = useState(false);
+  const [copiedPairUri, setCopiedPairUri] = useState(false);
 
   const isMountedRef = useRef(true);
   const hasAutoScannedRef = useRef(false);
@@ -225,6 +229,23 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
   const openMobileApp = (e: React.MouseEvent) => {
     e.stopPropagation();
     window.open(mobileUrl, '_blank');
+  };
+
+  const cleanPin = sasPin.replace(/\s+/g, '');
+  const pairUri = `soko://pair?host=${primaryIp}&port=8766&pin=${cleanPin}`;
+  const qrSvg = React.useMemo(() => {
+    try {
+      return generateQrSvg(pairUri, { size: 150, margin: 2, darkColor: '#0A0C14', lightColor: '#FFFFFF' });
+    } catch {
+      return '';
+    }
+  }, [pairUri]);
+
+  const copyPairUri = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard?.writeText(pairUri);
+    setCopiedPairUri(true);
+    setTimeout(() => setCopiedPairUri(false), 2000);
   };
 
   return (
@@ -595,13 +616,27 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
                 <Globe size={11} className="text-[#5E6AD2]" />
                 <span>Mobile Link:</span>
               </div>
-              <button
-                onClick={openMobileApp}
-                className="flex items-center gap-1 text-[10px] text-[#5E6AD2] hover:text-[#7C88E8] hover:underline font-mono transition-colors"
-                title="Open companion in browser"
-              >
-                Open Web App <ExternalLink size={9} />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowQrModal(!showQrModal)}
+                  className={`flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded transition-all ${
+                    showQrModal
+                      ? 'bg-[#5E6AD2] text-white shadow-[0_0_10px_rgba(94,106,210,0.4)]'
+                      : 'text-[#818cf8] hover:text-white bg-[#5E6AD2]/15 hover:bg-[#5E6AD2]/30 border border-[#5E6AD2]/30'
+                  }`}
+                  title="Toggle QR Code for instant camera pairing"
+                >
+                  <QrCode size={10} />
+                  <span>{showQrModal ? 'Hide QR' : 'Pair via QR'}</span>
+                </button>
+                <button
+                  onClick={openMobileApp}
+                  className="flex items-center gap-1 text-[10px] text-[#5E6AD2] hover:text-[#7C88E8] hover:underline font-mono transition-colors"
+                  title="Open companion in browser"
+                >
+                  Open Web App <ExternalLink size={9} />
+                </button>
+              </div>
             </div>
 
             <div className="flex items-center justify-between bg-black/40 px-2 py-1 rounded-lg border border-white/[0.06] font-mono text-[11px]">
@@ -615,6 +650,58 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
               </button>
             </div>
           </div>
+
+          {/* Instant QR Pairing Card */}
+          {showQrModal && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.2 }}
+              className="flex flex-col items-center justify-center p-2.5 rounded-xl bg-black/60 border border-[#5E6AD2]/30 shadow-[0_8px_24px_rgba(0,0,0,0.5)] gap-2 text-center"
+            >
+              <div className="flex items-center justify-between w-full pb-1 border-b border-white/[0.06]">
+                <span className="text-[10px] font-semibold text-white/90 flex items-center gap-1">
+                  <QrCode size={11} className="text-[#818cf8]" />
+                  Instant QR Pairing
+                </span>
+                <span className="text-[9px] font-mono text-emerald-400 bg-emerald-500/10 px-1.5 py-0.2 rounded border border-emerald-500/20">
+                  Zero-Config
+                </span>
+              </div>
+
+              {/* Rendered SVG QR code */}
+              <div
+                className="p-2 bg-white rounded-xl shadow-[0_0_20px_rgba(255,255,255,0.15)] flex items-center justify-center cursor-pointer hover:scale-[1.02] transition-transform"
+                title="Scan with phone camera or companion"
+                onClick={copyPairUri}
+                dangerouslySetInnerHTML={{ __html: qrSvg }}
+              />
+
+              <div className="flex flex-col items-center gap-0.5">
+                <span className="text-[9.5px] text-white/80 font-medium">
+                  Scan with mobile camera or Soko companion
+                </span>
+                <span className="text-[9px] text-linear-text-tertiary">
+                  Handshake completes automatically without typing PIN
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between w-full pt-1.5 border-t border-white/[0.06] text-[10px]">
+                <span className="font-mono text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/25">
+                  PIN: {sasPin}
+                </span>
+                <button
+                  onClick={copyPairUri}
+                  className="flex items-center gap-1 text-[10px] text-[#818cf8] hover:text-white transition-colors"
+                  title="Copy soko://pair URI"
+                >
+                  {copiedPairUri ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
+                  <span>{copiedPairUri ? 'URI Copied!' : 'Copy URI'}</span>
+                </button>
+              </div>
+            </motion.div>
+          )}
 
           {/* SAS PIN Row */}
           <div className="flex items-center justify-between pt-1.5 border-t border-white/[0.05]">

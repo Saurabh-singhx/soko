@@ -16,6 +16,7 @@
  */
 
 const http = require('http');
+const https = require('https');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -63,6 +64,47 @@ function request(method, pathName, body = null, headers = {}) {
             parsed = data;
           }
           resolve({ status: res.statusCode, headers: res.headers, data: parsed });
+        });
+      }
+    );
+    req.on('error', reject);
+    if (body) {
+      if (Buffer.isBuffer(body)) {
+        req.write(body);
+      } else if (typeof body === 'object') {
+        req.write(JSON.stringify(body));
+      } else {
+        req.write(body);
+      }
+    }
+    req.end();
+  });
+}
+
+function requestHttps(method, pathName, body = null, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(pathName, `https://127.0.0.1:${TEST_PORT}`);
+    const req = https.request(
+      url,
+      {
+        method,
+        rejectUnauthorized: false, // Self-signed test cert
+        headers: {
+          'Content-Type': 'application/json',
+          ...headers,
+        },
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          let parsed = null;
+          try {
+            parsed = JSON.parse(data);
+          } catch {
+            parsed = data;
+          }
+          resolve({ status: res.statusCode, headers: res.headers, data: parsed, socket: res.socket });
         });
       }
     );
@@ -589,6 +631,123 @@ async function runSecurityTests() {
     assert(tokenUpdate && tokenUpdate.packetType === 'TOKEN_STATS_UPDATE', 'Authorized WebSocket receives TOKEN_STATS_UPDATE');
 
     wsClient.socket.destroy();
+
+    // ============================================================================
+    // SUITE 7: TRANSPORT LAYER SECURITY (TLS / HTTPS & WSS)
+    // ============================================================================
+    console.log('\n[Suite 7/10] Transport Layer Security (TLS / HTTPS & WSS)');
+    // 7a. Native HTTPS GET /api/status succeeds over encrypted channel
+    const resHttpsStatus = await requestHttps('GET', '/api/status');
+    assert(resHttpsStatus.status === 200, 'GET /api/status over HTTPS returns HTTP 200');
+    assert(resHttpsStatus.data?.tlsEnabled === true, 'Telemetry reports tlsEnabled: true');
+    assert(typeof resHttpsStatus.data?.certFingerprint === 'string' && resHttpsStatus.data.certFingerprint.startsWith('SHA256:'), 'Exports valid SHA-256 certificate fingerprint');
+
+    // 7b. Verify TLS private key file permissions in secure OS config directory
+    const keyFilePath = path.join(TEST_CONFIG_DIR, 'certs', 'bridge_key.pem');
+    assert(fs.existsSync(keyFilePath), 'bridge_key.pem exists in OS configuration directory');
+    if (os.platform() !== 'win32') {
+      const keyStat = fs.statSync(keyFilePath);
+      assert((keyStat.mode & 0o777) === 0o600, 'TLS private key has strict 0600 file permissions');
+    }
+
+    // 7c. Plaintext HTTP continues to function on the same port via multiplexing
+    const resHttpStatus = await request('GET', '/api/status');
+    assert(resHttpStatus.status === 200, 'GET /api/status over HTTP continues to function (multiplexed)');
+
+    // ============================================================================
+    // SUITE 8: PIN BRUTE-FORCE PROGRESSIVE DELAY & RATE LIMITING
+    // ============================================================================
+    console.log('\n[Suite 8/10] PIN Brute-Force Progressive Delay & Rate Limiting');
+    const attackerHeaders = { 'x-simulate-remote-ip': '10.88.99.123' };
+
+    // 8a. Attempts 1 and 2: normal PIN_MISMATCH
+    const bf1 = await request('POST', '/api/pair', { deviceId: 'attacker-1', pin: '111111' }, attackerHeaders);
+    assert(bf1.status === 400 && bf1.data?.error === 'PIN_MISMATCH', 'Failed attempt 1 returns 400 PIN_MISMATCH');
+
+    const bf2 = await request('POST', '/api/pair', { deviceId: 'attacker-1', pin: '222222' }, attackerHeaders);
+    assert(bf2.status === 400 && bf2.data?.error === 'PIN_MISMATCH', 'Failed attempt 2 returns 400 PIN_MISMATCH');
+
+    // 8b. Attempt 3: triggers 15s progressive delay
+    const bf3 = await request('POST', '/api/pair', { deviceId: 'attacker-1', pin: '333333' }, attackerHeaders);
+    assert(bf3.status === 400 && bf3.data?.retryAfter > 0, 'Failed attempt 3 applies progressive delay cooldown');
+
+    // 8c. Immediate attempt 4 while in cooldown returns HTTP 429 Too Many Requests
+    const bf4 = await request('POST', '/api/pair', { deviceId: 'attacker-1', pin: '444444' }, attackerHeaders);
+    assert(bf4.status === 429, 'Attempt during cooldown rejected with HTTP 429 Too Many Requests');
+    assert(bf4.data?.error === 'RATE_LIMITED', 'Error code specifies RATE_LIMITED');
+    assert(Boolean(bf4.headers?.['retry-after']), 'Response includes standard Retry-After header');
+
+    // ============================================================================
+    // SUITE 9: STRICT CORS & DNS REBINDING HOST HEADER HARDENING
+    // ============================================================================
+    console.log('\n[Suite 9/10] Strict CORS & DNS Rebinding Host Header Hardening');
+    // 9a. Host header validation: DNS rebinding attempt blocked
+    const resEvilHost = await request('GET', '/api/status', null, { host: 'evil-attacker.com' });
+    assert(resEvilHost.status === 400, 'Foreign Host header (evil-attacker.com) rejected with HTTP 400 Bad Request');
+
+    // 9b. Malicious Origin header blocked with HTTP 403 Forbidden
+    const resEvilOrigin = await request('GET', '/api/status', null, { origin: 'https://malicious-site.org' });
+    assert(resEvilOrigin.status === 403, 'Untrusted browser Origin (malicious-site.org) blocked with HTTP 403 Forbidden');
+
+    // 9c. Legitimate origin receives reflected origin, NOT wildcard '*'
+    const resGoodOrigin = await request('GET', '/api/status', null, { origin: 'http://localhost:5173' });
+    assert(resGoodOrigin.status === 200, 'Legitimate Origin accepted with HTTP 200');
+    assert(resGoodOrigin.headers['access-control-allow-origin'] === 'http://localhost:5173', 'Access-Control-Allow-Origin reflects explicit origin (never "*")');
+    assert(resGoodOrigin.headers['vary']?.includes('Origin'), 'Vary: Origin header attached');
+
+    // ============================================================================
+    // SUITE 10: BEARER TOKEN EXPIRATION, ROTATION & REVOKE ALL SESSIONS
+    // ============================================================================
+    console.log('\n[Suite 10/10] Bearer Token Expiration, Rotation & Revoke All Sessions');
+    // 10a. Rotate token via /api/auth/refresh using refreshToken from initial pairing
+    const initialRefresh = resStatusPoll.data?.refreshToken;
+    assert(typeof initialRefresh === 'string' && initialRefresh.length === 32, 'Initial pair returned valid 128-bit refresh token');
+
+    const resRotate = await request('POST', '/api/auth/refresh', {
+      refreshToken: initialRefresh,
+      deviceId: testDeviceId,
+    });
+    assert(resRotate.status === 200, 'POST /api/auth/refresh succeeds with HTTP 200');
+    assert(resRotate.data?.success === true, 'Token rotation confirmed');
+    const newRotatedToken = resRotate.data?.token;
+    const newRotatedRefresh = resRotate.data?.refreshToken;
+    assert(newRotatedToken && newRotatedToken !== bearerToken, 'Issued fresh rotated Bearer token');
+    assert(newRotatedRefresh && newRotatedRefresh !== initialRefresh, 'Issued fresh rotated refresh token');
+
+    // 10b. Old token is now invalidated
+    const resOldTokenTest = await request('GET', '/api/tokens', null, {
+      'x-simulate-remote-ip': '192.168.31.155',
+      authorization: `Bearer ${bearerToken}`,
+    });
+    assert(resOldTokenTest.status === 401, 'Old Bearer token rejected with HTTP 401 Unauthorized after rotation');
+
+    // 10c. New rotated token works for authorized operations
+    const resNewTokenTest = await request('GET', '/api/tokens', null, {
+      'x-simulate-remote-ip': '192.168.31.155',
+      authorization: `Bearer ${newRotatedToken}`,
+    });
+    assert(resNewTokenTest.status === 200, 'New rotated Bearer token accepted with HTTP 200 OK');
+
+    // 10d. Revoke All Sessions
+    const resRevokeAll = await request('POST', '/api/auth/revoke-all', {}, {
+      'x-simulate-remote-ip': '192.168.31.155',
+      authorization: `Bearer ${newRotatedToken}`,
+    });
+    assert(resRevokeAll.status === 200, 'POST /api/auth/revoke-all returns HTTP 200');
+    assert(resRevokeAll.data?.success === true, 'Revoke all sessions reports success: true');
+    assert(resRevokeAll.data?.revokedCount >= 1, 'Revocation count reports cleared sessions');
+
+    // 10e. Subsequent requests with rotated token are now rejected
+    const resPostRevoke = await request('GET', '/api/tokens', null, {
+      'x-simulate-remote-ip': '192.168.31.155',
+      authorization: `Bearer ${newRotatedToken}`,
+    });
+    assert(resPostRevoke.status === 401, 'Requests with revoked tokens are immediately rejected with HTTP 401');
+
+    // 10f. System transitions cleanly to requiresPairing: true
+    const resFinalStatus = await request('GET', '/api/status');
+    assert(resFinalStatus.data?.pairedDevice === null, 'pairedDevice is strictly null after Revoke All Sessions');
+    assert(resFinalStatus.data?.requiresPairing === true, 'requiresPairing is true');
 
     console.log('\n================================================================');
     console.log(` RESULTS: ${passedTests} / ${totalTests} security tests passed (${Math.round((passedTests / totalTests) * 100)}%)`);

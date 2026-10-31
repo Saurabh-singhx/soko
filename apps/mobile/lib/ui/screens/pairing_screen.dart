@@ -106,11 +106,11 @@ class _PairingScreenState extends State<PairingScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          "Saurabh's Desktop",
+                          "Soko Desktop HUD",
                           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
                         ),
                         Text(
-                          isConnected ? 'Connected & Verified' : 'Available for Pairing',
+                          isConnected ? 'Connected & Verified' : 'mDNS Discovered (_soko._tcp.local)',
                           style: TextStyle(
                             color: isConnected ? GlassTheme.emeraldAccent : Colors.white54,
                             fontSize: 12,
@@ -136,6 +136,53 @@ class _PairingScreenState extends State<PairingScreen> {
                     child: Text(isConnected ? 'Disconnect' : 'Connect'),
                   ),
                 ],
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // QR Code Instant Scan Action
+            GlassCard(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              child: InkWell(
+                onTap: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Camera QR Scanner: Scan desktop Dynamic Island to pair instantly'),
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                },
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: GlassTheme.purpleAccent.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: GlassTheme.purpleAccent.withOpacity(0.3)),
+                      ),
+                      child: const Icon(Icons.qr_code_scanner_rounded, color: GlassTheme.purpleAccent, size: 22),
+                    ),
+                    const SizedBox(width: 14),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Scan Desktop QR Code',
+                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14),
+                          ),
+                          Text(
+                            'Zero-configuration 1-tap instant handshake',
+                            style: TextStyle(color: Colors.white54, fontSize: 11),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Icon(Icons.chevron_right_rounded, color: Colors.white38),
+                  ],
+                ),
               ),
             ),
           ],

@@ -1,0 +1,21 @@
+{
+  "name": "@soko/discovery",
+  "version": "1.0.3",
+  "description": "Zero-configuration network discovery (mDNS / Zeroconf) and QR-code pairing engine for Soko",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "scripts": {
+    "test": "node tests/discovery_unit.test.js"
+  },
+  "keywords": [
+    "soko",
+    "mdns",
+    "bonjour",
+    "zeroconf",
+    "qr-code",
+    "zero-config",
+    "pairing"
+  ],
+  "author": "Soko Team",
+  "license": "MIT"
+}

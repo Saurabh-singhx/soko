@@ -1,0 +1,20 @@
+{
+  "name": "@soko/security",
+  "version": "1.0.0",
+  "description": "Zero-Trust Security Engine: TLS, PIN Rate Limiting, OS-standard Trust Store, CORS/Host Hardening, and Token Rotation",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "scripts": {
+    "test": "node tests/security_unit.test.js"
+  },
+  "keywords": [
+    "soko",
+    "security",
+    "zero-trust",
+    "tls",
+    "rate-limiting",
+    "token-rotation"
+  ],
+  "author": "Soko Project",
+  "license": "MIT"
+}

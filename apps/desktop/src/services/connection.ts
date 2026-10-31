@@ -45,6 +45,7 @@ class ConnectionManager {
   private activeClients: number = 0;
   private isBridgeConnected: boolean = false;
   private lastPingSentAt: number = 0;
+  private certFingerprint: string | null = null;
 
   private statusListeners: Set<ConnectionEventListener> = new Set();
   private notificationListeners: Set<NotificationListener> = new Set();
@@ -128,6 +129,49 @@ class ConnectionManager {
 
   public isBridgeOnline(): boolean {
     return this.isBridgeConnected;
+  }
+
+  public getCertFingerprint(): string | null {
+    return this.certFingerprint;
+  }
+
+  public async revokeAllSessions(): Promise<{ success: boolean; revokedCount?: number }> {
+    const httpUrl = this.bridgeUrl.replace(/^ws/, 'http');
+    try {
+      const res = await fetch(`${httpUrl}/api/auth/revoke-all`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        this.activeDevice = null;
+        this.status = 'disconnected';
+        this.notifyStatus();
+        return { success: true, revokedCount: data.revokedCount };
+      }
+    } catch (e) {
+      console.warn('[ConnectionManager] Failed to revoke all sessions via HTTP:', e);
+    }
+
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(
+        JSON.stringify({
+          magic: 'SK',
+          version: 1,
+          packetId: Date.now(),
+          timestamp: Date.now(),
+          packetType: 'REVOKE_ALL_SESSIONS',
+          payload: {},
+        })
+      );
+      this.activeDevice = null;
+      this.status = 'disconnected';
+      this.notifyStatus();
+      return { success: true };
+    }
+    return { success: false };
   }
 
   public getActiveClients(): number {
@@ -768,6 +812,9 @@ class ConnectionManager {
     switch (packet.packetType) {
       case 'BRIDGE_STATUS':
         if (packet.payload) {
+          if (packet.payload.certFingerprint) {
+            this.certFingerprint = packet.payload.certFingerprint;
+          }
           if (Array.isArray(packet.payload.localIps) && packet.payload.localIps.length > 0) {
             this.localIps = packet.payload.localIps;
           }
@@ -903,9 +950,21 @@ class ConnectionManager {
 
       case 'PAIR_CONFIRM':
         if (packet.payload) {
+          if (packet.payload.certFingerprint) {
+            this.certFingerprint = packet.payload.certFingerprint;
+          }
           this.currentPendingPair = null;
           this.status = 'connected';
           this.notifyStatus();
+        }
+        break;
+
+      case 'SECURITY_ALERT':
+        if (packet.payload) {
+          console.warn('[ConnectionManager] Security alert received:', packet.payload);
+          try {
+            window.dispatchEvent(new CustomEvent('soko:security-alert', { detail: packet.payload }));
+          } catch {}
         }
         break;
 

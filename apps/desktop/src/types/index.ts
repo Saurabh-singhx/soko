@@ -140,7 +140,13 @@ export interface SokoPacketEnvelope {
     | 'AGENT_ACTIVITY_STATUS'
     | 'FETCH_AGENT_SESSIONS'
     | 'SET_FOCUSED_AGENT_SESSION'
-    | 'SIMULATE_AGENT_ACTIVITY';
+    | 'SIMULATE_AGENT_ACTIVITY'
+    | 'SECURITY_ALERT'
+    | 'TOKEN_REFRESH'
+    | 'TOKEN_REFRESH_CONFIRM'
+    | 'REVOKE_ALL_SESSIONS'
+    | 'REVOKE_ALL_CONFIRM'
+    | 'DEVICE_UNPAIRED';
   payload: Record<string, any>;
 }
 

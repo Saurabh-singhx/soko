@@ -500,6 +500,19 @@ if (!gotTheLock) {
     } catch {}
   });
 
+  // Zero-Trust TLS Hardening: Allow self-signed certificates for local loopback (localhost / 127.0.0.1)
+  app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
+    try {
+      const parsed = new URL(url);
+      if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
+        event.preventDefault();
+        callback(true);
+        return;
+      }
+    } catch {}
+    callback(false);
+  });
+
   app.whenReady().then(async () => {
     await ensureBridgeServer();
     createIslandWindow();

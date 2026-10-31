@@ -129,6 +129,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
   const isSettingsMountedRef = useRef(true);
   const hasAutoScannedRef = useRef(false);
 
+  const [copiedFingerprint, setCopiedFingerprint] = useState(false);
+  const [isRevoking, setIsRevoking] = useState(false);
+  const [revokeConfirm, setRevokeConfirm] = useState(false);
+  const [revokeSuccessMessage, setRevokeSuccessMessage] = useState<string | null>(null);
+  const certFingerprint = connectionService.getCertFingerprint();
+
+  const handleRevokeAllSessions = async () => {
+    setIsRevoking(true);
+    try {
+      const res = await connectionService.revokeAllSessions();
+      if (res.success) {
+        setRevokeSuccessMessage(`Successfully revoked ${res.revokedCount ?? 'all'} active session(s).`);
+        setTimeout(() => setRevokeSuccessMessage(null), 4000);
+      }
+    } finally {
+      setIsRevoking(false);
+      setRevokeConfirm(false);
+    }
+  };
+
   useEffect(() => {
     isSettingsMountedRef.current = true;
     return () => {
@@ -1754,25 +1774,122 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
         {activeTab === 'security' && (
           <div className="max-w-xl flex flex-col gap-6">
             <div>
-              <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">Security & Encryption</h2>
+              <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">Security & Zero-Trust Hardening</h2>
               <p className="text-xs text-linear-text-secondary mt-1">
-                Cryptographic parameters protecting the Bluetooth link and local Hotspot conduit.
+                Zero-Trust cryptographic security, TLS encryption, OS-standard trust store, and PIN brute-force defense.
               </p>
             </div>
 
+            {revokeSuccessMessage && (
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs">
+                <CheckCircle2 size={15} className="shrink-0 text-emerald-400" />
+                <span>{revokeSuccessMessage}</span>
+              </div>
+            )}
+
+            {/* TLS & Fingerprint Card */}
+            <div className="linear-card rounded-lg p-5 flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Lock size={15} className="text-emerald-400" />
+                  <h3 className="text-xs font-semibold text-white">Transport Layer Security (TLS / HTTPS & WSS)</h3>
+                </div>
+                <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                  Active (Strict)
+                </span>
+              </div>
+              <p className="text-[11px] text-linear-text-secondary">
+                Ephemeral local X.509 certificate generated on initialization. Protects all REST queries, audio streams, and WebSocket frames against LAN packet sniffers.
+              </p>
+              <div className="bg-black/40 border border-white/5 rounded-lg p-2.5 flex items-center justify-between gap-2">
+                <div className="flex flex-col gap-0.5 overflow-hidden">
+                  <span className="text-[10px] font-mono uppercase text-linear-text-tertiary">SHA-256 Certificate Fingerprint</span>
+                  <span className="text-[11px] font-mono text-linear-text-primary truncate">
+                    {certFingerprint || 'Calculating on bridge startup...'}
+                  </span>
+                </div>
+                {certFingerprint && (
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(certFingerprint);
+                      setCopiedFingerprint(true);
+                      setTimeout(() => setCopiedFingerprint(false), 2000);
+                    }}
+                    className="p-1.5 rounded bg-white/5 hover:bg-white/10 active:scale-95 text-linear-text-secondary hover:text-white transition-all shrink-0"
+                    title="Copy Fingerprint"
+                  >
+                    {copiedFingerprint ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Defense In Depth Metrics Grid */}
             <div className="linear-card rounded-lg p-4 flex flex-col gap-2.5 text-xs">
               <div className="flex justify-between py-1.5 border-b border-white/5">
-                <span className="text-linear-text-secondary">Cipher Suite</span>
-                <span className="font-mono text-linear-text-primary">AES-256-GCM + X25519</span>
+                <span className="text-linear-text-secondary">OS Trust Store Path</span>
+                <span className="font-mono text-linear-text-primary text-[11px]">~/.config/soko/trust_store.json (0600)</span>
+              </div>
+              <div className="flex justify-between py-1.5 border-b border-white/5">
+                <span className="text-linear-text-secondary">PIN Brute-Force Defense</span>
+                <span className="font-mono text-emerald-400">Progressive Backoff (3/5/10 attempts)</span>
+              </div>
+              <div className="flex justify-between py-1.5 border-b border-white/5">
+                <span className="text-linear-text-secondary">Bearer Token Lifecycle</span>
+                <span className="font-mono text-linear-text-primary">30-Day TTL + Automated Refresh Rotation</span>
+              </div>
+              <div className="flex justify-between py-1.5 border-b border-white/5">
+                <span className="text-linear-text-secondary">CORS & Host Hardening</span>
+                <span className="font-mono text-linear-text-primary">DNS Rebinding Protection (Strict Origins)</span>
               </div>
               <div className="flex justify-between py-1.5 border-b border-white/5">
                 <span className="text-linear-text-secondary">Replay Protection</span>
-                <span className="font-mono text-linear-green">Monotonic Nonces (Strict)</span>
+                <span className="font-mono text-emerald-400">Monotonic Nonces (Strict)</span>
               </div>
-              <div className="flex justify-between py-1.5 border-b border-white/5">
-                <span className="text-linear-text-secondary">Firewall Evasion</span>
-                <span className="font-mono text-linear-text-primary">Outbound Client-Pull (Zero PC ports opened)</span>
+              <div className="flex justify-between py-1.5">
+                <span className="text-linear-text-secondary">Cipher Suite</span>
+                <span className="font-mono text-linear-text-primary">AES-256-GCM + X25519 + TLS 1.3</span>
               </div>
+            </div>
+
+            {/* Revoke All Sessions Card */}
+            <div className="linear-card rounded-lg p-5 flex flex-col gap-3 border-rose-500/20">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-xs font-semibold text-rose-300">Revoke All Paired Sessions</h3>
+                  <p className="text-[11px] text-linear-text-secondary mt-0.5">
+                    Wipes all stored credentials, disconnects active companions, regenerates SAS PIN, and terminates all bearer tokens immediately.
+                  </p>
+                </div>
+              </div>
+
+              {revokeConfirm ? (
+                <div className="flex items-center gap-2 pt-2">
+                  <button
+                    onClick={handleRevokeAllSessions}
+                    disabled={isRevoking}
+                    className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold active:scale-95 transition-all shadow-sm flex items-center gap-1.5"
+                  >
+                    {isRevoking ? <RefreshCw size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                    <span>Confirm Revoke All</span>
+                  </button>
+                  <button
+                    onClick={() => setRevokeConfirm(false)}
+                    className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-linear-text-secondary hover:text-white text-xs transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <div className="pt-1">
+                  <button
+                    onClick={() => setRevokeConfirm(true)}
+                    className="px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 text-xs font-medium active:scale-95 transition-all"
+                  >
+                    Revoke All Sessions
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}

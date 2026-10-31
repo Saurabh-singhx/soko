@@ -23,11 +23,36 @@
  */
 
 const http = require('http');
+const https = require('https');
+const net = require('net');
+const tls = require('tls');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const { spawn, exec, execSync } = require('child_process');
+
+const {
+  TrustStore,
+  RateLimiter,
+  CorsHardener,
+  TokenManager,
+  TlsEngine,
+  resolveConfigDir,
+  getSecurityPaths,
+  DEFAULT_TOKEN_TTL_MS,
+} = require(path.resolve(__dirname, '../packages/security'));
+
+const {
+  MdnsAdvertiser,
+  buildDiscoveryMetadata,
+  handleDiscoveryHttpRequest,
+  createPairingPayload,
+  parsePairingPayload,
+  generateQrSvg,
+} = require(path.resolve(__dirname, '../packages/discovery'));
+
+let mdnsAdvertiser = null;
 
 let appVersion = '1.0.0';
 try {
@@ -788,29 +813,50 @@ function generateRandomPin() {
 let activeSasPin = generateRandomPin();
 console.log(`[Security] Active SAS Pairing PIN initialized: ${activeSasPin}`);
 
-// Persistent Trust Store for authorized devices (docs/features/06-security-and-pairing.md)
-const TRUST_STORE_PATH = path.resolve(TRANSFERS_DIR, '.trust_store.json');
-function loadTrustStore() {
-  try {
-    if (fs.existsSync(TRUST_STORE_PATH)) {
-      const raw = fs.readFileSync(TRUST_STORE_PATH, 'utf8');
-      const data = JSON.parse(raw);
-      return new Map(Object.entries(data));
-    }
-  } catch {}
-  return new Map();
-}
+// Persistent OS-standard Trust Store for authorized devices
+const SOKO_CONFIG_DIR = resolveConfigDir();
+const securityPaths = getSecurityPaths(SOKO_CONFIG_DIR);
+
+const trustStore = new TrustStore({
+  configDir: SOKO_CONFIG_DIR,
+  legacyTransfersDir: TRANSFERS_DIR,
+});
+const trustedDevices = trustStore;
 
 function saveTrustStore(store) {
-  try {
-    const obj = Object.fromEntries(store);
-    fs.writeFileSync(TRUST_STORE_PATH, JSON.stringify(obj, null, 2), 'utf8');
-  } catch (e) {
-    console.warn('[Security] Failed to save trust store:', e.message);
-  }
+  trustStore.save();
 }
 
-const trustedDevices = loadTrustStore();
+const tokenManager = new TokenManager(trustStore, { tokenTtlMs: DEFAULT_TOKEN_TTL_MS });
+const rateLimiter = new RateLimiter();
+const corsHardener = new CorsHardener({
+  port: PORT,
+  getLocalIps,
+});
+const tlsEngine = new TlsEngine({
+  configDir: SOKO_CONFIG_DIR,
+  getLocalIps,
+});
+const tlsInfo = tlsEngine.initialize();
+
+rateLimiter.onAlert((alert) => {
+  console.warn(`[Security Alert] ${alert.message}`);
+  broadcastPacket({
+    magic: 'SK',
+    version: 1,
+    packetId: Date.now(),
+    timestamp: Date.now(),
+    packetType: 'SECURITY_ALERT',
+    payload: {
+      type: 'RATE_LIMIT_ALERT',
+      alertType: alert.alertType,
+      ip: alert.ip,
+      attempts: alert.attempts,
+      retryAfter: alert.retryAfter,
+      message: alert.message,
+    },
+  });
+});
 // Note: pairedDevice represents an actively connected and verified companion device.
 // Stored devices in trustedDevices must connect and present their valid token before pairedDevice is set.
 // A freshly installed app has no token and must pair via SAS PIN first.
@@ -2666,16 +2712,25 @@ function cleanupMusicConnector() {
 }
 
 process.on('SIGINT', () => {
+  if (mdnsAdvertiser) {
+    try { mdnsAdvertiser.stop(); } catch {}
+  }
   cleanupMusicConnector();
   process.exit(0);
 });
 
 process.on('SIGTERM', () => {
+  if (mdnsAdvertiser) {
+    try { mdnsAdvertiser.stop(); } catch {}
+  }
   cleanupMusicConnector();
   process.exit(0);
 });
 
 process.on('exit', () => {
+  if (mdnsAdvertiser) {
+    try { mdnsAdvertiser.stop(); } catch {}
+  }
   cleanupMusicConnector();
 });
 
@@ -2961,6 +3016,8 @@ function createWebSocketServer(server) {
         pairedDevice: pairedDevice && pairedDevice.isAuthorized ? pairedDevice : null,
         discoveredDevice: discovered[0] || null,
         discoveredDevices: discovered,
+        certFingerprint: tlsEngine.getFingerprint(),
+        tlsEnabled: true,
       },
     });
 
@@ -2981,6 +3038,8 @@ function createWebSocketServer(server) {
         pairedDevice: pairedDevice && pairedDevice.isAuthorized ? pairedDevice : null,
         discoveredDevice: discovered[0] || null,
         discoveredDevices: discovered,
+        certFingerprint: tlsEngine.getFingerprint(),
+        tlsEnabled: true,
       },
     }, socket);
 
@@ -3097,6 +3156,14 @@ function handleWsFrame(socket, buffer) {
         }
       }
       if (matchedDev) {
+        // Enforce 30-day TTL: check if token expired
+        const validation = tokenManager.validateToken(presentedToken);
+        if (validation.expired) {
+          console.warn(`[Security Alert] Presented token for device ${matchedId} has expired (> 30 days old). Rejecting auto-auth.`);
+          matchedDev = null;
+        }
+      }
+      if (matchedDev) {
         socket.isAuthorized = true;
         socket.deviceId = matchedId;
         socket.deviceName = matchedDev.name;
@@ -3142,6 +3209,28 @@ function handleWsFrame(socket, buffer) {
       const deviceId = packet.payload?.deviceId || `dev-${Date.now()}`;
       const token = packet.payload?.token;
 
+      // Rate limit defense check on socket remote IP
+      const rateCheck = rateLimiter.checkLimit(socket.remoteAddress);
+      if (!rateCheck.allowed) {
+        console.warn(`[Security Alert] Blocked rate-limited pair request from ${socket.remoteAddress} (retryAfter: ${rateCheck.retryAfter}s)`);
+        sendWsPacket(socket, {
+          magic: 'SK',
+          version: 1,
+          packetId: Date.now(),
+          timestamp: Date.now(),
+          packetType: 'PAIR_REJECT',
+          payload: {
+            status: 'rejected',
+            error: rateCheck.reason,
+            retryAfter: rateCheck.retryAfter,
+            message: rateCheck.reason === 'IP_BLOCKED'
+              ? `IP temporarily blocked due to excessive failed PIN attempts. Retry in ${rateCheck.retryAfter}s.`
+              : `Too many failed attempts. Rate limited. Retry in ${rateCheck.retryAfter}s.`,
+          },
+        });
+        return;
+      }
+
       // Check if already in persistent trusted devices
       let trusted = token && deviceId ? trustedDevices.get(deviceId) : null;
       let matchedDevId = deviceId;
@@ -3156,6 +3245,24 @@ function handleWsFrame(socket, buffer) {
       }
 
       if (token && trusted && trusted.token === token) {
+        const tokenValidation = tokenManager.validateToken(token);
+        if (tokenValidation.expired) {
+          console.warn(`[Security Alert] Reconnect attempt with expired token from ${socket.remoteAddress}`);
+          sendWsPacket(socket, {
+            magic: 'SK',
+            version: 1,
+            packetId: Date.now(),
+            timestamp: Date.now(),
+            packetType: 'PAIR_REJECT',
+            payload: {
+              status: 'rejected',
+              error: 'SESSION_EXPIRED',
+              message: 'Bearer token expired (> 30 days old). Please enter the 6-digit PIN displayed on your Desktop screen to re-pair.',
+            },
+          });
+          return;
+        }
+
         socket.isAuthorized = true;
         socket.deviceId = matchedDevId;
         socket.deviceName = trusted.name || packet.payload?.deviceName;
@@ -3187,7 +3294,16 @@ function handleWsFrame(socket, buffer) {
           packetId: Date.now(),
           timestamp: Date.now(),
           packetType: 'PAIR_CONFIRM',
-          payload: { status: 'authorized', paired: true, token, deviceId: matchedDevId, isAuthorized: true },
+          payload: {
+            status: 'authorized',
+            paired: true,
+            token,
+            refreshToken: trusted.refreshToken,
+            expiresAt: trusted.expiresAt,
+            certFingerprint: tlsEngine.getFingerprint(),
+            deviceId: matchedDevId,
+            isAuthorized: true,
+          },
         });
 
         broadcastPacket({
@@ -3196,7 +3312,13 @@ function handleWsFrame(socket, buffer) {
           packetId: Date.now(),
           timestamp: Date.now(),
           packetType: 'BRIDGE_STATUS',
-          payload: { status: 'online', pairedDevice, requiresPairing: false },
+          payload: {
+            status: 'online',
+            pairedDevice,
+            requiresPairing: false,
+            certFingerprint: tlsEngine.getFingerprint(),
+            tlsEnabled: true,
+          },
         });
         return;
       }
@@ -3224,7 +3346,22 @@ function handleWsFrame(socket, buffer) {
       const expectedPin = activeSasPin.replace(/\s+/g, '');
 
       if (!enteredPin || enteredPin !== expectedPin) {
-        console.warn(`[Security Alert] Unauthorized pair attempt from ${socket.remoteAddress}. Entered: "${enteredPin}", Expected: "${expectedPin}"`);
+        const failResult = rateLimiter.recordFailure(socket.remoteAddress);
+        console.warn(`[Security Alert] Unauthorized pair attempt from ${socket.remoteAddress}. Entered: "${enteredPin}", Expected: "${expectedPin}" (Attempts: ${failResult.attempts})`);
+
+        if (failResult.shouldRegeneratePin) {
+          activeSasPin = generateRandomPin();
+          console.log(`[Security] Active SAS Pairing PIN automatically regenerated: ${activeSasPin}`);
+          broadcastPacket({
+            magic: 'SK',
+            version: 1,
+            packetId: Date.now(),
+            timestamp: Date.now(),
+            packetType: 'PIN_UPDATED',
+            payload: { pin: activeSasPin },
+          });
+        }
+
         sendWsPacket(socket, {
           magic: 'SK',
           version: 1,
@@ -3235,20 +3372,25 @@ function handleWsFrame(socket, buffer) {
             status: 'rejected',
             error: 'PIN_MISMATCH',
             message: 'PIN mismatch. Please enter the 6-digit PIN displayed on your Desktop Dynamic Island.',
+            attempts: failResult.attempts,
+            retryAfter: failResult.retryAfter,
           },
         });
         return;
       }
 
-      // Valid PIN matches! Create pending pair request & notify desktop HUD for approval
-      const newToken = crypto.randomBytes(16).toString('hex');
+      // Valid PIN matches! Clear failure counters and generate fresh token pair
+      rateLimiter.recordSuccess(socket.remoteAddress);
+      const tokenPair = tokenManager.createTokenPair();
       const pendingInfo = {
         socket,
         deviceId,
         deviceName: packet.payload?.deviceName || 'Mobile Companion (Android)',
         model: packet.payload?.model || 'Android Phone',
         pin: packet.payload?.pin || activeSasPin,
-        token: newToken,
+        token: tokenPair.token,
+        refreshToken: tokenPair.refreshToken,
+        expiresAt: tokenPair.expiresAt,
         timestamp: Date.now(),
         ip: socket.remoteAddress,
       };
@@ -3322,6 +3464,8 @@ function handleWsFrame(socket, buffer) {
             name: pending.deviceName,
             model: pending.model,
             token: pending.token,
+            refreshToken: pending.refreshToken,
+            expiresAt: pending.expiresAt,
             pairedAt: Date.now(),
           });
           if (deviceId && deviceId !== pending.deviceId) {
@@ -3329,6 +3473,8 @@ function handleWsFrame(socket, buffer) {
               name: pending.deviceName,
               model: pending.model,
               token: pending.token,
+              refreshToken: pending.refreshToken,
+              expiresAt: pending.expiresAt,
               pairedAt: Date.now(),
             });
           }
@@ -3361,6 +3507,9 @@ function handleWsFrame(socket, buffer) {
                 status: 'authorized',
                 paired: true,
                 token: pending.token,
+                refreshToken: pending.refreshToken,
+                expiresAt: pending.expiresAt,
+                certFingerprint: tlsEngine.getFingerprint(),
                 deviceId: pending.deviceId,
                 isAuthorized: true,
               },
@@ -3374,7 +3523,13 @@ function handleWsFrame(socket, buffer) {
             packetId: Date.now(),
             timestamp: Date.now(),
             packetType: 'BRIDGE_STATUS',
-            payload: { status: 'online', pairedDevice, requiresPairing: false },
+            payload: {
+              status: 'online',
+              pairedDevice,
+              requiresPairing: false,
+              certFingerprint: tlsEngine.getFingerprint(),
+              tlsEnabled: true,
+            },
           });
         } else {
           console.log(`[Security] Device DENIED by desktop user: ${pending.deviceName} (${deviceId})`);
@@ -3477,6 +3632,112 @@ function handleWsFrame(socket, buffer) {
         timestamp: Date.now(),
         packetType: 'PIN_UPDATED',
         payload: { pin: activeSasPin },
+      });
+      return;
+    }
+
+    // Token refresh packet from companion device (automated token rotation)
+    if (packet.packetType === 'TOKEN_REFRESH') {
+      const { refreshToken, deviceId } = packet.payload || {};
+      const rotateResult = tokenManager.rotateToken(refreshToken, deviceId);
+      if (rotateResult.success) {
+        socket.isAuthorized = true;
+        socket.token = rotateResult.token;
+        console.log(`[Security] Successfully rotated token for device: ${rotateResult.deviceId}`);
+        sendWsPacket(socket, {
+          magic: 'SK',
+          version: 1,
+          packetId: Date.now(),
+          timestamp: Date.now(),
+          packetType: 'TOKEN_REFRESH_CONFIRM',
+          payload: {
+            success: true,
+            token: rotateResult.token,
+            refreshToken: rotateResult.refreshToken,
+            expiresAt: rotateResult.expiresAt,
+            deviceId: rotateResult.deviceId,
+          },
+        });
+      } else {
+        console.warn(`[Security Alert] Rejected invalid token refresh attempt: ${rotateResult.error}`);
+        sendWsPacket(socket, {
+          magic: 'SK',
+          version: 1,
+          packetId: Date.now(),
+          timestamp: Date.now(),
+          packetType: 'SECURITY_ALERT',
+          payload: {
+            action: 'TOKEN_REFRESH',
+            error: rotateResult.error,
+            message: 'Failed to refresh token: session expired or invalid refresh token.',
+          },
+        });
+      }
+      return;
+    }
+
+    // Revoke all sessions packet (Desktop manual security action)
+    if (packet.packetType === 'REVOKE_ALL_SESSIONS') {
+      if (!socket.isAuthorized && !socket.isLocalDesktop) {
+        sendWsPacket(socket, {
+          magic: 'SK',
+          version: 1,
+          packetId: Date.now(),
+          timestamp: Date.now(),
+          packetType: 'SECURITY_ALERT',
+          payload: { action: 'REVOKE_ALL_SESSIONS', error: 'UNAUTHORIZED' },
+        });
+        return;
+      }
+      const count = tokenManager.revokeAllSessions();
+      for (const client of activeClients) {
+        if (!client.isLocalDesktop) {
+          client.isAuthorized = false;
+          sendWsPacket(client, {
+            magic: 'SK',
+            version: 1,
+            packetId: Date.now(),
+            timestamp: Date.now(),
+            packetType: 'DEVICE_UNPAIRED',
+            payload: { reason: 'All paired sessions have been revoked by the desktop user' },
+          });
+        }
+      }
+      pairedDevice = null;
+      activeSasPin = generateRandomPin();
+      pendingPairRequests.clear();
+      broadcastPacket({
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'PIN_UPDATED',
+        payload: { pin: activeSasPin },
+      });
+      broadcastPacket({
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'BRIDGE_STATUS',
+        payload: {
+          status: 'online',
+          service: 'Soko Connection Bridge',
+          version: appVersion,
+          pairedDevice: null,
+          requiresPairing: true,
+          certFingerprint: tlsEngine.getFingerprint(),
+          tlsEnabled: true,
+        },
+      });
+      console.log(`[Security] Revoked all paired sessions (${count} total). PIN refreshed.`);
+      sendWsPacket(socket, {
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'REVOKE_ALL_CONFIRM',
+        payload: { success: true, revokedCount: count },
       });
       return;
     }
@@ -3919,39 +4180,97 @@ function isRequestAuthorized(req) {
 
   if (!token) return false;
 
-  for (const [deviceId, dev] of trustedDevices.entries()) {
-    if (dev && dev.token && dev.token === token) {
-      return true;
-    }
+  const validation = tokenManager.validateToken(token);
+  if (validation.valid) {
+    return true;
+  }
+  if (validation.expired) {
+    req._tokenExpired = true;
+    console.warn(`[Security Alert] Rejected request with expired Bearer token (> 30 days old) from ${remoteIp}`);
   }
 
   return false;
 }
 
-function rejectUnauthorized(res) {
-  res.writeHead(401, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+function rejectUnauthorized(res, req = null) {
+  const isExpired = req && req._tokenExpired;
+  const corsHeaders = corsHardener.getCorsHeaders(req || { headers: {} });
+  res.writeHead(401, {
+    'Content-Type': 'application/json',
+    ...corsHeaders,
+  });
   res.end(
     JSON.stringify({
-      error: 'Unauthorized: Remote device is not paired or missing valid bearer token. Complete PIN pairing on Desktop Island first.',
+      error: isExpired
+        ? 'Unauthorized: Bearer token has expired after 30 days. Complete PIN pairing on Desktop Island first.'
+        : 'Unauthorized: Remote device is not paired or missing valid bearer token. Complete PIN pairing on Desktop Island first.',
       code: 401,
+      tokenExpired: Boolean(isExpired),
       requiresPairing: true,
     })
   );
 }
 
-// HTTP Server for Mobile UI and REST endpoints
-const server = http.createServer((req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Checksum-Sha256, Content-Length, Authorization, x-simulate-remote-ip, *');
+// HTTP Server request handler for Mobile UI and REST endpoints
+const serverHandler = (req, res) => {
+  const isAuthorized = isRequestAuthorized(req);
 
-  if (req.method === 'OPTIONS') {
-    res.writeHead(204);
-    res.end();
+  // 1. Host and Origin header validation (Strict CORS & DNS Rebinding Hardening)
+  if (!corsHardener.validateRequest(req, res, { hasValidBearerToken: isAuthorized })) {
     return;
   }
 
-  const url = new URL(req.url, `http://${req.headers.host}`);
+  // 2. Preflight OPTIONS requests
+  if (corsHardener.handlePreflight(req, res, { hasValidBearerToken: isAuthorized })) {
+    return;
+  }
+
+  // 3. Set explicit CORS headers based on validated origin (never wildcard '*')
+  const corsHeaders = corsHardener.getCorsHeaders(req, { hasValidBearerToken: isAuthorized });
+  for (const [k, v] of Object.entries(corsHeaders)) {
+    res.setHeader(k, v);
+  }
+
+  // 4. Intercept res.writeHead to guarantee '*' is never sent to browser
+  const origWriteHead = res.writeHead;
+  res.writeHead = function (code, msg, headers) {
+    let h = headers;
+    let m = msg;
+    if (typeof msg === 'object' && msg !== null && !headers) {
+      h = msg;
+      m = undefined;
+    }
+    if (h && typeof h === 'object') {
+      if (h['Access-Control-Allow-Origin'] === '*') {
+        const origin = corsHeaders['Access-Control-Allow-Origin'];
+        if (origin) {
+          h['Access-Control-Allow-Origin'] = origin;
+          h['Vary'] = 'Origin';
+        } else {
+          delete h['Access-Control-Allow-Origin'];
+        }
+      }
+    }
+    return m !== undefined ? origWriteHead.call(this, code, m, h) : origWriteHead.call(this, code, h);
+  };
+
+  const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
+
+  // 0. Zero-Configuration Network Discovery & QR Endpoints (GET /api/discovery, GET /api/discovery/qr)
+  if (url.pathname === '/api/discovery' || url.pathname === '/api/discovery/qr') {
+    if (handleDiscoveryHttpRequest(req, res, {
+      name: `Soko (${os.hostname()})`,
+      port: PORT,
+      addresses: getLocalIps(),
+      sasPin: activeSasPin,
+      tls: true,
+      certFingerprint: tlsEngine.getFingerprint(),
+      paired: pairedDevice && pairedDevice.isAuthorized,
+      version: appVersion,
+    })) {
+      return;
+    }
+  }
 
   // 1. Serve Mobile Companion Web App
   if (url.pathname === '/' || url.pathname === '/mobile' || url.pathname === '/companion') {
@@ -3977,7 +4296,7 @@ const server = http.createServer((req, res) => {
       pairedDevice = null;
     }
     const discovered = getDiscoveredUnpairedDevices();
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         status: 'online',
@@ -3990,6 +4309,14 @@ const server = http.createServer((req, res) => {
         discoveredDevice: discovered[0] || null,
         discoveredDevices: discovered,
         requiresPairing: !pairedDevice || !pairedDevice.isAuthorized,
+        certFingerprint: tlsEngine.getFingerprint(),
+        tlsEnabled: true,
+        security: {
+          rateLimiting: true,
+          tokenExpiryDays: 30,
+          osTrustStore: true,
+          tlsFingerprint: tlsEngine.getFingerprint(),
+        },
       })
     );
     return;
@@ -4102,6 +4429,8 @@ const server = http.createServer((req, res) => {
           name: finalDeviceName,
           model: finalModel,
           token,
+          refreshToken: pending.refreshToken,
+          expiresAt: pending.expiresAt,
           pairedAt: Date.now(),
         });
         if (deviceId !== finalDeviceId) {
@@ -4109,6 +4438,8 @@ const server = http.createServer((req, res) => {
             name: finalDeviceName,
             model: finalModel,
             token,
+            refreshToken: pending.refreshToken,
+            expiresAt: pending.expiresAt,
             pairedAt: Date.now(),
           });
         }
@@ -4156,6 +4487,9 @@ const server = http.createServer((req, res) => {
               status: 'authorized',
               paired: true,
               token,
+              refreshToken: pending.refreshToken,
+              expiresAt: pending.expiresAt,
+              certFingerprint: tlsEngine.getFingerprint(),
               deviceId: finalDeviceId,
               isAuthorized: true,
             },
@@ -4190,6 +4524,8 @@ const server = http.createServer((req, res) => {
             version: appVersion,
             pairedDevice,
             requiresPairing: false,
+            certFingerprint: tlsEngine.getFingerprint(),
+            tlsEnabled: true,
           },
         });
 
@@ -4338,6 +4674,29 @@ const server = http.createServer((req, res) => {
 
   // Pair Request endpoint (Direct HTTP Pairing & Verification)
   if (url.pathname === '/api/pair' && req.method === 'POST') {
+    const clientIp = req.socket.remoteAddress;
+
+    // Rate limiting defense check
+    const rateCheck = rateLimiter.checkLimit(clientIp);
+    if (!rateCheck.allowed) {
+      console.warn(`[Security Alert] Blocked rate-limited HTTP pair request from ${clientIp} (retryAfter: ${rateCheck.retryAfter}s)`);
+      res.writeHead(429, {
+        'Content-Type': 'application/json',
+        'Retry-After': String(rateCheck.retryAfter),
+      });
+      res.end(
+        JSON.stringify({
+          status: 'rejected',
+          error: rateCheck.reason,
+          retryAfter: rateCheck.retryAfter,
+          message: rateCheck.reason === 'IP_BLOCKED'
+            ? `IP temporarily blocked due to excessive failed PIN attempts. Retry in ${rateCheck.retryAfter}s.`
+            : `Too many failed attempts. Rate limited. Retry in ${rateCheck.retryAfter}s.`,
+        })
+      );
+      return;
+    }
+
     let bodyStr = '';
     req.on('data', (chunk) => (bodyStr += chunk));
     req.on('end', () => {
@@ -4348,22 +4707,39 @@ const server = http.createServer((req, res) => {
         const expectedPin = activeSasPin.replace(/\s+/g, '');
 
         if (!enteredPin || enteredPin !== expectedPin) {
-          console.warn(`[Security HTTP] Unauthorized pair attempt from ${req.socket.remoteAddress}. Entered: "${enteredPin}", Expected: "${expectedPin}"`);
+          const failResult = rateLimiter.recordFailure(clientIp);
+          console.warn(`[Security HTTP] Unauthorized pair attempt from ${clientIp}. Entered: "${enteredPin}", Expected: "${expectedPin}" (Attempts: ${failResult.attempts})`);
+
+          if (failResult.shouldRegeneratePin) {
+            activeSasPin = generateRandomPin();
+            console.log(`[Security] Active SAS Pairing PIN automatically regenerated: ${activeSasPin}`);
+            broadcastPacket({
+              magic: 'SK',
+              version: 1,
+              packetId: Date.now(),
+              timestamp: Date.now(),
+              packetType: 'PIN_UPDATED',
+              payload: { pin: activeSasPin },
+            });
+          }
+
           res.writeHead(400, {
             'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
           });
           res.end(
             JSON.stringify({
               status: 'rejected',
               error: 'PIN_MISMATCH',
               message: `PIN mismatch. Entered PIN "${enteredPin}" does not match active Desktop PIN.`,
+              attempts: failResult.attempts,
+              retryAfter: failResult.retryAfter,
             })
           );
           return;
         }
 
-        const newToken = crypto.randomBytes(16).toString('hex');
+        rateLimiter.recordSuccess(clientIp);
+        const tokenPair = tokenManager.createTokenPair();
         const reqIp = normalizeIp(req.socket.remoteAddress);
         let companionSocket = null;
         for (const client of activeClients) {
@@ -4395,7 +4771,9 @@ const server = http.createServer((req, res) => {
           deviceName: body.deviceName || 'Mobile Companion (Android)',
           model: body.model || 'Android Phone',
           pin: body.pin || activeSasPin,
-          token: newToken,
+          token: tokenPair.token,
+          refreshToken: tokenPair.refreshToken,
+          expiresAt: tokenPair.expiresAt,
           timestamp: Date.now(),
           ip: req.socket.remoteAddress,
         };
@@ -4422,7 +4800,6 @@ const server = http.createServer((req, res) => {
 
         res.writeHead(200, {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         });
         res.end(
           JSON.stringify({
@@ -4434,7 +4811,6 @@ const server = http.createServer((req, res) => {
       } catch (err) {
         res.writeHead(500, {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         });
         res.end(JSON.stringify({ error: err.message }));
       }
@@ -4447,16 +4823,108 @@ const server = http.createServer((req, res) => {
     const deviceId = url.searchParams.get('deviceId');
     res.writeHead(200, {
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
     });
     if (deviceId && trustedDevices.has(deviceId)) {
       const record = trustedDevices.get(deviceId);
-      res.end(JSON.stringify({ status: 'paired', token: record.token }));
+      res.end(
+        JSON.stringify({
+          status: 'paired',
+          token: record.token,
+          refreshToken: record.refreshToken,
+          expiresAt: record.expiresAt,
+          certFingerprint: tlsEngine.getFingerprint(),
+        })
+      );
     } else if (deviceId && pendingPairRequests.has(deviceId)) {
       res.end(JSON.stringify({ status: 'pending' }));
     } else {
       res.end(JSON.stringify({ status: 'unpaired' }));
     }
+    return;
+  }
+
+  // Automated Token Refresh endpoint (30-day token rotation cycle)
+  if ((url.pathname === '/api/auth/refresh' || url.pathname === '/api/pair/refresh') && req.method === 'POST') {
+    let bodyStr = '';
+    req.on('data', (c) => bodyStr += c);
+    req.on('end', () => {
+      try {
+        const body = JSON.parse(bodyStr || '{}');
+        const refreshToken = body.refreshToken || (req.headers['authorization'] || '').replace(/^Bearer\s+/, '').trim();
+        const deviceId = body.deviceId;
+        const result = tokenManager.rotateToken(refreshToken, deviceId);
+        if (result.success) {
+          console.log(`[Security] Successfully rotated Bearer token via HTTP refresh for device ${result.deviceId}`);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result));
+        } else {
+          console.warn(`[Security Alert] Rejected invalid token refresh attempt: ${result.error}`);
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result));
+        }
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // Revoke All Sessions endpoint (Manual "Revoke All Sessions" in Settings)
+  if ((url.pathname === '/api/auth/revoke-all' || url.pathname === '/api/devices/revoke-all') && req.method === 'POST') {
+    if (!isRequestAuthorized(req)) {
+      rejectUnauthorized(res, req);
+      return;
+    }
+
+    const count = tokenManager.revokeAllSessions();
+    for (const client of activeClients) {
+      if (!client.isLocalDesktop) {
+        client.isAuthorized = false;
+        sendWsPacket(client, {
+          magic: 'SK',
+          version: 1,
+          packetId: Date.now(),
+          timestamp: Date.now(),
+          packetType: 'DEVICE_UNPAIRED',
+          payload: { reason: 'All active sessions have been revoked by administrator' },
+        });
+      }
+    }
+
+    pairedDevice = null;
+    activeSasPin = generateRandomPin();
+    pendingPairRequests.clear();
+
+    broadcastPacket({
+      magic: 'SK',
+      version: 1,
+      packetId: Date.now(),
+      timestamp: Date.now(),
+      packetType: 'PIN_UPDATED',
+      payload: { pin: activeSasPin },
+    });
+
+    broadcastPacket({
+      magic: 'SK',
+      version: 1,
+      packetId: Date.now(),
+      timestamp: Date.now(),
+      packetType: 'BRIDGE_STATUS',
+      payload: {
+        status: 'online',
+        service: 'Soko Connection Bridge',
+        version: appVersion,
+        pairedDevice: null,
+        requiresPairing: true,
+        certFingerprint: tlsEngine.getFingerprint(),
+        tlsEnabled: true,
+      },
+    });
+
+    console.log(`[Security] Revoked all paired sessions (${count} total) via HTTP request. PIN refreshed.`);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, revokedCount: count }));
     return;
   }
 
@@ -4511,10 +4979,12 @@ const server = http.createServer((req, res) => {
             requiresPairing: true,
             discoveredDevice: remainingDiscovered[0] || null,
             discoveredDevices: remainingDiscovered,
+            certFingerprint: tlsEngine.getFingerprint(),
+            tlsEnabled: true,
           },
         });
 
-        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, unpaired: deviceId }));
       } catch (e) {
         res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -5226,12 +5696,27 @@ const server = http.createServer((req, res) => {
 
   res.writeHead(404, { 'Content-Type': 'text/plain' });
   res.end('Not Found');
+};
+
+const httpServer = http.createServer(serverHandler);
+const httpsServer = https.createServer({
+  key: tlsEngine.getKey(),
+  cert: tlsEngine.getCert(),
+}, serverHandler);
+
+// Preserve server reference for backward compatibility
+const server = httpServer;
+
+createWebSocketServer(httpServer);
+createWebSocketServer(httpsServer);
+
+const masterServer = net.createServer((socket) => {
+  tlsEngine.multiplexSocket(socket, httpServer, httpsServer);
 });
 
-createWebSocketServer(server);
-
 function startServer(portToTry) {
-  server.once('error', (err) => {
+  corsHardener.setPort(portToTry);
+  masterServer.once('error', (err) => {
     if (err.code === 'EADDRINUSE') {
       console.warn(`[Bridge] Port ${portToTry} is in use. Trying port ${portToTry + 1}...`);
       PORT = portToTry + 1;
@@ -5241,22 +5726,49 @@ function startServer(portToTry) {
     }
   });
 
-  server.listen(portToTry, '0.0.0.0', () => {
+  masterServer.listen(portToTry, '0.0.0.0', () => {
     PORT = portToTry;
+    corsHardener.setPort(PORT);
     const ips = getLocalIps();
     console.log('================================================================');
-    console.log(` Soko Universal Connection Bridge running on port ${PORT}`);
+    console.log(` Soko Universal Connection Bridge running on port ${PORT} (TLS/HTTPS & WSS Active)`);
+    console.log(` TLS Certificate SHA-256 Fingerprint: ${tlsEngine.getFingerprint()}`);
     console.log('----------------------------------------------------------------');
-    console.log(' Mobile Companion Web App URL (Wi-Fi or Hotspot):');
+    console.log(' Secure Mobile Companion Web App URLs (Wi-Fi or Hotspot):');
     ips.forEach((ip) => {
+      console.log(`   ► https://${ip}:${PORT} (Encrypted)`);
       console.log(`   ► http://${ip}:${PORT}`);
     });
-    console.log(`   ► http://127.0.0.1:${PORT} (Local PC testing)`);
+    console.log(`   ► https://127.0.0.1:${PORT} (Local PC testing)`);
+    console.log(`   ► http://127.0.0.1:${PORT}`);
     console.log('----------------------------------------------------------------');
-    console.log(` WebSocket Conduit: ws://0.0.0.0:${PORT}`);
+    console.log(` WebSocket Conduit: wss://0.0.0.0:${PORT} & ws://0.0.0.0:${PORT}`);
     console.log(' REST Endpoints:    POST /api/notify | POST /api/cli | POST /api/transfer');
     console.log(' File Endpoints:    POST /api/transfer/cancel | POST /api/transfer/retry | POST /api/upload');
+    console.log(' Auth Endpoints:    POST /api/auth/refresh | POST /api/auth/revoke-all');
+    console.log(' Discovery:         mDNS / Bonjour _soko._tcp.local & GET /api/discovery');
+    console.log(' Zero-Trust:        30-day token TTL, Rate Limiting & OS Trust Store active');
     console.log('================================================================');
+
+    // Start mDNS / Bonjour Zeroconf Advertiser (_soko._tcp.local)
+    try {
+      if (mdnsAdvertiser) {
+        mdnsAdvertiser.stop();
+      }
+      mdnsAdvertiser = new MdnsAdvertiser({
+        port: PORT,
+        name: `Soko (${os.hostname()})`,
+        version: appVersion,
+        tls: true,
+        certFingerprint: tlsEngine.getFingerprint(),
+        ips: ips,
+      });
+      mdnsAdvertiser.start().catch((err) => {
+        console.warn(`[mDNS] Advertiser start warning: ${err.message}`);
+      });
+    } catch (e) {
+      console.warn(`[mDNS] Discovery init error: ${e.message}`);
+    }
 
     // Auto-discover and safely supervise soko-music-connector sidecar if available
     ensureMusicConnectorDaemon();

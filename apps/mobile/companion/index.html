@@ -771,6 +771,32 @@
         border-radius: 24px;
       }
     }
+    @keyframes qrScanBeam {
+      0% { top: 16px; opacity: 0.8; }
+      50% { opacity: 1; }
+      100% { top: calc(100% - 16px); opacity: 0.8; }
+    }
+    @keyframes spinPulse {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .spinning svg {
+      animation: spinPulse 0.9s linear infinite;
+    }
+    .discovered-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      transition: all 0.2s ease;
+    }
+    .discovered-item:hover, .discovered-item:active {
+      border-color: rgba(99, 102, 241, 0.4);
+      background: rgba(99, 102, 241, 0.08);
+    }
   </style>
 </head>
 <body>
@@ -842,6 +868,42 @@
           <button class="badge" style="cursor: pointer;" onclick="setPresetIp('192.168.31.210:8766')">Wi-Fi IP</button>
           <button class="badge" style="cursor: pointer;" onclick="setPresetIp('192.168.43.1:8766')">Hotspot IP</button>
           <button class="badge" style="cursor: pointer;" onclick="setPresetIp('127.0.0.1:8766')">Localhost</button>
+        </div>
+
+        <!-- Zero-Configuration Network Discovery Card -->
+        <div id="discoveryBox" style="background: rgba(99, 102, 241, 0.07); border: 1px solid rgba(99, 102, 241, 0.22); border-radius: 14px; padding: 12px; margin-bottom: 12px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+            <div style="display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; color: #818cf8; text-transform: uppercase; letter-spacing: 0.5px;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="2" y1="12" x2="22" y2="12"></line>
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+              </svg>
+              <span>Discovered Desktops (mDNS / LAN)</span>
+            </div>
+            <button class="badge" id="btnScanDesktops" onclick="discoverDesktops()" style="cursor: pointer; display: flex; align-items: center; gap: 4px; background: rgba(99, 102, 241, 0.18); border-color: rgba(99, 102, 241, 0.4); color: #c7d2fe;">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+              <span>Scan LAN</span>
+            </button>
+          </div>
+          <div id="discoveredDesktopsList" style="display: flex; flex-direction: column; gap: 6px;">
+            <div style="font-size: 11px; color: var(--text-secondary); text-align: center; padding: 4px 0;">
+              Probing Wi-Fi for active Soko desktops...
+            </div>
+          </div>
+        </div>
+
+        <!-- Instant QR Code Pairing Button -->
+        <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+          <button class="btn" onclick="openQrScanner()" style="flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.35); color: #c7d2fe; padding: 10px 14px; font-weight: 600;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="7" height="7"></rect>
+              <rect x="14" y="3" width="7" height="7"></rect>
+              <rect x="14" y="14" width="7" height="7"></rect>
+              <rect x="3" y="14" width="7" height="7"></rect>
+            </svg>
+            <span>Scan QR Code to Pair Instantly</span>
+          </button>
         </div>
 
         <!-- SAS 6-Digit PIN Pairing -->
@@ -1392,6 +1454,38 @@
     <span id="toastMsg">Ready</span>
   </div>
 
+  <!-- QR Code Camera Scanner Modal Overlay -->
+  <div id="qrScannerModal" style="display: none; position: fixed; inset: 0; z-index: 9999; background: rgba(0, 0, 0, 0.88); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); align-items: center; justify-content: center; padding: 20px;">
+    <div style="width: 100%; max-width: 360px; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 20px; padding: 18px; display: flex; flex-direction: column; align-items: center; gap: 14px; box-shadow: 0 24px 60px rgba(0,0,0,0.85);">
+      <div style="width: 100%; display: flex; align-items: center; justify-content: space-between;">
+        <span style="font-size: 13px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 6px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="7" height="7"></rect>
+            <rect x="14" y="3" width="7" height="7"></rect>
+            <rect x="14" y="14" width="7" height="7"></rect>
+            <rect x="3" y="14" width="7" height="7"></rect>
+          </svg>
+          Scan Dynamic Island QR Code
+        </span>
+        <button onclick="closeQrScanner()" style="background: rgba(255,255,255,0.08); border: 1px solid var(--border-subtle); border-radius: 8px; color: var(--text-secondary); cursor: pointer; padding: 4px 6px; display: flex; align-items: center; justify-content: center;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+
+      <div style="position: relative; width: 100%; aspect-ratio: 1; border-radius: 16px; overflow: hidden; background: #000; border: 1px solid rgba(255,255,255,0.1);">
+        <video id="qrScannerVideo" playsinline autoplay muted style="width: 100%; height: 100%; object-fit: cover;"></video>
+        <div style="position: absolute; inset: 24px; border: 2px dashed #6366F1; border-radius: 12px; pointer-events: none; box-shadow: 0 0 0 9999px rgba(0,0,0,0.5);"></div>
+        <div id="qrScanBeam" style="position: absolute; left: 24px; right: 24px; height: 2px; background: #10B981; box-shadow: 0 0 12px #10B981; top: 24px; animation: qrScanBeam 2s ease-in-out infinite alternate;"></div>
+      </div>
+
+      <div style="text-align: center; line-height: 1.4;">
+        <span style="font-size: 11.5px; color: var(--text-secondary);">Point your phone camera at the QR code in your desktop Connection Popover.</span>
+      </div>
+
+      <button class="btn" onclick="closeQrScanner()" style="width: 100%; padding: 10px; background: rgba(255,255,255,0.06); border: 1px solid var(--border-subtle); color: var(--text-secondary);">Cancel</button>
+    </div>
+  </div>
+
   <script>
     // ============================================================
     // TAB NAVIGATION CONTROLLER
@@ -1450,6 +1544,246 @@
       ipInput.value = ip;
       showToast(`Selected IP: ${ip}`, 'info');
       connectWs();
+    }
+
+    // ============================================================
+    // ZERO-CONFIG DISCOVERY & QR CODE PAIRING ENGINE
+    // ============================================================
+    let discoveredDesktops = [];
+    let qrMediaStream = null;
+    let qrScanTimer = null;
+
+    function parsePairingPayload(input) {
+      if (!input) return null;
+      const str = String(input).trim();
+      let host = null;
+      let port = DEFAULT_PORT;
+      let pin = null;
+      let fp = null;
+
+      try {
+        if (str.startsWith('soko://pair')) {
+          const url = new URL(str);
+          host = url.searchParams.get('host');
+          if (url.searchParams.has('port')) port = parseInt(url.searchParams.get('port'), 10) || DEFAULT_PORT;
+          pin = url.searchParams.get('pin');
+          fp = url.searchParams.get('fp') || url.searchParams.get('fingerprint');
+        } else if (str.startsWith('http://') || str.startsWith('https://')) {
+          const url = new URL(str);
+          host = url.searchParams.get('host') || url.hostname;
+          port = url.port ? parseInt(url.port, 10) : (url.protocol === 'https:' ? 443 : 80);
+          pin = url.searchParams.get('pin');
+          fp = url.searchParams.get('fp') || url.searchParams.get('fingerprint');
+        } else if (str.includes('pin=')) {
+          const params = new URLSearchParams(str.startsWith('?') ? str.slice(1) : str);
+          host = params.get('host');
+          if (params.has('port')) port = parseInt(params.get('port'), 10) || DEFAULT_PORT;
+          pin = params.get('pin');
+          fp = params.get('fp');
+        } else if (/^\d{3}\s?\d{3}$/.test(str)) {
+          pin = str.replace(/\s+/g, '');
+        }
+      } catch (e) {
+        console.warn('Failed to parse QR payload:', e);
+      }
+
+      if (pin) pin = pin.replace(/\D/g, '');
+      if (pin && pin.length !== 6) pin = null;
+
+      return { host, port, pin, fp };
+    }
+
+    function checkUrlPairingParams() {
+      const search = window.location.search || '';
+      const hash = window.location.hash || '';
+      const payload = parsePairingPayload(search) || parsePairingPayload(hash.replace(/^#/, ''));
+
+      if (payload && payload.pin) {
+        if (payload.host) {
+          ipInput.value = `${payload.host}:${payload.port || DEFAULT_PORT}`;
+        }
+        const pinInput = document.getElementById('sasPinInput');
+        if (pinInput) {
+          pinInput.value = `${payload.pin.slice(0, 3)} ${payload.pin.slice(3, 6)}`;
+        }
+        showToast('Instant QR Pairing detected! Connecting...', 'success');
+        connectWs();
+        setTimeout(() => {
+          requestPairing();
+        }, 400);
+      }
+    }
+
+    async function discoverDesktops() {
+      const listEl = document.getElementById('discoveredDesktopsList');
+      const scanBtn = document.getElementById('btnScanDesktops');
+      if (scanBtn) scanBtn.classList.add('spinning');
+
+      if (listEl) {
+        listEl.innerHTML = `
+          <div style="font-size: 11px; color: var(--text-secondary); text-align: center; padding: 6px 0; display: flex; align-items: center; justify-content: center; gap: 6px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#6366F1" stroke-width="2.5" class="animate-spin"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+            <span>Probing local Wi-Fi for Soko Desktop instances...</span>
+          </div>`;
+      }
+
+      const candidateTargets = new Set();
+      // 1. Current origin host
+      if (window.location.host && !window.location.host.includes('localhost') && !window.location.host.startsWith('file')) {
+        candidateTargets.add(window.location.host);
+      }
+      // 2. Default preset IPs
+      candidateTargets.add('192.168.31.210:8766');
+      candidateTargets.add('192.168.43.1:8766');
+      candidateTargets.add('127.0.0.1:8766');
+      candidateTargets.add('10.0.2.2:8766'); // Android Emulator Loopback
+      // 3. User input target
+      if (ipInput && ipInput.value.trim()) {
+        candidateTargets.add(ipInput.value.trim());
+      }
+
+      const results = [];
+      await Promise.allSettled(Array.from(candidateTargets).map(async (target) => {
+        try {
+          const proto = window.location.protocol === 'https:' ? 'https:' : 'http:';
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 1200);
+          const res = await fetch(`${proto}//${target}/api/discovery`, { signal: controller.signal });
+          clearTimeout(timeoutId);
+          if (res.ok) {
+            const meta = await res.json();
+            results.push({ target, meta });
+          }
+        } catch {}
+      }));
+
+      if (scanBtn) scanBtn.classList.remove('spinning');
+      renderDiscoveredDesktops(results);
+    }
+
+    function renderDiscoveredDesktops(results) {
+      const listEl = document.getElementById('discoveredDesktopsList');
+      if (!listEl) return;
+
+      if (!results || results.length === 0) {
+        listEl.innerHTML = `
+          <div style="font-size: 11px; color: var(--text-tertiary); text-align: center; padding: 4px 0;">
+            No desktops detected on local Wi-Fi. Check desktop is running.
+          </div>`;
+        return;
+      }
+
+      listEl.innerHTML = '';
+      results.forEach(({ target, meta }) => {
+        const item = document.createElement('div');
+        item.className = 'discovered-item';
+        const isCurrent = ipInput && ipInput.value.trim() === target;
+        item.innerHTML = `
+          <div style="min-width: 0; flex: 1; margin-right: 8px;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="font-size: 12px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                ${meta.name || 'Soko Desktop HUD'}
+              </span>
+              ${meta.tls ? '<span class="badge" style="font-size: 9px; padding: 1px 4px; background: rgba(16,185,129,0.15); border-color: rgba(16,185,129,0.3); color: #34d399;">TLS</span>' : ''}
+            </div>
+            <div style="font-size: 10.5px; font-family: ui-monospace, monospace; color: var(--text-secondary);">
+              ${target} ${meta.hostname ? `• ${meta.hostname}` : ''}
+            </div>
+          </div>
+          <button class="btn" style="padding: 6px 12px; font-size: 11px; white-space: nowrap; background: ${isCurrent ? 'rgba(16, 185, 129, 0.2)' : 'var(--brand)'}; border-color: ${isCurrent ? 'rgba(16,185,129,0.4)' : 'transparent'}; color: #fff;" onclick="connectToDiscovered('${target}')">
+            ${isCurrent ? 'Active ✓' : 'Connect'}
+          </button>
+        `;
+        listEl.appendChild(item);
+      });
+    }
+
+    function connectToDiscovered(target) {
+      if (ipInput) ipInput.value = target;
+      showToast(`Connecting to ${target}...`, 'info');
+      connectWs();
+    }
+
+    async function openQrScanner() {
+      const modal = document.getElementById('qrScannerModal');
+      const video = document.getElementById('qrScannerVideo');
+      if (!modal || !video) return;
+
+      modal.style.display = 'flex';
+
+      try {
+        qrMediaStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment', width: { ideal: 720 }, height: { ideal: 720 } }
+        });
+        video.srcObject = qrMediaStream;
+        await video.play();
+
+        // Native BarcodeDetector loop (Supported in Chromium / Android WebView)
+        if ('BarcodeDetector' in window) {
+          const detector = new BarcodeDetector({ formats: ['qr_code'] });
+          qrScanTimer = setInterval(async () => {
+            if (!video.videoWidth || !video.videoHeight) return;
+            try {
+              const barcodes = await detector.detect(video);
+              if (barcodes.length > 0) {
+                const scannedVal = barcodes[0].rawValue;
+                handleQrScanPayload(scannedVal);
+              }
+            } catch {}
+          }, 200);
+        } else {
+          showToast('Camera active. Align QR code within frame.', 'info');
+        }
+      } catch (err) {
+        console.warn('Camera error:', err);
+        showToast('Camera access denied or unavailable: ' + (err.message || 'Error'), 'error');
+        closeQrScanner();
+      }
+    }
+
+    function closeQrScanner() {
+      const modal = document.getElementById('qrScannerModal');
+      const video = document.getElementById('qrScannerVideo');
+      if (modal) modal.style.display = 'none';
+
+      if (qrScanTimer) {
+        clearInterval(qrScanTimer);
+        qrScanTimer = null;
+      }
+      if (qrMediaStream) {
+        qrMediaStream.getTracks().forEach(track => track.stop());
+        qrMediaStream = null;
+      }
+      if (video) {
+        video.srcObject = null;
+      }
+    }
+
+    function handleQrScanPayload(text) {
+      if (!text) return;
+      closeQrScanner();
+
+      if (navigator.vibrate) {
+        navigator.vibrate([40, 60, 40]);
+      }
+
+      const payload = parsePairingPayload(text);
+      if (payload && payload.pin) {
+        if (payload.host) {
+          ipInput.value = `${payload.host}:${payload.port || DEFAULT_PORT}`;
+        }
+        const pinInput = document.getElementById('sasPinInput');
+        if (pinInput) {
+          pinInput.value = `${payload.pin.slice(0, 3)} ${payload.pin.slice(3, 6)}`;
+        }
+        showToast('QR Code Scanned! Instant Pairing initiated...', 'success');
+        connectWs();
+        setTimeout(() => {
+          requestPairing();
+        }, 300);
+      } else {
+        showToast('Scanned code did not contain valid Soko pairing PIN', 'amber');
+      }
     }
 
     // Toast Messenger with icon colors
@@ -3260,6 +3594,12 @@
         checkRealNotificationAccess();
         checkBatteryOptimizationStatus();
       });
+
+      // 1. Check for instant pairing URL parameters (e.g. from camera QR code scan)
+      checkUrlPairingParams();
+
+      // 2. Discover running Soko desktops on local Wi-Fi via /api/discovery
+      discoverDesktops();
 
       connectWs();
       if (getPairToken()) {

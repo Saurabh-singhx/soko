@@ -91,10 +91,19 @@ Whether you need to beam 100MB+ APKs and media files across devices in seconds w
 - **Zero-Cloud Local Privacy**: 100% offline peer-to-peer data synchronization with zero third-party cloud intermediaries.
 - **Desktop Dynamic Island Focus**: Live alerts, audio waveforms, and file progress are centralized on the Desktop HUD, avoiding mobile screen overlay clutter and touch dead zones.
 
-### 🛡️ Zero-Trust Security & Pairing
-- **Short Authentication String (SAS)**: Cryptographic 6-digit confirmation codes guarantee physical human-in-the-loop pairing.
-- **Replay Attack Defense**: Monotonic sequence counters reject duplicated or delayed network packets.
-- **Sandboxed File Ingestion**: Strict basename sanitization prevents directory-traversal attacks (`../`) and enforces `0644` non-executable permissions.
+### 🌐 Zero-Configuration Discovery & Instant QR Pairing
+- **mDNS / Bonjour / Zeroconf Discovery**: Built-in zero-dependency RFC 6762 / 6763 multicast responder broadcasts `_soko._tcp.local` with PTR, SRV, TXT, and A records. Discovers local desktop instances automatically with 1-tap connect.
+- **Fallback HTTP Discovery (`/api/discovery`)**: Robust JSON discovery probe endpoint for networks where routers restrict UDP multicast traffic.
+- **Dynamic QR Code Pairing**: Desktop Dynamic Island Connection Popover dynamically generates ISO/IEC 18004 vector QR codes (`soko://pair?host=<ip>&port=8766&pin=<pin>`) with zero-latency client-side SVG rendering.
+- **In-App Camera Scanner & URL Deep-Linking**: Mobile companion integrates an HTML5 camera QR scanner (`BarcodeDetector` Web API) and automatic URL handshake (`?pin=<pin>&host=<ip>`), completing the connection in a single tap without manually typing the 6-digit PIN.
+
+### 🛡️ Zero-Trust Security & Network Hardening
+- **Local Transport Layer Security (TLS / HTTPS & WSS)**: Self-signed certificate generation with automated SAN coverage and socket multiplexing on port 8766. Certificate fingerprints (`SHA256:XX:...`) are exported for client-side pinning.
+- **PIN Brute-Force Defense & Progressive Rate Limiting**: Exponential progressive delays on failed pairing attempts (Stage 1: 15s delay, Stage 2: 60s cooldown, Stage 3: 10-minute IP block & auto-regeneration of PIN) emitting `SECURITY_ALERT` packets.
+- **OS-Standard Secure Trust Store**: Persistent device authorization stored in OS configuration standards (`$XDG_CONFIG_HOME/soko/trust_store.json`, `%APPDATA%\soko`, `~/Library/Application Support/soko`) with atomic temporary writes and strict POSIX `0600` permissions.
+- **Strict CORS & Host Header Hardening**: Blocks DNS rebinding attacks by validating `Host` and untrusted foreign web `Origin` headers (rejecting foreign internet origins with HTTP 403 Forbidden).
+- **30-Day Bearer Token Rotation**: Authenticated companion devices receive 128-bit persistent cryptographic bearer tokens paired with refresh tokens (`POST /api/auth/refresh`), with desktop-level "Revoke All Sessions" capability.
+- **Replay Attack Defense & File Sandbox**: Monotonic sequence counters reject duplicated or delayed network packets; strict basename sanitization prevents directory-traversal attacks (`../`) and enforces `0644` non-executable permissions.
 
 ---
 
@@ -195,8 +204,9 @@ Or run the complete packaged desktop build directly on Linux:
 
 ### 4. Connect Your Android Device
 1. Install **`soko-mobile.apk`** on your Android device (or open `http://<YOUR_DESKTOP_IP>:8766` in your mobile browser).
-2. Enter the **6-digit SAS PIN** displayed in your desktop Settings window.
-3. Once paired, notifications, high-speed file transfers, and remote CLI tools are instantly live!
+2. **Instant QR Pairing**: Click **"Pair via QR"** in the desktop Dynamic Island Connection Popover and scan the QR code with your mobile camera or companion app scanner for instant 1-tap connection.
+3. **Manual SAS PIN**: Alternatively, enter the 6-digit confirmation PIN displayed on your desktop Dynamic Island.
+4. Once paired, notifications, high-speed file transfers, desktop audio streaming, and remote CLI tools are instantly live!
 
 ---
 
@@ -260,12 +270,13 @@ Desktop clients can configure their raw Gist feed URL directly in **Settings > A
 Soko features a comprehensive multi-layered automated test suite covering zero-trust security, dynamic window layouts, character validation, workspace resolution, and full-duplex integration. The test harness auto-spawns an isolated bridge daemon on port `8799` to guarantee zero interference with running desktop sessions:
 
 ```bash
-# Run the complete test suite (all 6 test suites)
+# Run the complete test suite (all 7 test suites)
 npm run test:all
 
 # Run individual test suites:
 npm run test:characters    # Modular character validation & atmospheric state backgrounds
-npm run test:security      # Zero-trust SAS PIN pairing, auth tokens, & sandbox defenses
+npm run test:security      # Zero-trust TLS, PIN rate limiting, OS trust store, & token rotation
+npm run test:discovery     # Zero-config mDNS / Bonjour, QR SVG generation, & instant handshake
 npm run test:scanning      # Device auto-scan guardrails, concurrency debounce, & state preservation
 npm run test:workspace     # Active CLI agent workspace & working folder resolution
 npm run test:island        # Dynamic Island idle mode, token formatting, & layout defenses
@@ -292,12 +303,13 @@ Explore our comprehensive engineering logs and feature architecture documents:
 | Topic | Document |
 | :--- | :--- |
 | **Global Architecture & Threat Model** | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| **Production Readiness & Hardening Roadmap** | [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) |
 | **Dynamic Island HUD & X11/Wayland Physics** | [docs/features/01-dynamic-island-hud.md](docs/features/01-dynamic-island-hud.md) |
 | **Bluetooth Low Energy vs Classic RFCOMM** | [docs/features/02-bluetooth-dual-protocol.md](docs/features/02-bluetooth-dual-protocol.md) |
 | **Hotspot & LAN Zero-Cellular High-Speed Transfers** | [docs/features/03-hotspot-high-speed-transfer.md](docs/features/03-hotspot-high-speed-transfer.md) |
 | **Remote CLI Agent Runner & PTY Security** | [docs/features/04-remote-cli-execution.md](docs/features/04-remote-cli-execution.md) |
 | **Android NotificationListener Service & Filters** | [docs/features/05-notification-mirroring.md](docs/features/05-notification-mirroring.md) |
-| **Zero-Trust SAS Pairing & Replay Guards** | [docs/features/06-security-and-pairing.md](docs/features/06-security-and-pairing.md) |
+| **Zero-Trust Security Engine, TLS & Token Rotation** | [docs/features/06-security-and-pairing.md](docs/features/06-security-and-pairing.md) |
 | **Grok Bot Living OLED Mascot Animation Engine** | [docs/features/07-grok-bot-monochrome-animation.md](docs/features/07-grok-bot-monochrome-animation.md) |
 | **Low-Latency Desktop Audio Streaming (Option 1 HTTP Stream)** | [docs/features/08-desktop-audio-streaming.md](docs/features/08-desktop-audio-streaming.md) |
 | **Mobile Dynamic Island & Fluid Cloud Technical Analysis** | [docs/features/09-mobile-dynamic-island-fluid-cloud.md](docs/features/09-mobile-dynamic-island-fluid-cloud.md) |
