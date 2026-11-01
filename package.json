@@ -12,6 +12,7 @@
     "build:desktop": "npm --prefix apps/desktop run build",
     "build:linux": "npm --prefix apps/desktop run dist:linux",
     "build:windows": "npm --prefix apps/desktop run dist:win",
+    "build:macos": "npm --prefix apps/desktop run dist:mac",
     "build:desktop:all": "npm --prefix apps/desktop run dist",
     "build:apk": "bash scripts/build_apks.sh",
     "build:all": "bash scripts/build_apks.sh && npm --prefix apps/desktop run dist",

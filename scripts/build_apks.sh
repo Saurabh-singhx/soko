@@ -90,22 +90,33 @@ mkdir -p "${BUILD_DIR}/desktop"
 mkdir -p "${BUILD_DIR}/mobile"
 
 # Persistent keystore for signing (ensures signature compatibility across updates)
-KEYSTORE_DIR="${PROJECT_ROOT}/scripts/keystore"
-mkdir -p "${KEYSTORE_DIR}"
-KEYSTORE="${KEYSTORE_DIR}/soko.keystore"
-KEY_PASS="sokopassword"
+KEYSTORE_PASS="${ANDROID_KEYSTORE_PASSWORD:-sokopassword}"
+KEY_ALIAS="${ANDROID_KEY_ALIAS:-soko-key}"
+KEY_PASS="${ANDROID_KEY_PASSWORD:-${KEYSTORE_PASS}}"
 
-if [ ! -f "${KEYSTORE}" ]; then
-  echo "Generating persistent signing keystore at ${KEYSTORE}..."
-  keytool -genkeypair -v \
-    -keystore "${KEYSTORE}" \
-    -alias "soko-key" \
-    -keyalg RSA \
-    -keysize 2048 \
-    -validity 10000 \
-    -storepass "${KEY_PASS}" \
-    -keypass "${KEY_PASS}" \
-    -dname "CN=Soko, OU=Mobile, O=Soko Ecosystem, L=San Francisco, ST=CA, C=US"
+if [ -n "${ANDROID_KEYSTORE_BASE64}" ]; then
+  echo "Decoding release signing keystore from ANDROID_KEYSTORE_BASE64..."
+  KEYSTORE="${BUILD_DIR}/release_signing.keystore"
+  echo "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${KEYSTORE}"
+elif [ -n "${ANDROID_KEYSTORE_FILE}" ] && [ -f "${ANDROID_KEYSTORE_FILE}" ]; then
+  echo "Using existing signing keystore from ANDROID_KEYSTORE_FILE: ${ANDROID_KEYSTORE_FILE}"
+  KEYSTORE="${ANDROID_KEYSTORE_FILE}"
+else
+  KEYSTORE_DIR="${PROJECT_ROOT}/scripts/keystore"
+  mkdir -p "${KEYSTORE_DIR}"
+  KEYSTORE="${KEYSTORE_DIR}/soko.keystore"
+  if [ ! -f "${KEYSTORE}" ]; then
+    echo "Generating persistent signing keystore at ${KEYSTORE}..."
+    keytool -genkeypair -v \
+      -keystore "${KEYSTORE}" \
+      -alias "${KEY_ALIAS}" \
+      -keyalg RSA \
+      -keysize 2048 \
+      -validity 10000 \
+      -storepass "${KEYSTORE_PASS}" \
+      -keypass "${KEY_PASS}" \
+      -dname "CN=Soko, OU=Mobile, O=Soko Ecosystem, L=San Francisco, ST=CA, C=US"
+  fi
 fi
 
 # ------------------------------------------------------------------------------
@@ -188,6 +199,7 @@ EOF
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
@@ -218,7 +230,7 @@ EOF
         <service
             android:name="com.soko.mobile.SokoBackgroundService"
             android:label="Soko Link Service"
-            android:foregroundServiceType="connectedDevice"
+            android:foregroundServiceType="connectedDevice|mediaPlayback"
             android:exported="false" />
 
         <!-- Real Android System Notification Interceptor Service -->
@@ -291,6 +303,8 @@ import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.IntentFilter;
+import android.os.PowerManager;
+import android.net.wifi.WifiManager;
 import java.io.InputStream;
 import java.io.ByteArrayOutputStream;
 import java.net.URL;
@@ -308,6 +322,83 @@ public class MainActivity extends Activity {
     private String currentTitle = "YouTube Track";
     private String currentArtist = "Soko Music";
     private boolean currentIsPlaying = false;
+    private PowerManager.WakeLock wakeLock = null;
+    private WifiManager.WifiLock wifiLock = null;
+
+    private synchronized void acquireAppWakeLock(String tag, long timeoutMs) {
+        try {
+            if (wakeLock == null) {
+                PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                if (pm != null) {
+                    wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Soko:AppWakeLock:" + (tag != null ? tag : "Active"));
+                    wakeLock.setReferenceCounted(false);
+                }
+            }
+            if (wakeLock != null && !wakeLock.isHeld()) {
+                long timeout = (timeoutMs > 0 && timeoutMs <= 7200000L) ? timeoutMs : 1800000L;
+                wakeLock.acquire(timeout);
+                Log.i("SokoApp", "Acquired partial WakeLock (" + tag + ", timeout: " + timeout + "ms)");
+            }
+
+            if (wifiLock == null) {
+                WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                if (wm != null) {
+                    int mode = (android.os.Build.VERSION.SDK_INT >= 29)
+                        ? WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+                        : WifiManager.WIFI_MODE_FULL_HIGH_PERF;
+                    wifiLock = wm.createWifiLock(mode, "Soko:AppWifiLock:" + (tag != null ? tag : "Active"));
+                    wifiLock.setReferenceCounted(false);
+                }
+            }
+            if (wifiLock != null && !wifiLock.isHeld()) {
+                wifiLock.acquire();
+                Log.i("SokoApp", "Acquired WifiLock (" + tag + ")");
+            }
+
+            if ("mobile".equals("${APP_ID}")) {
+                try {
+                    Intent lockIntent = new Intent();
+                    lockIntent.setClassName(this, "com.soko.mobile.SokoBackgroundService");
+                    lockIntent.setAction("com.soko.mobile.ACTION_ACQUIRE_WAKELOCK");
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                        startForegroundService(lockIntent);
+                    } else {
+                        startService(lockIntent);
+                    }
+                } catch (Exception e) {}
+            }
+        } catch (Exception e) {
+            Log.w("SokoApp", "Failed to acquire Wake/WifiLock: " + e.getMessage());
+        }
+    }
+
+    private synchronized void releaseAppWakeLock() {
+        try {
+            if (wakeLock != null && wakeLock.isHeld()) {
+                wakeLock.release();
+                Log.i("SokoApp", "Released partial WakeLock");
+            }
+            if (wifiLock != null && wifiLock.isHeld()) {
+                wifiLock.release();
+                Log.i("SokoApp", "Released WifiLock");
+            }
+
+            if ("mobile".equals("${APP_ID}")) {
+                try {
+                    Intent unlockIntent = new Intent();
+                    unlockIntent.setClassName(this, "com.soko.mobile.SokoBackgroundService");
+                    unlockIntent.setAction("com.soko.mobile.ACTION_RELEASE_WAKELOCK");
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                        startForegroundService(unlockIntent);
+                    } else {
+                        startService(unlockIntent);
+                    }
+                } catch (Exception e) {}
+            }
+        } catch (Exception e) {
+            Log.w("SokoApp", "Failed to release Wake/WifiLock: " + e.getMessage());
+        }
+    }
 
     private BroadcastReceiver mediaActionReceiver = new BroadcastReceiver() {
         @Override
@@ -662,6 +753,16 @@ public class MainActivity extends Activity {
                 }
             });
         }
+
+        @JavascriptInterface
+        public void acquireWakeLock(String tag, long timeoutMs) {
+            acquireAppWakeLock(tag, timeoutMs);
+        }
+
+        @JavascriptInterface
+        public void releaseWakeLock() {
+            releaseAppWakeLock();
+        }
     }
 
     @Override
@@ -930,6 +1031,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        releaseAppWakeLock();
         if (mediaSession != null) {
             try {
                 mediaSession.setActive(false);
@@ -1022,7 +1124,10 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.content.Context;
 import android.content.Intent;
+import android.net.wifi.WifiManager;
+import android.os.PowerManager;
 import android.os.IBinder;
 import android.os.Build;
 import android.util.Log;
@@ -1031,6 +1136,12 @@ public class SokoBackgroundService extends Service {
     private static final String TAG = "SokoBgService";
     public static final String CHANNEL_ID = "soko_foreground_link";
     public static final int NOTIF_ID = 8766;
+
+    public static final String ACTION_ACQUIRE_WAKELOCK = "com.soko.mobile.ACTION_ACQUIRE_WAKELOCK";
+    public static final String ACTION_RELEASE_WAKELOCK = "com.soko.mobile.ACTION_RELEASE_WAKELOCK";
+
+    private PowerManager.WakeLock wakeLock = null;
+    private WifiManager.WifiLock wifiLock = null;
 
     @Override
     public void onCreate() {
@@ -1080,13 +1191,90 @@ public class SokoBackgroundService extends Service {
                .setOngoing(true);
 
         Notification notification = builder.build();
-        startForeground(NOTIF_ID, notification);
+        if (Build.VERSION.SDK_INT >= 34) {
+            startForeground(
+                NOTIF_ID,
+                notification,
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE |
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+            );
+        } else if (Build.VERSION.SDK_INT >= 29) {
+            startForeground(
+                NOTIF_ID,
+                notification,
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            );
+        } else {
+            startForeground(NOTIF_ID, notification);
+        }
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         startInForeground();
+        if (intent != null) {
+            String action = intent.getAction();
+            if (ACTION_ACQUIRE_WAKELOCK.equals(action)) {
+                acquireLocks();
+            } else if (ACTION_RELEASE_WAKELOCK.equals(action)) {
+                releaseLocks();
+            }
+        }
         return START_STICKY;
+    }
+
+    private synchronized void acquireLocks() {
+        try {
+            if (wakeLock == null) {
+                PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                if (pm != null) {
+                    wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Soko:BgServiceWakeLock");
+                    wakeLock.setReferenceCounted(false);
+                }
+            }
+            if (wakeLock != null && !wakeLock.isHeld()) {
+                wakeLock.acquire(1800000L); // 30 min safety cap
+                Log.i(TAG, "Background service acquired WakeLock");
+            }
+
+            if (wifiLock == null) {
+                WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                if (wm != null) {
+                    int mode = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                        ? WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+                        : WifiManager.WIFI_MODE_FULL_HIGH_PERF;
+                    wifiLock = wm.createWifiLock(mode, "Soko:BgServiceWifiLock");
+                    wifiLock.setReferenceCounted(false);
+                }
+            }
+            if (wifiLock != null && !wifiLock.isHeld()) {
+                wifiLock.acquire();
+                Log.i(TAG, "Background service acquired WifiLock");
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to acquire locks in service: " + e.getMessage());
+        }
+    }
+
+    private synchronized void releaseLocks() {
+        try {
+            if (wakeLock != null && wakeLock.isHeld()) {
+                wakeLock.release();
+                Log.i(TAG, "Background service released WakeLock");
+            }
+            if (wifiLock != null && wifiLock.isHeld()) {
+                wifiLock.release();
+                Log.i(TAG, "Background service released WifiLock");
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to release locks in service: " + e.getMessage());
+        }
+    }
+
+    @Override
+    public void onDestroy() {
+        releaseLocks();
+        super.onDestroy();
     }
 
     @Override
@@ -1289,18 +1477,21 @@ EOF
   # 8. Align APK with Zipalign
   "${ZIPALIGN}" -p -f 4 "${WORK}/unaligned.apk" "${WORK}/aligned.apk"
 
-  # 9. Sign APK with apksigner
+  # 9. Sign APK with apksigner (enforcing V1, V2, and V3 signatures)
   local FINAL_OUT="${OUTPUT_DIR}/${OUT_NAME}"
   "${APKSIGNER}" sign \
     --ks "${KEYSTORE}" \
-    --ks-key-alias "soko-key" \
-    --ks-pass "pass:${KEY_PASS}" \
+    --ks-key-alias "${KEY_ALIAS}" \
+    --ks-pass "pass:${KEYSTORE_PASS}" \
     --key-pass "pass:${KEY_PASS}" \
+    --v1-signing-enabled true \
+    --v2-signing-enabled true \
+    --v3-signing-enabled true \
     --out "${FINAL_OUT}" \
     "${WORK}/aligned.apk"
 
   # 10. Verify signature
-  "${APKSIGNER}" verify "${FINAL_OUT}"
+  "${APKSIGNER}" verify --verbose "${FINAL_OUT}"
   echo "Successfully generated signed APK: ${FINAL_OUT} ($(du -h "${FINAL_OUT}" | cut -f1))"
 }
 

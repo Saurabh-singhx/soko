@@ -23,6 +23,10 @@
     {
       "from": "../../apps/mobile/companion",
       "to": "apps/mobile/companion"
+    },
+    {
+      "from": "../../packages",
+      "to": "packages"
     }
   ],
   "linux": {
@@ -33,6 +37,10 @@
       },
       {
         "target": "deb",
+        "arch": ["x64"]
+      },
+      {
+        "target": "rpm",
         "arch": ["x64"]
       },
       {
@@ -61,8 +69,39 @@
       {
         "target": "zip",
         "arch": ["x64"]
+      },
+      {
+        "target": "nsis",
+        "arch": ["x64"]
       }
     ],
-    "icon": "build/icon.ico"
+    "icon": "build/icon.ico",
+    "publisherName": "Soko Project",
+    "verifyUpdateCodeSignature": false,
+    "signAndEditExecutable": true
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "Soko"
+  },
+  "mac": {
+    "category": "public.app-category.utilities",
+    "target": [
+      {
+        "target": "dmg",
+        "arch": ["x64", "arm64"]
+      },
+      {
+        "target": "zip",
+        "arch": ["x64", "arm64"]
+      }
+    ],
+    "hardenedRuntime": true,
+    "gatekeeperAssess": false,
+    "entitlements": "build/entitlements.mac.plist",
+    "entitlementsInherit": "build/entitlements.mac.inherit.plist"
   }
 }

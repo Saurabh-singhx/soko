@@ -80,13 +80,17 @@ jobs:
       - name: Build Web Frontend
         run: npm run build:desktop
 
-      - name: Package Linux Desktop Targets (.AppImage, .deb, .tar.gz)
+      - name: Package Linux Desktop Targets (.AppImage, .deb, .rpm, .tar.gz)
         run: npm run build:linux
 
       - name: Build Standalone Android APKs (soko-mobile & lite)
         env:
           SOKO_VERSION: ${{ needs.prepare-version.outputs.version }}
           SOKO_BUILD_NUMBER: ${{ github.run_number }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           bash scripts/build_apks.sh
 
@@ -97,6 +101,7 @@ jobs:
           path: |
             dist-desktop/*.AppImage
             dist-desktop/*.deb
+            dist-desktop/*.rpm
             dist-desktop/*.tar.gz
             apks/soko-mobile.apk
             apks/soko-mobile-lite.apk
@@ -128,6 +133,9 @@ jobs:
         run: npm run build:desktop
 
       - name: Package Windows Desktop Targets (.exe, .zip)
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
         run: npm run build:windows
 
       - name: Upload Windows Assets
@@ -138,9 +146,52 @@ jobs:
             dist-desktop/*.exe
             dist-desktop/*.zip
 
+  build-macos:
+    name: Build macOS Binaries
+    needs: [prepare-version]
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Apply Resolved Build Version
+        run: |
+          node scripts/update_version.js "${{ needs.prepare-version.outputs.version }}"
+
+      - name: Install Node Dependencies
+        run: |
+          npm install
+          npm --prefix apps/desktop install
+
+      - name: Build Web Frontend
+        run: npm run build:desktop
+
+      - name: Package macOS Desktop Targets (.dmg, .zip)
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run build:macos
+
+      - name: Upload macOS Assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-assets
+          path: |
+            dist-desktop/*.dmg
+            dist-desktop/*-mac.zip
+
   publish-release:
     name: Publish Unified GitHub Release & Update Gist Feed
-    needs: [prepare-version, build-linux-and-apk, build-windows]
+    needs: [prepare-version, build-linux-and-apk, build-windows, build-macos]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -163,6 +214,15 @@ jobs:
         with:
           name: windows-assets
           path: release-assets
+          merge-multiple: true
+
+      - name: Download macOS Assets (Optional)
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: macos-assets
+          path: release-assets
+          merge-multiple: true
           merge-multiple: true
 
       - name: List Release Assets

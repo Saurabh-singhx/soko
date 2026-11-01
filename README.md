@@ -115,11 +115,15 @@ Ready-to-use binaries are published with every release on [GitHub Releases](http
 | :--- | :--- | :--- | :--- |
 | **Linux (x64)** | `.AppImage` | [`soko-linux-x86_64.AppImage`](https://github.com/Saurabh-singhx/soko/releases/latest) | Portable, runs on any modern distro (Ubuntu, Fedora, Arch) |
 | **Linux (x64)** | `.deb` | [`soko-linux-amd64.deb`](https://github.com/Saurabh-singhx/soko/releases/latest) | Debian, Ubuntu, Linux Mint native package |
+| **Linux (x64)** | `.rpm` | [`soko-linux-x86_64.rpm`](https://github.com/Saurabh-singhx/soko/releases/latest) | Fedora, RHEL, openSUSE native package |
 | **Linux (x64)** | `.tar.gz` | [`soko-linux-x64.tar.gz`](https://github.com/Saurabh-singhx/soko/releases/latest) | Standalone unpacked binary archive |
+| **Windows (x64)** | Setup `.exe` (NSIS) | [`soko-win-setup.exe`](https://github.com/Saurabh-singhx/soko/releases/latest) | Standard Windows installer with start menu & desktop shortcuts |
 | **Windows (x64)** | Portable `.exe` | [`soko-win-x64.exe`](https://github.com/Saurabh-singhx/soko/releases/latest) | Standalone portable executable (No installer required) |
 | **Windows (x64)** | `.zip` | [`soko-win-x64.zip`](https://github.com/Saurabh-singhx/soko/releases/latest) | Unpack and launch `soko.exe` |
-| **Android (API 24+)** | `soko-mobile.apk` | [`soko-mobile.apk`](https://github.com/Saurabh-singhx/soko/releases/latest) | Full companion with silent link daemon, notification listener, & audio streaming |
-| **Android (API 24+)** | `soko-mobile-lite.apk` | [`soko-mobile-lite.apk`](https://github.com/Saurabh-singhx/soko/releases/latest) | Lite standalone companion (Clean transfer & CLI, 0 Play Protect warnings) |
+| **macOS (Universal)** | `.dmg` / `.zip` | [`soko-mac.dmg`](https://github.com/Saurabh-singhx/soko/releases/latest) | Apple Silicon & Intel with Hardened Runtime & Entitlements |
+| **Android (API 26+)** | `soko-mobile.apk` | [`soko-mobile.apk`](https://github.com/Saurabh-singhx/soko/releases/latest) | Full companion with silent link daemon, Android 14+ FGS media compliance, & audio streaming |
+| **Android (API 26+)** | `soko-mobile-lite.apk` | [`soko-mobile-lite.apk`](https://github.com/Saurabh-singhx/soko/releases/latest) | Lite standalone companion (Clean transfer & CLI, 0 Play Protect warnings) |
+| **Android (API 26+)** | `soko-desktop.apk` | [`soko-desktop.apk`](https://github.com/Saurabh-singhx/soko/releases/latest) | Soko Dynamic Island HUD running as native Android tablet HUD |
 
 > [!TIP]
 > On Linux, you can also launch the application via `./run-desktop.sh` after building locally.

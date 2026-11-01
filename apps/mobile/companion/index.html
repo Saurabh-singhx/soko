@@ -2635,9 +2635,27 @@
     }
 
     // ============================================================
-    // FILE TRANSFER ENGINE
+    // FILE TRANSFER ENGINE & WAKELOCK SYNCHRONIZATION
     // ============================================================
     let activeUploadXhr = null;
+
+    function syncWakeLockState(reason) {
+      const isStreaming = (typeof isAudioStreaming !== 'undefined' && isAudioStreaming);
+      const isConnector = (typeof isConnectorPlaying !== 'undefined' && isConnectorPlaying);
+      const isUploading = (typeof activeUploadXhr !== 'undefined' && activeUploadXhr !== null);
+      const needsLock = isStreaming || isConnector || isUploading;
+      if (window.SokoNative) {
+        if (needsLock) {
+          if (typeof window.SokoNative.acquireWakeLock === 'function') {
+            window.SokoNative.acquireWakeLock(reason || 'ActiveMediaOrTransfer', 7200000);
+          }
+        } else {
+          if (typeof window.SokoNative.releaseWakeLock === 'function') {
+            window.SokoNative.releaseWakeLock();
+          }
+        }
+      }
+    }
 
     function triggerFileTransfer(filename = 'soko-v1.0.0-release.apk') {
       if (!isDevicePaired) {
@@ -2672,6 +2690,7 @@
       if (activeUploadXhr) {
         try { activeUploadXhr.abort(); } catch(e) {}
         activeUploadXhr = null;
+        syncWakeLockState();
       }
 
       const payload = { status: 'cancelled', error: 'Cancelled by user' };
@@ -2723,6 +2742,7 @@
 
       const xhr = new XMLHttpRequest();
       activeUploadXhr = xhr;
+      syncWakeLockState('FileUpload');
 
       let lastLoaded = 0;
       let lastTime = Date.now();
@@ -2746,6 +2766,7 @@
 
       xhr.onload = () => {
         activeUploadXhr = null;
+        syncWakeLockState();
         if (xhr.status >= 200 && xhr.status < 300) {
           fill.style.width = '100%';
           document.getElementById('transferStatus').innerText = `Saved to Desktop: ${file.name}`;
@@ -2772,9 +2793,13 @@
         }
       };
 
-      xhr.onerror = () => handleUploadError(new Error('Wi-Fi connection interrupted'));
+      xhr.onerror = () => {
+        syncWakeLockState();
+        handleUploadError(new Error('Wi-Fi connection interrupted'));
+      };
       xhr.onabort = () => {
         activeUploadXhr = null;
+        syncWakeLockState();
       };
 
       xhr.open('POST', `${getHttpBaseUrl()}/api/upload?filename=${encodeURIComponent(file.name)}`);
@@ -2789,6 +2814,7 @@
 
     function handleUploadError(err) {
       activeUploadXhr = null;
+      syncWakeLockState();
       const fill = document.getElementById('transferFill');
       fill.style.background = 'var(--color-red)';
       fill.style.width = '100%';
@@ -3224,6 +3250,7 @@
         } catch (e) {}
         isAudioStreaming = false;
         stopVisualizerAnimation();
+        syncWakeLockState();
 
         if (window.SokoNative && typeof window.SokoNative.releaseNativePlayer === 'function') {
           window.SokoNative.releaseNativePlayer();
@@ -3264,6 +3291,7 @@
           await player.play();
           isAudioStreaming = true;
           startVisualizerAnimation();
+          syncWakeLockState('Desktop Audio Stream');
 
           if (window.SokoNative && typeof window.SokoNative.updateNativePlayer === 'function') {
             window.SokoNative.updateNativePlayer('PC Desktop Audio', 'Live System Sound', true, 0, 0, '');
@@ -3283,6 +3311,7 @@
           console.error('Audio stream playback failed:', err);
           isAudioStreaming = false;
           stopVisualizerAnimation();
+          syncWakeLockState();
           player.src = '';
           if (window.SokoNative && typeof window.SokoNative.releaseNativePlayer === 'function') {
             window.SokoNative.releaseNativePlayer();
@@ -3303,6 +3332,7 @@
           if (isAudioStreaming) {
             isAudioStreaming = false;
             stopVisualizerAnimation();
+            syncWakeLockState();
             if (btn) btn.className = 'btn btn-success';
             if (btnText) btnText.innerText = 'Start Listening to PC Sound';
             if (badge) {
@@ -3474,6 +3504,8 @@
       };
 
       connectorPlayer.onended = () => {
+        isConnectorPlaying = false;
+        syncWakeLockState();
         controlDesktopAudio('next');
       };
     }
@@ -3514,12 +3546,14 @@
           player.play();
           isConnectorPlaying = true;
           updateConnectorPlayIcon(true);
+          syncWakeLockState('ConnectorAudio');
           // Ensure desktop browser is paused
           controlDesktopAudio('pause');
         } else {
           player.pause();
           isConnectorPlaying = false;
           updateConnectorPlayIcon(false);
+          syncWakeLockState();
         }
       }
 
