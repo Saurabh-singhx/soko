@@ -8,6 +8,7 @@ import { NotificationBanner } from './NotificationBanner.tsx';
 import { CliStatusWidget } from './CliStatusWidget.tsx';
 import { TransferProgress } from './TransferProgress.tsx';
 import { ConnectionPopover } from './ConnectionPopover.tsx';
+import { IslandErrorBoundary } from '../common/IslandErrorBoundary.tsx';
 import { connectionService } from '../../services/connection.ts';
 import { getAgentProjectTheme } from '../../utils/agentTheme.ts';
 import {
@@ -1278,23 +1279,25 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
               : 'Click to manage connection'
           }
         >
-          <CharacterHost
-            character={activeChar}
-            mood={mood}
-            size={avatarSize}
-            notificationKey={activeNotification?.id}
-            isMusicPlaying={audioStatus.isPlaying}
-            isIdleMascotOnly={isIdleMascotOnly}
-            connectionStatus={connectionStatus}
-            activeAgent={agentStatus?.agent}
-            agentStatus={agentStatus}
-            isDragging={effectiveDragging}
-            isHovered={isHovered}
-            isCharging={isCharging}
-            isOnline={isOnline}
-            isMultiSession={isMultiSession}
-            gitAction={gitAction}
-          />
+          <IslandErrorBoundary name="Mascot" compact>
+            <CharacterHost
+              character={activeChar}
+              mood={mood}
+              size={avatarSize}
+              notificationKey={activeNotification?.id}
+              isMusicPlaying={audioStatus.isPlaying}
+              isIdleMascotOnly={isIdleMascotOnly}
+              connectionStatus={connectionStatus}
+              activeAgent={agentStatus?.agent}
+              agentStatus={agentStatus}
+              isDragging={effectiveDragging}
+              isHovered={isHovered}
+              isCharging={isCharging}
+              isOnline={isOnline}
+              isMultiSession={isMultiSession}
+              gitAction={gitAction}
+            />
+          </IslandErrorBoundary>
         </div>
 
         {/* Center / Body Section (Strictly bounds content to the right of avatar) */}
@@ -1687,57 +1690,63 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
             )}
 
             {mode === 'notification' && activeNotification && (
-              <NotificationBanner
-                key="notification"
-                notification={activeNotification}
-                onDismiss={() => {
-                  setActiveNotification(null);
-                  setMode('compact');
-                  setMood('idle');
-                  setIsBotClicked(false);
-                }}
-              />
+              <IslandErrorBoundary name="NotificationBanner">
+                <NotificationBanner
+                  key="notification"
+                  notification={activeNotification}
+                  onDismiss={() => {
+                    setActiveNotification(null);
+                    setMode('compact');
+                    setMood('idle');
+                    setIsBotClicked(false);
+                  }}
+                />
+              </IslandErrorBoundary>
             )}
 
             {mode === 'cli' && activeCli && (
-              <CliStatusWidget
-                key="cli"
-                status={activeCli}
-                onCancel={() => {
-                  setMode('compact');
-                  setMood('idle');
-                }}
-              />
+              <IslandErrorBoundary name="CliStatusWidget">
+                <CliStatusWidget
+                  key="cli"
+                  status={activeCli}
+                  onCancel={() => {
+                    setMode('compact');
+                    setMood('idle');
+                  }}
+                />
+              </IslandErrorBoundary>
             )}
 
             {mode === 'transfer' && activeTransfer && (
-              <TransferProgress
-                key="transfer"
-                transfer={activeTransfer}
-                onCancel={() => {
-                  connectionService.stopTransferSimulation();
-                  connectionService.cancelTransfer(activeTransfer.id, activeTransfer.filename);
-                  setActiveTransfer({
-                    ...activeTransfer,
-                    status: 'cancelled',
-                  });
-                  setMood('error');
-                  setTimeout(() => {
+              <IslandErrorBoundary name="TransferProgress">
+                <TransferProgress
+                  key="transfer"
+                  transfer={activeTransfer}
+                  onCancel={() => {
+                    connectionService.stopTransferSimulation();
+                    connectionService.cancelTransfer(activeTransfer.id, activeTransfer.filename);
+                    setActiveTransfer({
+                      ...activeTransfer,
+                      status: 'cancelled',
+                    });
+                    setMood('error');
+                    setTimeout(() => {
+                      setActiveTransfer(null);
+                      setMode('compact');
+                      setMood('idle');
+                    }, 2500);
+                  }}
+                  onRetry={() => {
+                    connectionService.retryTransfer(activeTransfer.id, activeTransfer.filename);
+                    setMood('working');
+                  }}
+                  onDismiss={() => {
                     setActiveTransfer(null);
                     setMode('compact');
                     setMood('idle');
-                  }, 2500);
-                }}
-                onRetry={() => {
-                  connectionService.retryTransfer(activeTransfer.id, activeTransfer.filename);
-                  setMood('working');
-                }}
-                onDismiss={() => {
-                  setActiveTransfer(null);
-                  setMode('compact');
-                  setMood('idle');
-                }}
-              />
+                  }}
+                />
+              </IslandErrorBoundary>
             )}
 
             {mode === 'pairing' && pendingPair && (
@@ -1808,19 +1817,21 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
       {/* Floating Connection Popover */}
       <AnimatePresence>
         {isConnectionPopoverOpen && (
-          <ConnectionPopover
-            status={connectionStatus}
-            device={pairedDevice}
-            sasPin={sasPin}
-            onDisconnect={() => connectionService.disconnectDevice()}
-            onRegeneratePin={() => setSasPin(connectionService.regeneratePin())}
-            onOpenSettings={(tab) => {
-              setIsConnectionPopoverOpen(false);
-              onOpenSettings(tab);
-            }}
-            onClose={() => setIsConnectionPopoverOpen(false)}
-            onSendFile={handleTriggerSendFile}
-          />
+          <IslandErrorBoundary name="ConnectionPopover">
+            <ConnectionPopover
+              status={connectionStatus}
+              device={pairedDevice}
+              sasPin={sasPin}
+              onDisconnect={() => connectionService.disconnectDevice()}
+              onRegeneratePin={() => setSasPin(connectionService.regeneratePin())}
+              onOpenSettings={(tab) => {
+                setIsConnectionPopoverOpen(false);
+                onOpenSettings(tab);
+              }}
+              onClose={() => setIsConnectionPopoverOpen(false)}
+              onSendFile={handleTriggerSendFile}
+            />
+          </IslandErrorBoundary>
         )}
       </AnimatePresence>
     </div>

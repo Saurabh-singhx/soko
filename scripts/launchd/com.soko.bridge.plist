@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.soko.bridge</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/node</string>
+        <string>__SOKO_BRIDGE_PATH__</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__SOKO_DIR__</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>NODE_ENV</key>
+        <string>production</string>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>~/Library/Logs/soko_bridge.log</string>
+    <key>StandardErrorPath</key>
+    <string>~/Library/Logs/soko_bridge.err.log</string>
+</dict>
+</plist>

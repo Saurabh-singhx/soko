@@ -32,6 +32,21 @@ const os = require('os');
 const crypto = require('crypto');
 const { spawn, exec, execSync } = require('child_process');
 
+// Rolling File Logger with 10MB bounds and historical file retention (.1, .2, .3)
+let bridgeLogger = null;
+try {
+  const { RollingFileLogger } = require(path.resolve(__dirname, '../packages/logger'));
+  bridgeLogger = new RollingFileLogger({
+    appName: 'soko',
+    filename: 'soko_bridge.log',
+    maxFileSizeBytes: 10 * 1024 * 1024,
+    maxHistoryFiles: 3,
+  });
+  bridgeLogger.attachConsole();
+} catch (err) {
+  // Graceful fallback if logger cannot be initialized
+}
+
 const {
   TrustStore,
   RateLimiter,
@@ -886,9 +901,16 @@ const pendingPairRequests = new Map();
 // ------------------------------------------------------------------------------
 // REAL-TIME DESKTOP AUDIO STREAMING ENGINE & PIPEWIRE MONITORING
 // ------------------------------------------------------------------------------
-const activeAudioStreams = new Set();
+const activeAudioStreamsMp3 = new Set();
+const activeAudioStreamsOpus = new Set();
+const activeAudioStreams = activeAudioStreamsMp3; // Compatibility alias
 const activeMusicStreams = new Set();
 let audioFfmpegProc = null;
+let audioFfmpegProcMp3 = null;
+let audioFfmpegProcOpus = null;
+let audioDeviceWatcherProc = null;
+let currentMonitorSource = null;
+let deviceSwitchDebounceTimer = null;
 let lastAudioPlayingState = false;
 let latestMusicNowPlaying = null;
 let lastGitActivity = null;
@@ -1085,7 +1107,7 @@ function checkIsAudioPlaying() {
   }
 
   if (os.platform() === 'win32') {
-    return activeAudioStreams.size > 0 || activeMusicStreams.size > 0;
+    return (activeAudioStreamsMp3.size + activeAudioStreamsOpus.size) > 0 || activeMusicStreams.size > 0;
   }
 
   // Strategy 1: Check PipeWire / WirePlumber status for active playback output streams
@@ -1179,7 +1201,8 @@ function broadcastAudioStatus() {
   lastAudioPlayingState = isPlaying;
   const isMuted = getSpeakerMuteState();
   const isConnectorActive = latestMusicNowPlaying && (latestMusicNowPlaying.title || latestMusicNowPlaying.id) && latestMusicNowPlaying.status !== 'paused' && latestMusicNowPlaying.status !== 'stopped';
-  const isStreamingToMobile = activeAudioStreams.size > 0 || activeMusicStreams.size > 0 || Boolean(isConnectorActive);
+  const totalListeners = activeAudioStreamsMp3.size + activeAudioStreamsOpus.size + activeMusicStreams.size;
+  const isStreamingToMobile = totalListeners > 0 || Boolean(isConnectorActive);
   broadcastPacket({
     magic: 'SK',
     version: 1,
@@ -1189,16 +1212,74 @@ function broadcastAudioStatus() {
     payload: {
       isPlaying,
       isStreamingToMobile,
-      activeListeners: activeAudioStreams.size + activeMusicStreams.size,
-      bitrate: '192 kbps',
-      format: 'MP3 (48 kHz Stereo)',
+      activeListeners: totalListeners,
+      activeListenersMp3: activeAudioStreamsMp3.size,
+      activeListenersOpus: activeAudioStreamsOpus.size,
+      supportedCodecs: ['opus', 'mp3'],
+      defaultCodec: 'opus',
+      bitrate: activeAudioStreamsOpus.size > 0 ? '96 kbps (Opus) / 192 kbps (MP3)' : '192 kbps',
+      format: activeAudioStreamsOpus.size > 0 ? 'WebM Opus (48 kHz Stereo)' : 'MP3 (48 kHz Stereo)',
       source: isConnectorActive ? 'YouTube Music Connector' : getAudioSourceDescription(),
+      monitorSource: currentMonitorSource || getDefaultMonitorSource(),
       isSpeakerMuted: isMuted,
       activeApp: detectedActiveAudioApp || (latestMusicNowPlaying ? latestMusicNowPlaying.artist : 'Music'),
       title: detectedActiveAudioTitle || (latestMusicNowPlaying ? latestMusicNowPlaying.title : ''),
       autoMuteSpeakerOnStream,
     },
   });
+}
+
+let cachedFfmpegPath = null;
+function resolveFfmpegPath() {
+  if (cachedFfmpegPath) return cachedFfmpegPath;
+
+  // 1. Explicit environment override
+  if (process.env.SOKO_FFMPEG_PATH && fs.existsSync(process.env.SOKO_FFMPEG_PATH)) {
+    console.log(`[Bridge Audio] Using explicit SOKO_FFMPEG_PATH: ${process.env.SOKO_FFMPEG_PATH}`);
+    cachedFfmpegPath = process.env.SOKO_FFMPEG_PATH;
+    return cachedFfmpegPath;
+  }
+
+  // 2. Check system ffmpeg on PATH
+  try {
+    const versionOut = execSync('ffmpeg -version', { timeout: 800, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+    if (versionOut.includes('ffmpeg version')) {
+      cachedFfmpegPath = 'ffmpeg';
+      return cachedFfmpegPath;
+    }
+  } catch {}
+
+  // 3. Bundled resources (Electron / Tauri packaged app resources)
+  const candidateBundledPaths = [
+    process.resourcesPath ? path.join(process.resourcesPath, 'ffmpeg') : null,
+    process.resourcesPath ? path.join(process.resourcesPath, 'ffmpeg.exe') : null,
+    process.resourcesPath ? path.join(process.resourcesPath, 'bin', 'ffmpeg') : null,
+    process.resourcesPath ? path.join(process.resourcesPath, 'bin', 'ffmpeg.exe') : null,
+    path.resolve(__dirname, '../bin/ffmpeg'),
+    path.resolve(__dirname, '../bin/ffmpeg.exe'),
+  ].filter(Boolean);
+
+  for (const candidate of candidateBundledPaths) {
+    if (fs.existsSync(candidate)) {
+      console.log(`[Bridge Audio] Using bundled ffmpeg from: ${candidate}`);
+      cachedFfmpegPath = candidate;
+      return cachedFfmpegPath;
+    }
+  }
+
+  // 4. Bundled ffmpeg-static npm package
+  try {
+    const staticPath = require('ffmpeg-static');
+    if (staticPath && fs.existsSync(staticPath)) {
+      console.log(`[Bridge Audio] Using npm ffmpeg-static at: ${staticPath}`);
+      cachedFfmpegPath = staticPath;
+      return cachedFfmpegPath;
+    }
+  } catch {}
+
+  // 5. Fallback command
+  cachedFfmpegPath = 'ffmpeg';
+  return cachedFfmpegPath;
 }
 
 function getWindowsAudioInputArgs() {
@@ -1231,16 +1312,105 @@ function getWindowsAudioInputArgs() {
   return ['-f', 'wasapi', '-i', 'default'];
 }
 
-function startAudioBroadcaster() {
-  if (audioFfmpegProc) return;
-  const isWin = os.platform() === 'win32';
+function getPlatformAudioInputArgs(ffmpegBin, monitor) {
+  const platform = os.platform();
+  if (platform === 'win32') {
+    return getWindowsAudioInputArgs();
+  }
+  if (platform === 'darwin') {
+    return ['-f', 'avfoundation', '-i', ':0'];
+  }
+  // Linux PulseAudio / PipeWire capture
+  const target = monitor || getDefaultMonitorSource();
+  return ['-f', 'pulse', '-i', target];
+}
+
+function hotSwapAudioDevice(newSource) {
+  if (!newSource || newSource === currentMonitorSource) return;
+  console.log(`[Bridge Audio] Hot-swapping audio stream to newly active device: ${newSource} (was: ${currentMonitorSource})`);
+  currentMonitorSource = newSource;
+
+  // Hot swap MP3 broadcaster if active listeners exist (retains all client HTTP sockets)
+  if (activeAudioStreamsMp3.size > 0) {
+    if (audioFfmpegProcMp3) {
+      try { audioFfmpegProcMp3.kill('SIGTERM'); } catch {}
+      audioFfmpegProcMp3 = null;
+    }
+    startAudioBroadcasterMp3();
+  }
+
+  // Hot swap Opus broadcaster if active listeners exist (retains all client HTTP sockets)
+  if (activeAudioStreamsOpus.size > 0) {
+    if (audioFfmpegProcOpus) {
+      try { audioFfmpegProcOpus.kill('SIGTERM'); } catch {}
+      audioFfmpegProcOpus = null;
+    }
+    startAudioBroadcasterOpus();
+  }
+
+  broadcastAudioStatus();
+}
+
+function startAudioDeviceWatcher() {
+  if (audioDeviceWatcherProc || os.platform() !== 'linux') return;
+
+  const triggerCheck = () => {
+    if (deviceSwitchDebounceTimer) clearTimeout(deviceSwitchDebounceTimer);
+    deviceSwitchDebounceTimer = setTimeout(() => {
+      try {
+        const newSource = getDefaultMonitorSource();
+        if (newSource && currentMonitorSource && newSource !== currentMonitorSource) {
+          hotSwapAudioDevice(newSource);
+        }
+      } catch (err) {
+        console.warn('[Bridge Audio] Error checking audio device change:', err.message);
+      }
+    }, 400);
+  };
+
+  try {
+    const pactl = spawn('pactl', ['subscribe'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    pactl.stdout.on('data', (data) => {
+      const text = data.toString();
+      if (/sink|server/i.test(text)) {
+        triggerCheck();
+      }
+    });
+    pactl.on('error', () => {
+      startPipewireDeviceWatcher(triggerCheck);
+    });
+    pactl.on('close', () => {
+      audioDeviceWatcherProc = null;
+    });
+    audioDeviceWatcherProc = pactl;
+  } catch (err) {
+    startPipewireDeviceWatcher(triggerCheck);
+  }
+}
+
+function startPipewireDeviceWatcher(triggerCheck) {
+  try {
+    const pwMon = spawn('pw-mon', ['-p', '-o', '-a'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    pwMon.stdout.on('data', () => {
+      triggerCheck();
+    });
+    pwMon.on('error', () => {});
+    pwMon.on('close', () => {
+      audioDeviceWatcherProc = null;
+    });
+    audioDeviceWatcherProc = pwMon;
+  } catch (err) {}
+}
+
+function startAudioBroadcasterMp3() {
+  if (audioFfmpegProcMp3) return;
+  const ffmpegBin = resolveFfmpegPath();
   const monitor = getDefaultMonitorSource();
-  console.log(`[Bridge Audio] Starting Option 1 low-latency audio capture from: ${monitor} (OS: ${os.platform()})`);
+  currentMonitorSource = monitor;
+  startAudioDeviceWatcher();
 
-  const inputArgs = isWin
-    ? getWindowsAudioInputArgs()
-    : ['-f', 'pulse', '-i', monitor];
-
+  console.log(`[Bridge Audio] Starting MP3 audio capture from: ${monitor} (bin: ${ffmpegBin})`);
+  const inputArgs = getPlatformAudioInputArgs(ffmpegBin, monitor);
   const ffmpegArgs = [
     '-fflags', 'nobuffer',
     '-flags', 'low_delay',
@@ -1260,43 +1430,118 @@ function startAudioBroadcaster() {
       ...process.env,
       PIPEWIRE_LATENCY: '1024/48000',
     };
-    audioFfmpegProc = spawn('ffmpeg', ffmpegArgs, {
+    audioFfmpegProcMp3 = spawn(ffmpegBin, ffmpegArgs, {
       stdio: ['ignore', 'pipe', 'ignore'],
       env,
     });
   } catch (err) {
-    console.warn('[Bridge Audio] Failed to spawn ffmpeg:', err.message);
-    audioFfmpegProc = null;
+    console.warn('[Bridge Audio] Failed to spawn ffmpeg MP3:', err.message);
+    audioFfmpegProcMp3 = null;
     return;
   }
 
-  audioFfmpegProc.stdout.on('data', (chunk) => {
-    for (const client of activeAudioStreams) {
+  audioFfmpegProc = audioFfmpegProcMp3; // Alias for backward compatibility
+
+  audioFfmpegProcMp3.stdout.on('data', (chunk) => {
+    for (const client of activeAudioStreamsMp3) {
       try {
         client.write(chunk);
       } catch (e) {
-        activeAudioStreams.delete(client);
+        activeAudioStreamsMp3.delete(client);
       }
     }
   });
 
-  audioFfmpegProc.on('close', () => {
-    audioFfmpegProc = null;
+  audioFfmpegProcMp3.on('close', () => {
+    audioFfmpegProcMp3 = null;
+    if (audioFfmpegProc === audioFfmpegProcMp3) audioFfmpegProc = null;
     broadcastAudioStatus();
   });
 
-  audioFfmpegProc.on('error', (err) => {
-    console.warn('[Bridge Audio] ffmpeg error (ensure ffmpeg is installed):', err.message);
-    audioFfmpegProc = null;
+  audioFfmpegProcMp3.on('error', (err) => {
+    console.warn('[Bridge Audio] ffmpeg MP3 error (ensure ffmpeg is installed):', err.message);
+    audioFfmpegProcMp3 = null;
+    if (audioFfmpegProc === audioFfmpegProcMp3) audioFfmpegProc = null;
     broadcastAudioStatus();
   });
 }
 
+function startAudioBroadcasterOpus() {
+  if (audioFfmpegProcOpus) return;
+  const ffmpegBin = resolveFfmpegPath();
+  const monitor = getDefaultMonitorSource();
+  currentMonitorSource = monitor;
+  startAudioDeviceWatcher();
+
+  console.log(`[Bridge Audio] Starting low-latency Opus WebM capture from: ${monitor} (bin: ${ffmpegBin})`);
+  const inputArgs = getPlatformAudioInputArgs(ffmpegBin, monitor);
+  const ffmpegArgs = [
+    '-fflags', 'nobuffer',
+    '-flags', 'low_delay',
+    ...inputArgs,
+    '-ac', '2',
+    '-ar', '48000',
+    '-c:a', 'libopus',
+    '-b:a', '96k',
+    '-vbr', 'on',
+    '-compression_level', '10',
+    '-application', 'audio',
+    '-frame_duration', '20',
+    '-content_type', 'audio/webm',
+    '-f', 'webm',
+    '-',
+  ];
+
+  try {
+    const env = {
+      ...process.env,
+      PIPEWIRE_LATENCY: '512/48000',
+    };
+    audioFfmpegProcOpus = spawn(ffmpegBin, ffmpegArgs, {
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env,
+    });
+  } catch (err) {
+    console.warn('[Bridge Audio] Failed to spawn ffmpeg Opus:', err.message);
+    audioFfmpegProcOpus = null;
+    return;
+  }
+
+  audioFfmpegProcOpus.stdout.on('data', (chunk) => {
+    for (const client of activeAudioStreamsOpus) {
+      try {
+        client.write(chunk);
+      } catch (e) {
+        activeAudioStreamsOpus.delete(client);
+      }
+    }
+  });
+
+  audioFfmpegProcOpus.on('close', () => {
+    audioFfmpegProcOpus = null;
+    broadcastAudioStatus();
+  });
+
+  audioFfmpegProcOpus.on('error', (err) => {
+    console.warn('[Bridge Audio] ffmpeg Opus error:', err.message);
+    audioFfmpegProcOpus = null;
+    broadcastAudioStatus();
+  });
+}
+
+function startAudioBroadcaster(preferredCodec = 'mp3') {
+  if (preferredCodec === 'opus') {
+    startAudioBroadcasterOpus();
+  } else {
+    startAudioBroadcasterMp3();
+  }
+}
+
 function stopAudioBroadcasterIfNoClients() {
-  if (activeAudioStreams.size === 0 && audioFfmpegProc) {
-    console.log('[Bridge Audio] No active listeners. Stopping audio capture.');
-    const proc = audioFfmpegProc;
-    audioFfmpegProc = null;
+  if (activeAudioStreamsMp3.size === 0 && audioFfmpegProcMp3) {
+    console.log('[Bridge Audio] No active MP3 listeners. Stopping MP3 capture.');
+    const proc = audioFfmpegProcMp3;
+    audioFfmpegProcMp3 = null;
     try {
       proc.kill('SIGTERM');
       setTimeout(() => {
@@ -1306,6 +1551,30 @@ function stopAudioBroadcasterIfNoClients() {
       }, 500);
     } catch {}
   }
+
+  if (activeAudioStreamsOpus.size === 0 && audioFfmpegProcOpus) {
+    console.log('[Bridge Audio] No active Opus listeners. Stopping Opus capture.');
+    const proc = audioFfmpegProcOpus;
+    audioFfmpegProcOpus = null;
+    try {
+      proc.kill('SIGTERM');
+      setTimeout(() => {
+        try {
+          if (!proc.killed) proc.kill('SIGKILL');
+        } catch {}
+      }, 500);
+    } catch {}
+  }
+
+  if (activeAudioStreamsMp3.size === 0 && activeAudioStreamsOpus.size === 0) {
+    audioFfmpegProc = null;
+    if (audioDeviceWatcherProc) {
+      try {
+        audioDeviceWatcherProc.kill('SIGTERM');
+      } catch {}
+      audioDeviceWatcherProc = null;
+    }
+  }
 }
 
 // Background audio monitor timer (every 2.5s)
@@ -1313,6 +1582,15 @@ setInterval(() => {
   const isPlaying = checkIsAudioPlaying();
   if (isPlaying !== lastAudioPlayingState) {
     broadcastAudioStatus();
+  }
+  // Hot-swap check: If default sink changes while streaming, adapt automatically
+  if (activeAudioStreamsMp3.size > 0 || activeAudioStreamsOpus.size > 0) {
+    try {
+      const activeSource = getDefaultMonitorSource();
+      if (activeSource && currentMonitorSource && activeSource !== currentMonitorSource) {
+        hotSwapAudioDevice(activeSource);
+      }
+    } catch {}
   }
 }, 2500);
 
@@ -5477,14 +5755,20 @@ const serverHandler = (req, res) => {
       'Access-Control-Allow-Origin': '*',
     });
     const isPlaying = checkIsAudioPlaying();
+    const totalListeners = activeAudioStreamsMp3.size + activeAudioStreamsOpus.size;
     res.end(
       JSON.stringify({
         isPlaying,
-        isStreamingToMobile: activeAudioStreams.size > 0,
-        activeListeners: activeAudioStreams.size,
-        format: 'MP3 (48 kHz Stereo)',
-        bitrate: '192 kbps',
+        isStreamingToMobile: totalListeners > 0,
+        activeListeners: totalListeners,
+        activeListenersMp3: activeAudioStreamsMp3.size,
+        activeListenersOpus: activeAudioStreamsOpus.size,
+        supportedCodecs: ['opus', 'mp3'],
+        defaultCodec: 'opus',
+        format: activeAudioStreamsOpus.size > 0 ? 'WebM Opus (48 kHz Stereo)' : 'MP3 (48 kHz Stereo)',
+        bitrate: activeAudioStreamsOpus.size > 0 ? '96 kbps (Opus) / 192 kbps (MP3)' : '192 kbps',
         source: getAudioSourceDescription(),
+        monitorSource: currentMonitorSource || getDefaultMonitorSource(),
         isSpeakerMuted: getSpeakerMuteState(),
         activeApp: detectedActiveAudioApp || 'Music',
         title: detectedActiveAudioTitle || '',
@@ -5642,11 +5926,15 @@ const serverHandler = (req, res) => {
     return;
   }
 
-  // 13. Audio Stream Endpoint (Live desktop audio stream to mobile)
+  // 13. Audio Stream Endpoint (Live desktop audio stream to mobile: Opus WebM or MP3)
   if (url.pathname === '/api/audio/stream' && (req.method === 'GET' || req.method === 'HEAD')) {
+    const requestedCodec = (url.searchParams.get('codec') || '').toLowerCase().trim();
+    const useOpus = requestedCodec === 'opus';
+    const contentType = useOpus ? 'audio/webm; codecs=opus' : 'audio/mpeg';
+
     if (req.method === 'HEAD') {
       res.writeHead(200, {
-        'Content-Type': 'audio/mpeg',
+        'Content-Type': contentType,
         'Connection': 'keep-alive',
         'Access-Control-Allow-Origin': '*',
       });
@@ -5655,7 +5943,7 @@ const serverHandler = (req, res) => {
     }
 
     res.writeHead(200, {
-      'Content-Type': 'audio/mpeg',
+      'Content-Type': contentType,
       'Transfer-Encoding': 'chunked',
       'Cache-Control': 'no-cache, no-store, must-revalidate',
       'Pragma': 'no-cache',
@@ -5664,23 +5952,33 @@ const serverHandler = (req, res) => {
       'Access-Control-Allow-Origin': '*',
     });
 
-    const isFirstClient = activeAudioStreams.size === 0;
-    activeAudioStreams.add(res);
-    startAudioBroadcaster();
+    const isFirstClientTotal = activeAudioStreamsMp3.size === 0 && activeAudioStreamsOpus.size === 0;
+    if (useOpus) {
+      activeAudioStreamsOpus.add(res);
+      startAudioBroadcasterOpus();
+    } else {
+      activeAudioStreamsMp3.add(res);
+      startAudioBroadcasterMp3();
+    }
 
     // Auto-mute PC speaker while streaming to phone
-    if (isFirstClient && autoMuteSpeakerOnStream) {
+    if (isFirstClientTotal && autoMuteSpeakerOnStream) {
       previousSpeakerMuteState = getSpeakerMuteState();
-      console.log(`[Bridge Audio] Mobile stream connected: auto-muting PC speaker (previous mute: ${previousSpeakerMuteState})`);
+      console.log(`[Bridge Audio] Mobile stream connected (${useOpus ? 'Opus' : 'MP3'}): auto-muting PC speaker (previous mute: ${previousSpeakerMuteState})`);
       setSpeakerMute(true);
     }
     broadcastAudioStatus();
 
     const cleanup = () => {
-      activeAudioStreams.delete(res);
+      if (useOpus) {
+        activeAudioStreamsOpus.delete(res);
+      } else {
+        activeAudioStreamsMp3.delete(res);
+      }
       stopAudioBroadcasterIfNoClients();
+
       // Restore PC speaker state when all mobile listeners disconnect
-      if (activeAudioStreams.size === 0 && autoMuteSpeakerOnStream) {
+      if (activeAudioStreamsMp3.size === 0 && activeAudioStreamsOpus.size === 0 && autoMuteSpeakerOnStream) {
         console.log(`[Bridge Audio] Mobile listeners disconnected: restoring PC speaker mute state to ${previousSpeakerMuteState ?? false}`);
         setSpeakerMute(previousSpeakerMuteState !== null ? previousSpeakerMuteState : false);
         previousSpeakerMuteState = null;
@@ -5775,4 +6073,18 @@ function startServer(portToTry) {
   });
 }
 
-startServer(PORT);
+if (require.main === module) {
+  startServer(PORT);
+}
+
+module.exports = {
+  startServer,
+  resolveFfmpegPath,
+  getPlatformAudioInputArgs,
+  getDefaultMonitorSource,
+  hotSwapAudioDevice,
+  broadcastAudioStatus,
+  bridgeLogger,
+  activeAudioStreamsMp3,
+  activeAudioStreamsOpus,
+};

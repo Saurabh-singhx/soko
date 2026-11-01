@@ -1,0 +1,24 @@
+[Unit]
+Description=Soko Desktop Bridge & Ambient HUD Daemon
+Documentation=https://github.com/soko
+After=network.target sound.target pipewire.service pulseaudio.service
+Wants=sound.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/env node %h/coding/soko/scripts/soko_bridge.js
+WorkingDirectory=%h/coding/soko
+Restart=always
+RestartSec=3s
+KillMode=process
+TimeoutStopSec=5s
+Environment=NODE_ENV=production
+Environment=XDG_STATE_HOME=%h/.local/state
+
+# Sandboxing and resource bounds (prevent memory leaks or unbounded growth)
+LimitNOFILE=65536
+MemoryHigh=500M
+MemoryMax=1G
+
+[Install]
+WantedBy=default.target

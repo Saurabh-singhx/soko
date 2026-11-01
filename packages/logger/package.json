@@ -1,0 +1,16 @@
+{
+  "name": "@soko/logger",
+  "version": "1.0.0",
+  "description": "Production Rolling File Logger with 10MB bounds, historical file retention, disk space guards, and console teeing",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "keywords": [
+    "soko",
+    "logger",
+    "rolling-logs",
+    "log-rotation",
+    "resource-bounds"
+  ],
+  "author": "Soko Project",
+  "license": "MIT"
+}

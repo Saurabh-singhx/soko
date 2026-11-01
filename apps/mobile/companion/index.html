@@ -1147,10 +1147,16 @@
                 <span class="vbar" style="width: 3.5px; height: 6px; background: #10B981; border-radius: 2px; transition: height 0.08s ease;"></span>
               </div>
               <span id="audioStreamMeta" style="font-size: 12px; font-family: ui-monospace, monospace; color: var(--text-primary); font-weight: 500;">
-                192 kbps • 48 kHz Stereo
+                Opus 96k / MP3 192k
               </span>
             </div>
-            <span class="badge green">~40ms Wi-Fi</span>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <select id="audioCodecSelect" onchange="changeAudioCodec(this.value)" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid var(--border-subtle); border-radius: 8px; font-size: 11px; padding: 2px 6px; cursor: pointer; outline: none;">
+                <option value="opus" selected>Opus (~30ms)</option>
+                <option value="mp3">MP3 (~70ms)</option>
+              </select>
+              <span class="badge green" id="audioLatencyBadge">Low-Latency</span>
+            </div>
           </div>
 
           <!-- Volume Controls -->
@@ -3274,7 +3280,10 @@
           updateConnectorPlayIcon(false);
         }
 
-        const streamUrl = `${getHttpBaseUrl()}/api/audio/stream?t=${Date.now()}`;
+        const codecSelect = document.getElementById('audioCodecSelect');
+        const canPlayOpus = player.canPlayType('audio/webm; codecs=opus') !== '';
+        const selectedCodec = (codecSelect ? codecSelect.value : '') || (canPlayOpus ? 'opus' : 'mp3');
+        const streamUrl = `${getHttpBaseUrl()}/api/audio/stream?codec=${selectedCodec}&t=${Date.now()}`;
         const volSlider = document.getElementById('audioVolumeSlider');
         if (volSlider) {
           player.volume = (parseInt(volSlider.value, 10) || 85) / 100;
@@ -3345,6 +3354,15 @@
             showToast('Desktop audio stream disconnected', 'amber');
           }
         };
+      }
+    }
+
+    function changeAudioCodec(codec) {
+      if (isAudioStreaming) {
+        toggleAudioStreaming();
+        setTimeout(() => {
+          toggleAudioStreaming();
+        }, 200);
       }
     }
 

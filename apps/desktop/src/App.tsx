@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { DynamicIsland } from './components/island/DynamicIsland.tsx';
 import { SettingsView } from './components/settings/SettingsView.tsx';
+import { IslandErrorBoundary } from './components/common/IslandErrorBoundary.tsx';
 
 /**
  * Root Multi-Window Router Component.
@@ -59,13 +60,19 @@ export const App: React.FC = () => {
   };
 
   if (currentView === 'settings') {
-    return <SettingsView onClose={handleCloseSettings} />;
+    return (
+      <IslandErrorBoundary name="SettingsView">
+        <SettingsView onClose={handleCloseSettings} />
+      </IslandErrorBoundary>
+    );
   }
 
   return (
-    <div className="w-full h-full overflow-hidden bg-transparent flex flex-col items-center justify-start select-none">
-      <DynamicIsland onOpenSettings={handleOpenSettings} />
-    </div>
+    <IslandErrorBoundary name="DynamicIslandRoot">
+      <div className="w-full h-full overflow-hidden bg-transparent flex flex-col items-center justify-start select-none">
+        <DynamicIsland onOpenSettings={handleOpenSettings} />
+      </div>
+    </IslandErrorBoundary>
   );
 };
 
