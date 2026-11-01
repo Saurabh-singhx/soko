@@ -81,6 +81,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
     });
     return () => cleanup?.();
   }, []);
+
+  const [displayServerInfo, setDisplayServerInfo] = useState<any>(null);
+  const [nativeUpdateStatus, setNativeUpdateStatus] = useState<any>(null);
+
+  useEffect(() => {
+    if (window.electronAPI?.getDisplayServer) {
+      window.electronAPI.getDisplayServer().then(setDisplayServerInfo).catch(() => {});
+    }
+    const unsubDisplay = window.electronAPI?.onDisplayChanged?.((info: any) => {
+      setDisplayServerInfo((prev: any) => ({ ...prev, display: info }));
+    });
+    const unsubUpdate = window.electronAPI?.onUpdateStatus?.((status: any) => {
+      setNativeUpdateStatus(status);
+    });
+    return () => {
+      unsubDisplay?.();
+      unsubUpdate?.();
+    };
+  }, []);
   const [cursorTrackingEnabled, setCursorTrackingEnabled] = useState<boolean>(() => {
     try {
       const stored = localStorage.getItem('soko_cursor_tracking');
@@ -630,11 +649,31 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 <span className="font-mono text-linear-text-primary">XDG Desktop Autostart & Electron LoginItem</span>
               </div>
               <div className="flex justify-between py-1.5 border-b border-white/5">
+                <span className="text-linear-text-secondary">Display Server</span>
+                <span className="font-mono text-linear-text-primary">
+                  {displayServerInfo
+                    ? `${displayServerInfo.isWayland ? 'Wayland' : 'X11'} (${displayServerInfo.ozonePlatform}) • ${displayServerInfo.compositor}`
+                    : (window.electronAPI?.platform === 'win32' ? 'Windows DWM' : 'X11 / Wayland')}
+                </span>
+              </div>
+              {displayServerInfo?.display && (
+                <div className="flex justify-between py-1.5 border-b border-white/5">
+                  <span className="text-linear-text-secondary">Active Monitor</span>
+                  <span className="font-mono text-linear-text-primary">
+                    {displayServerInfo.display.workArea.width}x{displayServerInfo.display.workArea.height} @ {displayServerInfo.display.scaleFactor}x {displayServerInfo.display.isPrimary ? '(Primary)' : ''}
+                  </span>
+                </div>
+              )}
+              <div className="flex justify-between py-1.5 border-b border-white/5">
+                <span className="text-linear-text-secondary">Multi-Monitor Watcher</span>
+                <span className="font-mono text-emerald-400">Active (Auto-recenters on connect/disconnect)</span>
+              </div>
+              <div className="flex justify-between py-1.5 border-b border-white/5">
                 <span className="text-linear-text-secondary">Execution Target</span>
                 <span className="font-mono text-linear-text-primary">
                   {window.electronAPI?.platform === 'win32'
                     ? 'soko.exe (Portable Windows x64)'
-                    : '/opt/Soko/soko --ozone-platform=x11'}
+                    : `/opt/Soko/soko --ozone-platform=${displayServerInfo?.ozonePlatform || 'x11'}`}
                 </span>
               </div>
               <div className="flex justify-between py-1.5">
@@ -2098,6 +2137,52 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                           </button>
                         )}
                       </div>
+
+                      {/* Native Electron Silent Updater Progress & Action */}
+                      {nativeUpdateStatus && (
+                        <div className="mt-2 flex flex-col gap-2 p-2.5 rounded bg-black/40 border border-white/10">
+                          {nativeUpdateStatus.status === 'downloading' && (
+                            <div className="flex flex-col gap-1.5">
+                              <div className="flex justify-between text-[11px] font-mono text-linear-text-secondary">
+                                <span>Downloading Background Delta Update...</span>
+                                <span>{nativeUpdateStatus.percent || 0}%</span>
+                              </div>
+                              <div className="w-full bg-white/10 rounded-full h-1.5 overflow-hidden">
+                                <div
+                                  className="bg-emerald-500 h-full transition-all duration-300"
+                                  style={{ width: `${nativeUpdateStatus.percent || 0}%` }}
+                                />
+                              </div>
+                            </div>
+                          )}
+                          {nativeUpdateStatus.status === 'downloaded' && (
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-emerald-400 font-medium">
+                                ✓ Update v{nativeUpdateStatus.version} downloaded & verified
+                              </span>
+                              <button
+                                onClick={() => window.electronAPI?.quitAndInstall?.()}
+                                className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-black font-semibold rounded text-xs transition-colors"
+                              >
+                                Restart & Install Now
+                              </button>
+                            </div>
+                          )}
+                          {nativeUpdateStatus.status === 'available' && !nativeUpdateStatus.percent && (
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-amber-300">
+                                Silent background update ready to download
+                              </span>
+                              <button
+                                onClick={() => window.electronAPI?.downloadUpdate?.()}
+                                className="linear-button-primary px-3 py-1.5 text-xs"
+                              >
+                                Download in Background
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3 flex items-center gap-2 text-emerald-400 text-xs">

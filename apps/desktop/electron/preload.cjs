@@ -17,7 +17,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setAutoStart: (enable) => ipcRenderer.invoke('soko:set-autostart', enable),
   moveWindow: (deltaX, deltaY) => ipcRenderer.send('soko:move-window', { deltaX, deltaY }),
   resetPosition: () => ipcRenderer.send('soko:reset-window-pos'),
+  recenterIsland: () => ipcRenderer.send('soko:recenter-island'),
   setWindowSize: (width, height) => ipcRenderer.send('soko:set-window-size', { width, height }),
+  getDisplayServer: () => ipcRenderer.invoke('soko:get-display-server'),
+  onDisplayChanged: (callback) => {
+    const handler = (_event, info) => callback(info);
+    ipcRenderer.on('soko:display-changed', handler);
+    return () => ipcRenderer.removeListener('soko:display-changed', handler);
+  },
+  checkForUpdates: () => ipcRenderer.invoke('soko:check-update'),
+  downloadUpdate: () => ipcRenderer.invoke('soko:download-update'),
+  quitAndInstall: () => ipcRenderer.send('soko:quit-and-install'),
+  onUpdateStatus: (callback) => {
+    const handler = (_event, status) => callback(status);
+    ipcRenderer.on('soko:update-status', handler);
+    return () => ipcRenderer.removeListener('soko:update-status', handler);
+  },
   onWindowBlur: (callback) => {
     const handler = () => callback();
     ipcRenderer.on('soko:window-blur', handler);

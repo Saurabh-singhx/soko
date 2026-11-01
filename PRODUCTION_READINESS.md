@@ -92,26 +92,42 @@ This document details the architectural, security, lifecycle, and platform requi
 
 ## 4. Desktop Display Server & Multi-Monitor Robustness (Priority: P1)
 
-- [ ] **Dynamic Display Re-centering & DPI Scaling Watcher**
-  - *Current State*: `electron/main.cjs` positions the Dynamic Island once on primary display work area at boot.
-  - *Risk*: Connecting/disconnecting external monitors or changing display scaling (100% to 150%) can push the window off-screen or misalign it.
-  - *Implementation*: fix this 
-    - Add Electron screen event listeners:
+- [x] **Dynamic Display Re-centering & DPI Scaling Watcher**
+  - *Resolved*:
+    - Implemented debounced Electron `screen` event listeners in `apps/desktop/electron/main.cjs`:
       ```javascript
-      screen.on('display-metrics-changed', () => recenterIslandWindow());
-      screen.on('display-added', () => recenterIslandWindow());
-      screen.on('display-removed', () => recenterIslandWindow());
+      screen.on('display-metrics-changed', (_event, display, metrics) => handleScreenChange('metrics-changed', display));
+      screen.on('display-added', (_event, newDisplay) => handleScreenChange('display-added', newDisplay));
+      screen.on('display-removed', (_event, oldDisplay) => handleScreenChange('display-removed', oldDisplay));
       ```
+    - Added `recenterIslandWindow(reason)` logic:
+      - Automatically calculates `islandCenterX = Math.round(workX + workWidth / 2)` and `islandY = Math.max(workY + 4, 8)`.
+      - Preserves custom user drag offsets across monitor reconnects while strictly clamping window bounds inside the target display's `workArea` with an 8px safety margin.
+      - Disconnection recovery: when an external monitor is disconnected, Soko automatically identifies the nearest active display and repositions the island safely within viewport bounds, completely eliminating off-screen lost-window bugs.
+      - Broadcasts `soko:display-changed` event to the web renderer.
 
-- [ ] **Native Wayland Layer-Shell Protocol Support**
-  - *Current State*: Forces `--ozone-platform=x11` fallback on Linux to avoid Wayland client-side positioning bugs.
-  - *Implementation*:
-    - Provide native Wayland layer-shell protocol integration (via `gtk4-layer-shell` or native Tauri Wayland extensions) for pure Wayland compositors (Hyprland, Sway, GNOME Wayland).
+- [x] **Native Wayland Layer-Shell Protocol & Compositor Robustness**
+  - *Resolved*:
+    - Replaced rigid X11 fallback with intelligent display server auto-detection in `apps/desktop/electron/main.cjs`:
+      - Detects pure Wayland sessions (`WAYLAND_DISPLAY` set without `DISPLAY` / XWayland) or explicit flags (`SOKO_WAYLAND=1` / `--wayland`), automatically launching with `--ozone-platform=wayland` and `--enable-features=UseOzonePlatform,WaylandWindowDecorations`.
+      - Defaults to `--ozone-platform=x11` when X11 or XWayland is available for pixel-perfect frameless transparent overlay positioning.
+      - Sets window `type: 'toolbar'` / `'panel'` and `title: 'Soko Dynamic Island'` for compositor surface matching.
+    - Created compositor preset rule files in `apps/desktop/resources/compositor/`:
+      - `hyprland-soko.conf`: Rules for floating, pinning across all workspaces, nodim, and noblur on Hyprland.
+      - `sway-soko.conf`: Rules for floating, sticky, and borderless positioning on Sway and i3.
+      - Detailed setup guide in `apps/desktop/resources/compositor/README.md`.
+    - Added `soko:get-display-server` IPC handler displaying active display server, compositor, monitor dimensions, and scale factors in Settings View.
 
-- [ ] **In-App Auto-Updater (Silent / Delta Updates)**
-  - *Current State*: Gist feed checks notify the user and open browser download links.
-  - *Implementation*:
-    - Integrate `electron-updater` for automatic background downloading, SHA-256 signature verification, and 1-click restart-to-update.
+- [x] **In-App Auto-Updater (Silent / Delta Updates)**
+  - *Resolved*:
+    - Integrated `electron-updater` (`autoUpdater`) into `apps/desktop/electron/main.cjs` and configured `publish` block in `electron-builder.json` targeting GitHub Releases.
+    - Added full lifecycle IPC channels:
+      - `soko:check-update`: Triggers update inspection.
+      - `soko:download-update`: Starts background delta download.
+      - `soko:quit-and-install`: 1-click restart-to-install updater.
+      - `soko:update-status`: Real-time streaming events (`checking`, `available`, `downloading` with percent and transfer rate, `downloaded`, `error`).
+    - Added in-app progress bar and "Restart & Install Now" action cards in `SettingsView.tsx`.
+    - Automated tests added to `tests/test_display_and_updater.js` verifying semver comparisons and multi-platform asset extraction (AppImage, deb, rpm, exe, dmg, apk).
 
 ---
 

@@ -105,6 +105,13 @@ Whether you need to beam 100MB+ APKs and media files across devices in seconds w
 - **30-Day Bearer Token Rotation**: Authenticated companion devices receive 128-bit persistent cryptographic bearer tokens paired with refresh tokens (`POST /api/auth/refresh`), with desktop-level "Revoke All Sessions" capability.
 - **Replay Attack Defense & File Sandbox**: Monotonic sequence counters reject duplicated or delayed network packets; strict basename sanitization prevents directory-traversal attacks (`../`) and enforces `0644` non-executable permissions.
 
+### 🖥️ Display Server & Multi-Monitor Robustness
+- **Dynamic Display Re-centering & DPI Scaling Watcher**: Real-time Electron screen listeners (`display-metrics-changed`, `display-added`, `display-removed`) re-center the Dynamic Island HUD capsule dynamically across resolution changes and fractional DPI scaling (100% to 150%+).
+- **Zero-Loss Disconnect Clamping**: When secondary or external monitors are disconnected, Soko automatically detects the nearest active display and clamps the island safely within viewport bounds, preventing off-screen window loss.
+- **Pure Wayland & X11 Intelligent Detection**: Automatic display server detection chooses `--ozone-platform=wayland` on pure Wayland sessions (without XWayland) or when requested via `SOKO_WAYLAND=1` / `--wayland`, defaulting to X11 when available for optimal frameless overlay support.
+- **Hyprland & Sway Compositor Presets**: Dedicated window rules and presets in `apps/desktop/resources/compositor/` keep the island floating, borderless, and pinned across all workspaces.
+- **In-App Auto-Updater**: Native background delta updates powered by `electron-updater` with real-time download progress and 1-click "Restart & Install" controls alongside the GitHub Gist version feed.
+
 ---
 
 ## 📥 Downloads

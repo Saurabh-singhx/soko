@@ -1,13 +1,21 @@
-// Linux window and rendering stability:
-// On Linux (especially Ubuntu Wayland sessions), Electron 38+ defaults to native Wayland.
-// Native Wayland xdg-shell strictly restricts client-side window positioning (causing getPosition
-// to report [0, 0] and setPosition / DataDevice DnD to segfault) and breaks transparent frameless windows.
-// Calling app.commandLine.appendSwitch('ozone-platform', 'x11') is too late for the main browser process
-// because Ozone is initialized in C++ before JavaScript loads.
-// If launched without --ozone-platform=x11, we immediately respawn with it before acquiring locks or creating windows.
+// Display Server Detection for Linux:
+// 1. If pure Wayland (WAYLAND_DISPLAY set, but DISPLAY is not set), forcing X11 will crash.
+//    We must run with --ozone-platform=wayland and enable Wayland window hints.
+// 2. If SOKO_WAYLAND=1 or --wayland is passed, user explicitly requested native Wayland.
+// 3. Otherwise, if X11 (or XWayland) is available, use --ozone-platform=x11 for maximum
+//    frameless transparent overlay and global absolute positioning stability.
 if (process.platform === 'linux' && !process.argv.some((arg) => arg.startsWith('--ozone-platform='))) {
+  const hasX11 = Boolean(process.env.DISPLAY);
+  const isWaylandSession = Boolean(process.env.WAYLAND_DISPLAY) || process.env.XDG_SESSION_TYPE === 'wayland';
+  const forceWayland = process.env.SOKO_WAYLAND === '1' || process.argv.includes('--wayland');
+
+  const targetPlatform = (!hasX11 && isWaylandSession) || forceWayland ? 'wayland' : 'x11';
+  const extraArgs = targetPlatform === 'wayland'
+    ? ['--ozone-platform=wayland', '--enable-features=UseOzonePlatform,WaylandWindowDecorations']
+    : ['--ozone-platform=x11'];
+
   const { spawn } = require('child_process');
-  const args = ['--ozone-platform=x11', ...process.argv.slice(1)];
+  const args = [...extraArgs, ...process.argv.slice(1)];
   const child = spawn(process.execPath, args, {
     stdio: 'inherit',
     env: process.env,
@@ -113,9 +121,31 @@ function setAutoStart(enable) {
 
 // Linux window and rendering stability
 if (process.platform === 'linux') {
-  app.commandLine.appendSwitch('ozone-platform', 'x11');
+  const hasX11 = Boolean(process.env.DISPLAY);
+  const isWaylandSession = Boolean(process.env.WAYLAND_DISPLAY) || process.env.XDG_SESSION_TYPE === 'wayland';
+  const forceWayland = process.env.SOKO_WAYLAND === '1' || process.argv.includes('--wayland');
+  const targetPlatform = (!hasX11 && isWaylandSession) || forceWayland ? 'wayland' : 'x11';
+
+  app.commandLine.appendSwitch('ozone-platform', targetPlatform);
+  if (targetPlatform === 'wayland') {
+    app.commandLine.appendSwitch('enable-features', 'UseOzonePlatform,WaylandWindowDecorations');
+  }
   app.commandLine.appendSwitch('enable-transparent-visuals');
   app.disableHardwareAcceleration();
+}
+
+// In-App Auto-Updater (Silent Background & 1-Click Update)
+let autoUpdater = null;
+try {
+  const updaterModule = require('electron-updater');
+  autoUpdater = updaterModule.autoUpdater;
+  if (autoUpdater) {
+    autoUpdater.autoDownload = false;
+    autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.logger = console;
+  }
+} catch (err) {
+  console.warn('[AutoUpdater] Failed to load electron-updater module:', err.message);
 }
 
 let islandWindow = null;
@@ -127,7 +157,91 @@ let islandY = 0;
 let islandCenterX = 0;
 let currentIslandWidth = 330;
 let currentIslandHeight = 68;
+let hasUserMovedIsland = false;
+let userRelativeOffsetX = 0; // relative to workArea center
+let userRelativeOffsetY = 0; // relative to workArea top
+let currentDisplayId = null;
 let isQuitting = false;
+
+function broadcastUpdateStatus(payload) {
+  try {
+    if (islandWindow && !islandWindow.isDestroyed()) {
+      islandWindow.webContents.send('soko:update-status', payload);
+    }
+  } catch {}
+  try {
+    if (settingsWindow && !settingsWindow.isDestroyed()) {
+      settingsWindow.webContents.send('soko:update-status', payload);
+    }
+  } catch {}
+}
+
+function getTargetDisplay() {
+  if (islandWindow && !islandWindow.isDestroyed()) {
+    try {
+      const bounds = islandWindow.getBounds();
+      return screen.getDisplayNearestPoint({
+        x: bounds.x + Math.round(bounds.width / 2),
+        y: bounds.y + Math.round(bounds.height / 2),
+      });
+    } catch {}
+  }
+  return screen.getPrimaryDisplay();
+}
+
+function recenterIslandWindow(reason = 'manual') {
+  if (!islandWindow || islandWindow.isDestroyed()) return;
+
+  const targetDisplay = getTargetDisplay();
+  currentDisplayId = targetDisplay.id;
+  const { x: workX, y: workY, width: workWidth, height: workHeight } = targetDisplay.workArea;
+
+  if (!hasUserMovedIsland) {
+    // Top-center pinned
+    islandCenterX = Math.round(workX + workWidth / 2);
+    islandY = Math.max(workY + 4, 8);
+    islandX = Math.round(islandCenterX - currentIslandWidth / 2);
+  } else {
+    // Preserve custom relative offset clamped to new display bounds
+    const targetCenterX = Math.round(workX + workWidth / 2 + userRelativeOffsetX);
+    islandCenterX = targetCenterX;
+    islandX = Math.round(islandCenterX - currentIslandWidth / 2);
+    islandY = Math.round(workY + userRelativeOffsetY);
+
+    // Strict boundary clamping with 8px margin
+    const minX = workX + 8;
+    const maxX = workX + workWidth - currentIslandWidth - 8;
+    const minY = workY + 4;
+    const maxY = workY + workHeight - currentIslandHeight - 8;
+
+    islandX = Math.max(minX, Math.min(maxX, islandX));
+    islandY = Math.max(minY, Math.min(maxY, islandY));
+    islandCenterX = Math.round(islandX + currentIslandWidth / 2);
+  }
+
+  try {
+    islandWindow.setBounds({
+      x: islandX,
+      y: islandY,
+      width: currentIslandWidth,
+      height: currentIslandHeight,
+    }, false);
+    console.log(`[Display] Island repositioned (${reason}): display=${targetDisplay.id}, bounds=[${islandX}, ${islandY}, ${currentIslandWidth}x${currentIslandHeight}]`);
+  } catch (err) {
+    console.warn('[Display] setBounds error:', err.message);
+  }
+
+  try {
+    islandWindow.webContents.send('soko:display-changed', {
+      reason,
+      displayId: targetDisplay.id,
+      scaleFactor: targetDisplay.scaleFactor,
+      workArea: targetDisplay.workArea,
+      bounds: targetDisplay.bounds,
+      isPrimary: targetDisplay.id === screen.getPrimaryDisplay().id,
+    });
+  } catch {}
+}
 
 function forceQuitApp() {
   if (isQuitting) return;
@@ -263,6 +377,7 @@ async function ensureBridgeServer() {
 
 function createIslandWindow() {
   const primaryDisplay = screen.getPrimaryDisplay();
+  currentDisplayId = primaryDisplay.id;
   const { x: workX, y: workY, width: workWidth } = primaryDisplay.workArea;
 
   currentIslandWidth = 380;
@@ -272,10 +387,12 @@ function createIslandWindow() {
   islandY = Math.max(workY + 4, 8);
 
   islandWindow = new BrowserWindow({
+    title: 'Soko Dynamic Island',
     width: currentIslandWidth,
     height: currentIslandHeight,
     x: islandX,
     y: islandY,
+    type: process.platform === 'linux' ? 'toolbar' : undefined,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
@@ -518,6 +635,78 @@ if (!gotTheLock) {
     createIslandWindow();
     createTray();
 
+    // Dynamic Display & Multi-Monitor Watcher:
+    // Automatically re-centers or clamps island capsule when displays are plugged/unplugged
+    // or when DPI scaling / resolution changes (e.g. 100% -> 125% -> 150%)
+    let screenDebounceTimer = null;
+    const handleScreenChange = (eventName, display) => {
+      if (screenDebounceTimer) clearTimeout(screenDebounceTimer);
+      screenDebounceTimer = setTimeout(() => {
+        recenterIslandWindow(eventName);
+      }, 150);
+    };
+
+    screen.on('display-metrics-changed', (_event, display, changedMetrics) => {
+      handleScreenChange(`metrics-changed:${changedMetrics.join(',')}`, display);
+    });
+    screen.on('display-added', (_event, newDisplay) => {
+      handleScreenChange('display-added', newDisplay);
+    });
+    screen.on('display-removed', (_event, oldDisplay) => {
+      handleScreenChange('display-removed', oldDisplay);
+    });
+
+    // In-App Auto-Updater event listeners
+    if (autoUpdater) {
+      autoUpdater.on('checking-for-update', () => {
+        broadcastUpdateStatus({ status: 'checking' });
+      });
+      autoUpdater.on('update-available', (info) => {
+        console.log('[AutoUpdater] Update available:', info.version);
+        broadcastUpdateStatus({
+          status: 'available',
+          version: info.version,
+          releaseDate: info.releaseDate,
+          releaseNotes: info.releaseNotes,
+        });
+      });
+      autoUpdater.on('update-not-available', (info) => {
+        broadcastUpdateStatus({ status: 'not-available', version: info?.version });
+      });
+      autoUpdater.on('error', (err) => {
+        console.warn('[AutoUpdater] Error:', err.message);
+        broadcastUpdateStatus({ status: 'error', error: err.message });
+      });
+      autoUpdater.on('download-progress', (progressObj) => {
+        broadcastUpdateStatus({
+          status: 'downloading',
+          percent: Math.round(progressObj.percent),
+          bytesPerSecond: progressObj.bytesPerSecond,
+          transferred: progressObj.transferred,
+          total: progressObj.total,
+        });
+      });
+      autoUpdater.on('update-downloaded', (info) => {
+        console.log('[AutoUpdater] Update downloaded:', info.version);
+        broadcastUpdateStatus({
+          status: 'downloaded',
+          version: info.version,
+          releaseNotes: info.releaseNotes,
+        });
+      });
+
+      // Background check for updates 15s after startup if packaged
+      if (app.isPackaged) {
+        setTimeout(() => {
+          try {
+            autoUpdater.checkForUpdates().catch((err) => {
+              console.warn('[AutoUpdater] Startup update check error:', err.message);
+            });
+          } catch {}
+        }, 15000);
+      }
+    }
+
     // If launched manually (not system boot autostart), open the main Settings & Hub window
     const isAutostart = process.argv.includes('--autostart') || process.argv.includes('--hidden');
     if (!isAutostart) {
@@ -640,23 +829,89 @@ ipcMain.on('soko:set-window-size', (_event, { width, height }) => {
 
 ipcMain.on('soko:move-window', (_event, { deltaX, deltaY }) => {
   if (islandWindow && !islandWindow.isDestroyed()) {
+    hasUserMovedIsland = true;
     islandCenterX += deltaX;
     islandY += deltaY;
     const newX = Math.round(islandCenterX - currentIslandWidth / 2);
     islandX = newX;
+
+    const targetDisplay = getTargetDisplay();
+    const { x: workX, y: workY, width: workWidth } = targetDisplay.workArea;
+    userRelativeOffsetX = islandCenterX - Math.round(workX + workWidth / 2);
+    userRelativeOffsetY = islandY - workY;
+
     islandWindow.setPosition(newX, Math.round(islandY), false);
   }
 });
 
 ipcMain.on('soko:reset-window-pos', () => {
-  if (islandWindow && !islandWindow.isDestroyed()) {
-    const primaryDisplay = screen.getPrimaryDisplay();
-    const { x: workX, y: workY, width: workWidth } = primaryDisplay.workArea;
-    islandCenterX = Math.round(workX + workWidth / 2);
-    islandY = Math.max(workY + 4, 8);
-    const newX = Math.round(islandCenterX - currentIslandWidth / 2);
-    islandX = newX;
-    islandWindow.setPosition(newX, Math.round(islandY), false);
+  hasUserMovedIsland = false;
+  userRelativeOffsetX = 0;
+  userRelativeOffsetY = 0;
+  recenterIslandWindow('reset-pos');
+});
+
+ipcMain.on('soko:recenter-island', () => {
+  recenterIslandWindow('ipc-recenter');
+});
+
+ipcMain.handle('soko:get-display-server', () => {
+  const isWaylandSession = Boolean(process.env.WAYLAND_DISPLAY) || process.env.XDG_SESSION_TYPE === 'wayland';
+  const hasX11Display = Boolean(process.env.DISPLAY);
+  const ozonePlatform = process.argv.find((arg) => arg.startsWith('--ozone-platform='))?.split('=')[1] ||
+    (process.platform === 'linux' ? (isWaylandSession && !hasX11Display ? 'wayland' : 'x11') : 'native');
+
+  const targetDisplay = getTargetDisplay();
+
+  return {
+    platform: process.platform,
+    isWayland: isWaylandSession,
+    hasX11: hasX11Display,
+    ozonePlatform,
+    compositor: process.env.XDG_CURRENT_DESKTOP || process.env.DESKTOP_SESSION || (process.platform === 'win32' ? 'DWM' : 'Quartz'),
+    display: {
+      id: targetDisplay.id,
+      scaleFactor: targetDisplay.scaleFactor,
+      bounds: targetDisplay.bounds,
+      workArea: targetDisplay.workArea,
+      isPrimary: targetDisplay.id === screen.getPrimaryDisplay().id,
+    },
+  };
+});
+
+// Auto-Updater IPC Controls
+ipcMain.handle('soko:check-update', async () => {
+  if (!app.isPackaged) {
+    return { status: 'dev-mode', message: 'Auto-updater is active in packaged builds.' };
+  }
+  if (!autoUpdater) {
+    return { status: 'unsupported', message: 'electron-updater module not loaded.' };
+  }
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    return { status: 'success', updateInfo: result?.updateInfo };
+  } catch (err) {
+    return { status: 'error', error: err.message };
+  }
+});
+
+ipcMain.handle('soko:download-update', async () => {
+  if (!autoUpdater || !app.isPackaged) {
+    return { status: 'error', message: 'Download is available in packaged builds only.' };
+  }
+  try {
+    await autoUpdater.downloadUpdate();
+    return { status: 'downloading' };
+  } catch (err) {
+    return { status: 'error', error: err.message };
+  }
+});
+
+ipcMain.on('soko:quit-and-install', () => {
+  if (autoUpdater && app.isPackaged) {
+    autoUpdater.quitAndInstall(false, true);
+  } else {
+    forceQuitApp();
   }
 });
 

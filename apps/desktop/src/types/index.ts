@@ -255,7 +255,27 @@ declare global {
       setAutoStart: (enable: boolean) => Promise<boolean>;
       moveWindow: (deltaX: number, deltaY: number) => void;
       resetPosition: () => void;
+      recenterIsland?: () => void;
       setWindowSize: (width: number, height: number) => void;
+      getDisplayServer?: () => Promise<{
+        platform: string;
+        isWayland: boolean;
+        hasX11: boolean;
+        ozonePlatform: string;
+        compositor: string;
+        display?: {
+          id: number;
+          scaleFactor: number;
+          bounds: { x: number; y: number; width: number; height: number };
+          workArea: { x: number; y: number; width: number; height: number };
+          isPrimary: boolean;
+        };
+      }>;
+      onDisplayChanged?: (callback: (info: any) => void) => () => void;
+      checkForUpdates?: () => Promise<any>;
+      downloadUpdate?: () => Promise<any>;
+      quitAndInstall?: () => void;
+      onUpdateStatus?: (callback: (status: any) => void) => () => void;
       onWindowBlur: (callback: () => void) => () => void;
       quitApp: () => void;
     };
