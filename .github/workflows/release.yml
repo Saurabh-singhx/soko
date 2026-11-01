@@ -98,6 +98,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: linux-and-apk-assets
+          if-no-files-found: warn
           path: |
             dist-desktop/*.AppImage
             dist-desktop/*.deb
@@ -222,7 +223,6 @@ jobs:
         with:
           name: macos-assets
           path: release-assets
-          merge-multiple: true
           merge-multiple: true
 
       - name: List Release Assets

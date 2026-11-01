@@ -11,33 +11,72 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${PROJECT_ROOT}/build_apk_tmp"
 trap 'rm -rf "${BUILD_DIR}"' EXIT
 
-# Detect Android SDK Home
-SDK_HOME="${ANDROID_HOME:-/home/saurabh/Android/Sdk}"
-if [ ! -d "${SDK_HOME}" ] && [ -d "/usr/local/lib/android/sdk" ]; then
-  SDK_HOME="/usr/local/lib/android/sdk"
+# Detect Android SDK Home across GitHub Actions and local environments
+SDK_HOME="${ANDROID_HOME:-}"
+if [ -z "${SDK_HOME}" ] || [ ! -d "${SDK_HOME}" ]; then
+  if [ -n "${ANDROID_SDK_ROOT:-}" ] && [ -d "${ANDROID_SDK_ROOT}" ]; then
+    SDK_HOME="${ANDROID_SDK_ROOT}"
+  elif [ -d "/usr/local/lib/android/sdk" ]; then
+    SDK_HOME="/usr/local/lib/android/sdk"
+  elif [ -d "${HOME}/Android/Sdk" ]; then
+    SDK_HOME="${HOME}/Android/Sdk"
+  elif [ -d "/home/saurabh/Android/Sdk" ]; then
+    SDK_HOME="/home/saurabh/Android/Sdk"
+  fi
 fi
 
-# Detect Build Tools (pick highest version installed)
+if [ -z "${SDK_HOME}" ] || [ ! -d "${SDK_HOME}" ]; then
+  echo "[ERROR] Android SDK not found. Please set ANDROID_HOME or ANDROID_SDK_ROOT."
+  exit 1
+fi
+
+# Detect Build Tools (find latest installed directory containing aapt2 and d8)
 BUILD_TOOLS_DIR="${SDK_HOME}/build-tools"
+BUILD_TOOLS=""
 if [ -d "${BUILD_TOOLS_DIR}" ]; then
-  BUILD_TOOLS="$(find "${BUILD_TOOLS_DIR}" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
-else
-  BUILD_TOOLS="${SDK_HOME}/build-tools/35.0.0"
+  for dir in $(find "${BUILD_TOOLS_DIR}" -mindepth 1 -maxdepth 1 -type d | sort -Vr); do
+    if [ -f "${dir}/aapt2" ] && [ -f "${dir}/d8" ]; then
+      BUILD_TOOLS="${dir}"
+      break
+    fi
+  done
 fi
 
-# Detect Platform JAR (pick highest API platform)
+if [ -z "${BUILD_TOOLS}" ]; then
+  echo "[ERROR] No valid build-tools containing aapt2 and d8 found in ${BUILD_TOOLS_DIR}."
+  exit 1
+fi
+
+# Detect Platform JAR (find highest API platform containing android.jar)
 PLATFORMS_DIR="${SDK_HOME}/platforms"
+PLATFORM_JAR=""
 if [ -d "${PLATFORMS_DIR}" ]; then
-  PLATFORM_DIR="$(find "${PLATFORMS_DIR}" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
-  PLATFORM_JAR="${PLATFORM_DIR}/android.jar"
-else
-  PLATFORM_JAR="${SDK_HOME}/platforms/android-35/android.jar"
+  for dir in $(find "${PLATFORMS_DIR}" -mindepth 1 -maxdepth 1 -type d | sort -Vr); do
+    if [ -f "${dir}/android.jar" ]; then
+      PLATFORM_DIR="${dir}"
+      PLATFORM_JAR="${dir}/android.jar"
+      break
+    fi
+  done
+fi
+
+if [ -z "${PLATFORM_JAR}" ]; then
+  echo "[ERROR] No android.jar platform found in ${PLATFORMS_DIR}."
+  exit 1
 fi
 
 AAPT2="${BUILD_TOOLS}/aapt2"
 D8="${BUILD_TOOLS}/d8"
+
 ZIPALIGN="${BUILD_TOOLS}/zipalign"
+if [ ! -f "${ZIPALIGN}" ]; then
+  ZIPALIGN="$(which zipalign 2>/dev/null || echo "${BUILD_TOOLS}/zipalign")"
+fi
+
 APKSIGNER="${BUILD_TOOLS}/apksigner"
+if [ ! -f "${APKSIGNER}" ]; then
+  APKSIGNER="$(which apksigner 2>/dev/null || echo "${BUILD_TOOLS}/apksigner")"
+fi
 
 # ==============================================================================
 # Dynamic Version Resolution & Auto-Incrementing Build Counter
@@ -105,7 +144,15 @@ else
   KEYSTORE_DIR="${PROJECT_ROOT}/scripts/keystore"
   mkdir -p "${KEYSTORE_DIR}"
   KEYSTORE="${KEYSTORE_DIR}/soko.keystore"
-  if [ ! -f "${KEYSTORE}" ]; then
+  if [ -f "${KEYSTORE}" ]; then
+    # Test if provided password works, else fallback to default repo keystore password
+    if ! keytool -list -keystore "${KEYSTORE}" -storepass "${KEYSTORE_PASS}" >/dev/null 2>&1; then
+      echo "Notice: Provided keystore password does not match repo fallback keystore. Using default repository signing credentials."
+      KEYSTORE_PASS="sokopassword"
+      KEY_ALIAS="soko-key"
+      KEY_PASS="sokopassword"
+    fi
+  else
     echo "Generating persistent signing keystore at ${KEYSTORE}..."
     keytool -genkeypair -v \
       -keystore "${KEYSTORE}" \
