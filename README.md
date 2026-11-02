@@ -314,6 +314,7 @@ Explore our comprehensive engineering logs and feature architecture documents:
 | Topic | Document |
 | :--- | :--- |
 | **Global Architecture & Threat Model** | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| **Desktop UI/UX Audit & Clean Architecture** | [DESKTOP_UI_UX_AUDIT.md](DESKTOP_UI_UX_AUDIT.md) |
 | **Production Readiness & Hardening Roadmap** | [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) |
 | **Dynamic Island HUD & X11/Wayland Physics** | [docs/features/01-dynamic-island-hud.md](docs/features/01-dynamic-island-hud.md) |
 | **Bluetooth Low Energy vs Classic RFCOMM** | [docs/features/02-bluetooth-dual-protocol.md](docs/features/02-bluetooth-dual-protocol.md) |

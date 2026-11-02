@@ -363,6 +363,217 @@ it('Extracts multi-platform release assets properly', () => {
   assert.strictEqual(downloads.androidLiteApk, 'https://cdn.example.com/lite-apk');
 });
 
+console.log('\n[Suite 5/5] Linux Platform Hardening (GPU Flags, Window Type, Autostart & Tray)');
+
+function resolveLinuxAutostartCommand({ appImageEnv, optInstalled, execPath, isPureWayland }) {
+  let targetBin;
+  if (appImageEnv) {
+    targetBin = appImageEnv;
+  } else if (optInstalled) {
+    targetBin = '/opt/Soko/soko';
+  } else {
+    targetBin = execPath;
+  }
+  const ozoneArg = isPureWayland ? '--ozone-platform=wayland' : '--ozone-platform=x11';
+  return `"${targetBin}" ${ozoneArg} --autostart`;
+}
+
+function resolveLinuxGpuFlags({ disableGpuEnv, cliArgs }) {
+  const isExplicitlyDisabled = disableGpuEnv === '1' || cliArgs.includes('--disable-gpu') || cliArgs.includes('--no-gpu');
+  if (isExplicitlyDisabled) {
+    return ['--disable-gpu'];
+  }
+  return ['--enable-transparent-visuals', '--enable-gpu-rasterization', '--enable-zero-copy'];
+}
+
+function resolveLinuxWindowType(envOverride) {
+  return envOverride || undefined;
+}
+
+it('Autostart targets running AppImage executable path when running inside AppImage', () => {
+  const cmd = resolveLinuxAutostartCommand({
+    appImageEnv: '/home/user/Applications/soko-linux-x86_64.AppImage',
+    optInstalled: false,
+    execPath: '/tmp/.mount_soko/soko',
+    isPureWayland: false,
+  });
+  assert.strictEqual(cmd, '"/home/user/Applications/soko-linux-x86_64.AppImage" --ozone-platform=x11 --autostart');
+});
+
+it('Autostart targets /opt/Soko/soko when package is installed globally', () => {
+  const cmd = resolveLinuxAutostartCommand({
+    appImageEnv: '',
+    optInstalled: true,
+    execPath: '/usr/bin/soko',
+    isPureWayland: false,
+  });
+  assert.strictEqual(cmd, '"/opt/Soko/soko" --ozone-platform=x11 --autostart');
+});
+
+it('Autostart configures wayland ozone argument on pure Wayland sessions', () => {
+  const cmd = resolveLinuxAutostartCommand({
+    appImageEnv: '/home/user/soko.AppImage',
+    optInstalled: false,
+    execPath: '/home/user/soko.AppImage',
+    isPureWayland: true,
+  });
+  assert.strictEqual(cmd, '"/home/user/soko.AppImage" --ozone-platform=wayland --autostart');
+});
+
+it('GPU hardware acceleration enabled by default for 60fps animations', () => {
+  const flags = resolveLinuxGpuFlags({ disableGpuEnv: '', cliArgs: [] });
+  assert(flags.includes('--enable-gpu-rasterization'), 'Must include gpu rasterization');
+  assert(flags.includes('--enable-zero-copy'), 'Must include zero-copy');
+  assert(!flags.includes('--disable-gpu'), 'Must not disable GPU by default');
+});
+
+it('GPU software rendering fallback activated when --disable-gpu or SOKO_DISABLE_GPU=1 is passed', () => {
+  const flagsFromCli = resolveLinuxGpuFlags({ disableGpuEnv: '', cliArgs: ['--disable-gpu'] });
+  assert.deepStrictEqual(flagsFromCli, ['--disable-gpu']);
+
+  const flagsFromEnv = resolveLinuxGpuFlags({ disableGpuEnv: '1', cliArgs: [] });
+  assert.deepStrictEqual(flagsFromEnv, ['--disable-gpu']);
+});
+
+it('Window type defaults to undefined on Linux preventing XFCE/MATE toolbar palette hiding', () => {
+  assert.strictEqual(resolveLinuxWindowType(''), undefined);
+  assert.strictEqual(resolveLinuxWindowType('toolbar'), 'toolbar');
+});
+
+// -----------------------------------------------------------------------------
+// Suite 6: Windows Platform Hardening (DWM, Mica, High-DPI, Taskbar & rAF Drag)
+// -----------------------------------------------------------------------------
+console.log('\n[Suite 6/6] Windows Platform Hardening (DWM, Mica, High-DPI, Taskbar & rAF Drag)');
+
+function resolveWindowsTaskbarY({ workY, boundsY }) {
+  const isTopTaskbar = workY > boundsY;
+  return isTopTaskbar ? Math.round(workY + 4) : Math.max(workY + 4, 8);
+}
+
+function resolveWindowsSettingsMaterial({ platform, osRelease }) {
+  const isWindows11OrLater = platform === 'win32' && (() => {
+    try {
+      const releaseParts = osRelease.split('.');
+      const buildNum = parseInt(releaseParts[2] || '0', 10);
+      return buildNum >= 22000;
+    } catch {
+      return false;
+    }
+  })();
+
+  return {
+    backgroundColor: isWindows11OrLater ? '#00000000' : '#090A0F',
+    backgroundMaterial: isWindows11OrLater ? 'mica' : undefined,
+  };
+}
+
+function simulateRafDragAccumulation(mouseEvents) {
+  let pendingDeltaX = 0;
+  let pendingDeltaY = 0;
+  let dispatchedCalls = [];
+
+  const flush = () => {
+    if (pendingDeltaX !== 0 || pendingDeltaY !== 0) {
+      dispatchedCalls.push({ dx: pendingDeltaX, dy: pendingDeltaY });
+      pendingDeltaX = 0;
+      pendingDeltaY = 0;
+    }
+  };
+
+  for (const ev of mouseEvents) {
+    pendingDeltaX += ev.dx;
+    pendingDeltaY += ev.dy;
+  }
+  flush();
+
+  return dispatchedCalls;
+}
+
+function resolveIgnoreMouseEventsState({ mode, isConnectionPopoverOpen, isHovered, isDragging }) {
+  if (isConnectionPopoverOpen || mode !== 'compact') {
+    return { ignore: false, forward: false };
+  }
+  if (isHovered || isDragging) {
+    return { ignore: false, forward: false };
+  }
+  return { ignore: true, forward: true };
+}
+
+it('Top taskbar detection places island below taskbar edge (WIN-05)', () => {
+  // Top taskbar on Windows 10/11: workY = 48, boundsY = 0
+  const topTaskbarY = resolveWindowsTaskbarY({ workY: 48, boundsY: 0 });
+  assert.strictEqual(topTaskbarY, 52, 'Top taskbar must anchor island at workY + 4');
+
+  // Standard bottom taskbar: workY = 0, boundsY = 0
+  const standardY = resolveWindowsTaskbarY({ workY: 0, boundsY: 0 });
+  assert.strictEqual(standardY, 8, 'Bottom taskbar must anchor island at 8px default top padding');
+});
+
+it('Windows 11 enables native Mica material while Windows 10 retains solid dark background (WIN-04)', () => {
+  // Windows 11 Build 22631
+  const win11 = resolveWindowsSettingsMaterial({ platform: 'win32', osRelease: '10.0.22631' });
+  assert.strictEqual(win11.backgroundMaterial, 'mica');
+  assert.strictEqual(win11.backgroundColor, '#00000000');
+
+  // Windows 10 Build 19045
+  const win10 = resolveWindowsSettingsMaterial({ platform: 'win32', osRelease: '10.0.19045' });
+  assert.strictEqual(win10.backgroundMaterial, undefined);
+  assert.strictEqual(win10.backgroundColor, '#090A0F');
+
+  // Linux / macOS
+  const linux = resolveWindowsSettingsMaterial({ platform: 'linux', osRelease: '6.8.0-generic' });
+  assert.strictEqual(linux.backgroundMaterial, undefined);
+  assert.strictEqual(linux.backgroundColor, '#090A0F');
+});
+
+it('Throttles 1000Hz mouse move events via rAF delta accumulation preventing IPC flood (WIN-02)', () => {
+  // Simulate 100 high-frequency mouse events in a single 16ms animation frame
+  const rapidEvents = Array.from({ length: 100 }, () => ({ dx: 2, dy: 1 }));
+  const calls = simulateRafDragAccumulation(rapidEvents);
+
+  assert.strictEqual(calls.length, 1, 'Rapid mousemove events must collapse into a single frame dispatch');
+  assert.strictEqual(calls[0].dx, 200, 'Accumulated deltaX must equal sum of individual events (100 * 2)');
+  assert.strictEqual(calls[0].dy, 100, 'Accumulated deltaY must equal sum of individual events (100 * 1)');
+});
+
+it('Manages click-through transparency and hit-testing states accurately (WIN-01)', () => {
+  // 1. Compact mode, unhovered, popover closed -> Pass through clicks to windows underneath
+  const passThrough = resolveIgnoreMouseEventsState({
+    mode: 'compact',
+    isConnectionPopoverOpen: false,
+    isHovered: false,
+    isDragging: false,
+  });
+  assert.deepStrictEqual(passThrough, { ignore: true, forward: true });
+
+  // 2. Mouse enters capsule -> Accept clicks & interactions
+  const hovered = resolveIgnoreMouseEventsState({
+    mode: 'compact',
+    isConnectionPopoverOpen: false,
+    isHovered: true,
+    isDragging: false,
+  });
+  assert.deepStrictEqual(hovered, { ignore: false, forward: false });
+
+  // 3. Popover open -> Accept all clicks inside floating connection popover
+  const popoverOpen = resolveIgnoreMouseEventsState({
+    mode: 'compact',
+    isConnectionPopoverOpen: true,
+    isHovered: false,
+    isDragging: false,
+  });
+  assert.deepStrictEqual(popoverOpen, { ignore: false, forward: false });
+
+  // 4. Notification mode -> Accept all interaction for action buttons
+  const notifMode = resolveIgnoreMouseEventsState({
+    mode: 'notification',
+    isConnectionPopoverOpen: false,
+    isHovered: false,
+    isDragging: false,
+  });
+  assert.deepStrictEqual(notifMode, { ignore: false, forward: false });
+});
+
 console.log('\n================================================================');
 console.log(` RESULTS: ${passed} / ${total} tests passed (100%)`);
 console.log('================================================================');

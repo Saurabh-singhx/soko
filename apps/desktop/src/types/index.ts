@@ -256,6 +256,7 @@ declare global {
       moveWindow: (deltaX: number, deltaY: number) => void;
       resetPosition: () => void;
       recenterIsland?: () => void;
+      setIgnoreMouseEvents?: (ignore: boolean, forward?: boolean) => void;
       setWindowSize: (width: number, height: number) => void;
       getDisplayServer?: () => Promise<{
         platform: string;

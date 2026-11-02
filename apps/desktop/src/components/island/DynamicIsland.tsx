@@ -1027,6 +1027,21 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     dims.height,
   ]);
 
+  // Synchronize OS mouse pass-through hit-testing on Windows DWM / Linux compositors
+  useEffect(() => {
+    if (isConnectionPopoverOpen || mode !== 'compact') {
+      window.electronAPI?.setIgnoreMouseEvents?.(false);
+    } else if (!isHovered && !isDragging) {
+      window.electronAPI?.setIgnoreMouseEvents?.(true, true);
+    }
+  }, [isConnectionPopoverOpen, isHovered, mode, isDragging]);
+
+  useEffect(() => {
+    return () => {
+      window.electronAPI?.setIgnoreMouseEvents?.(false);
+    };
+  }, []);
+
   const handleTriggerSendFile = () => {
     isFileDialogOpenRef.current = true;
     fileInputRef.current?.click();
@@ -1084,6 +1099,21 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     let lastY = e.screenY;
     isDraggingRef.current = false;
 
+    let pendingDeltaX = 0;
+    let pendingDeltaY = 0;
+    let rafId: number | null = null;
+
+    const flushDeltas = () => {
+      if (pendingDeltaX !== 0 || pendingDeltaY !== 0) {
+        const dx = pendingDeltaX;
+        const dy = pendingDeltaY;
+        pendingDeltaX = 0;
+        pendingDeltaY = 0;
+        (window as any).electronAPI?.moveWindow?.(dx, dy);
+      }
+      rafId = null;
+    };
+
     const handleMouseMove = (moveEvent: MouseEvent) => {
       // If mouse button was released outside the window
       if (moveEvent.buttons !== 1) {
@@ -1100,14 +1130,26 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         if (!isDraggingRef.current) {
           isDraggingRef.current = true;
           setIsDragging(true);
+          window.electronAPI?.setIgnoreMouseEvents?.(false);
         }
-        (window as any).electronAPI?.moveWindow?.(deltaX, deltaY);
+        pendingDeltaX += deltaX;
+        pendingDeltaY += deltaY;
+
+        if (rafId === null) {
+          rafId = requestAnimationFrame(flushDeltas);
+        }
       }
     };
 
     const handleMouseUp = () => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        flushDeltas();
+      }
+
       if (isDraggingRef.current) {
         setTimeout(() => {
           isDraggingRef.current = false;
@@ -1175,6 +1217,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         onMouseEnter={() => {
           setIsHovered(true);
           resetIdleTimer();
+          window.electronAPI?.setIgnoreMouseEvents?.(false);
         }}
         onMouseMove={() => {
           if (isIdleMascotOnly) {
@@ -1184,6 +1227,9 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         onMouseLeave={() => {
           setIsHovered(false);
           resetIdleTimer();
+          if (!isConnectionPopoverOpen && !isDraggingRef.current && mode === 'compact') {
+            window.electronAPI?.setIgnoreMouseEvents?.(true, true);
+          }
         }}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}

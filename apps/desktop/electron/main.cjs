@@ -32,7 +32,7 @@ if (process.platform === 'linux' && !process.argv.some((arg) => arg.startsWith('
   return;
 }
 
-const { app, BrowserWindow, ipcMain, Tray, Menu, screen, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, screen, shell, nativeImage } = require('electron');
 const path = require('path');
 const http = require('http');
 const { spawn, fork } = require('child_process');
@@ -63,10 +63,13 @@ function getAutoStart() {
 function setAutoStart(enable) {
   // 1. Electron Native Login Item Settings (Windows & macOS)
   try {
-    const startupArgs = process.platform === 'linux' ? ['--ozone-platform=x11', '--autostart'] : ['--autostart'];
+    const isPureWayland = !process.env.DISPLAY && (Boolean(process.env.WAYLAND_DISPLAY) || process.env.XDG_SESSION_TYPE === 'wayland');
+    const startupArgs = process.platform === 'linux'
+      ? [(isPureWayland ? '--ozone-platform=wayland' : '--ozone-platform=x11'), '--autostart']
+      : ['--autostart'];
     app.setLoginItemSettings({
       openAtLogin: Boolean(enable),
-      path: process.execPath,
+      path: process.env.APPIMAGE || process.execPath,
       args: startupArgs,
     });
   } catch (err) {
@@ -80,9 +83,34 @@ function setAutoStart(enable) {
         if (!fs.existsSync(AUTOSTART_DIR)) {
           fs.mkdirSync(AUTOSTART_DIR, { recursive: true });
         }
-        const execCmd = (app.isPackaged || fs.existsSync('/opt/Soko/soko'))
-          ? '/opt/Soko/soko --ozone-platform=x11 --autostart'
-          : `${process.execPath} --ozone-platform=x11 --autostart`;
+
+        // Dynamically resolve executable path: AppImage -> /opt/Soko/soko -> process.execPath
+        let execPath;
+        if (process.env.APPIMAGE && fs.existsSync(process.env.APPIMAGE)) {
+          execPath = process.env.APPIMAGE;
+        } else if (fs.existsSync('/opt/Soko/soko')) {
+          execPath = '/opt/Soko/soko';
+        } else {
+          execPath = process.execPath;
+        }
+
+        const isPureWayland = !process.env.DISPLAY && (Boolean(process.env.WAYLAND_DISPLAY) || process.env.XDG_SESSION_TYPE === 'wayland');
+        const ozoneArg = isPureWayland ? '--ozone-platform=wayland' : '--ozone-platform=x11';
+        const execCmd = `"${execPath}" ${ozoneArg} --autostart`;
+
+        // Resolve icon path with local fallback
+        let iconPath = '/usr/share/icons/hicolor/512x512/apps/soko.png';
+        if (!fs.existsSync(iconPath)) {
+          const localIcon = path.resolve(__dirname, '../build/icons/512x512.png');
+          const rootIcon = path.resolve(__dirname, '../build/icon.png');
+          if (fs.existsSync(localIcon)) {
+            iconPath = localIcon;
+          } else if (fs.existsSync(rootIcon)) {
+            iconPath = rootIcon;
+          } else {
+            iconPath = 'soko';
+          }
+        }
 
         const desktopContent = [
           '[Desktop Entry]',
@@ -93,7 +121,7 @@ function setAutoStart(enable) {
           'NoDisplay=false',
           'X-GNOME-Autostart-enabled=true',
           'Comment=Soko Dynamic Island HUD & Android Device Companion',
-          'Icon=/usr/share/icons/hicolor/512x512/apps/soko.png',
+          `Icon=${iconPath}`,
           'Categories=Utility;',
         ].join('\n') + '\n';
 
@@ -131,7 +159,28 @@ if (process.platform === 'linux') {
     app.commandLine.appendSwitch('enable-features', 'UseOzonePlatform,WaylandWindowDecorations');
   }
   app.commandLine.appendSwitch('enable-transparent-visuals');
-  app.disableHardwareAcceleration();
+
+  // Hardware Acceleration: Enabled by default on Linux for fluid 60fps animations.
+  // Software rasterization fallback only if explicitly requested (--disable-gpu or SOKO_DISABLE_GPU=1).
+  const disableGpu = process.env.SOKO_DISABLE_GPU === '1' ||
+    process.argv.includes('--disable-gpu') ||
+    process.argv.includes('--no-gpu');
+
+  if (disableGpu) {
+    app.disableHardwareAcceleration();
+    console.log('[Soko Desktop] Linux Software Rendering Fallback Active (--disable-gpu)');
+  } else {
+    app.commandLine.appendSwitch('enable-gpu-rasterization');
+    app.commandLine.appendSwitch('enable-zero-copy');
+  }
+}
+
+// Windows High-DPI & DWM Compositor Configuration
+if (process.platform === 'win32') {
+  app.commandLine.appendSwitch('high-dpi-support', '1');
+  if (process.env.SOKO_SCALE_FACTOR) {
+    app.commandLine.appendSwitch('force-device-scale-factor', process.env.SOKO_SCALE_FACTOR);
+  }
 }
 
 // In-App Auto-Updater (Silent Background & 1-Click Update)
@@ -199,7 +248,8 @@ function recenterIslandWindow(reason = 'manual') {
   if (!hasUserMovedIsland) {
     // Top-center pinned
     islandCenterX = Math.round(workX + workWidth / 2);
-    islandY = Math.max(workY + 4, 8);
+    const isTopTaskbar = workY > targetDisplay.bounds.y;
+    islandY = isTopTaskbar ? Math.round(workY + 4) : Math.max(workY + 4, 8);
     islandX = Math.round(islandCenterX - currentIslandWidth / 2);
   } else {
     // Preserve custom relative offset clamped to new display bounds
@@ -384,7 +434,10 @@ function createIslandWindow() {
   currentIslandHeight = 64;
   islandCenterX = Math.round(workX + workWidth / 2);
   islandX = Math.round(islandCenterX - currentIslandWidth / 2);
-  islandY = Math.max(workY + 4, 8);
+  const isTopTaskbar = workY > primaryDisplay.bounds.y;
+  islandY = isTopTaskbar ? Math.round(workY + 4) : Math.max(workY + 4, 8);
+
+  const windowType = process.env.SOKO_WINDOW_TYPE || undefined;
 
   islandWindow = new BrowserWindow({
     title: 'Soko Dynamic Island',
@@ -392,11 +445,13 @@ function createIslandWindow() {
     height: currentIslandHeight,
     x: islandX,
     y: islandY,
-    type: process.platform === 'linux' ? 'toolbar' : undefined,
+    type: windowType,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
     hasShadow: false,
+    thickFrame: false,
+    backgroundColor: '#00000000',
     resizable: false,
     skipTaskbar: false,
     show: false,
@@ -410,11 +465,11 @@ function createIslandWindow() {
   });
 
   try {
-    islandWindow.setVisibleOnAllWorkspaces(true);
+    islandWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   } catch {}
 
   try {
-    islandWindow.setAlwaysOnTop(true);
+    islandWindow.setAlwaysOnTop(true, 'screen-saver');
   } catch {}
 
   islandWindow.loadFile(DIST_PATH, { hash: 'island' });
@@ -430,7 +485,7 @@ function createIslandWindow() {
     islandWindow.show();
     islandWindow.focus();
     try {
-      islandWindow.setAlwaysOnTop(true);
+      islandWindow.setAlwaysOnTop(true, 'screen-saver');
     } catch {}
   };
 
@@ -473,6 +528,16 @@ function openSettingsWindow(initialTab) {
     return;
   }
 
+  const isWindows11OrLater = process.platform === 'win32' && (() => {
+    try {
+      const releaseParts = os.release().split('.');
+      const buildNum = parseInt(releaseParts[2] || '0', 10);
+      return buildNum >= 22000;
+    } catch {
+      return false;
+    }
+  })();
+
   settingsWindow = new BrowserWindow({
     width: 980,
     height: 700,
@@ -483,7 +548,8 @@ function openSettingsWindow(initialTab) {
     transparent: false,
     resizable: true,
     show: false,
-    backgroundColor: '#090A0F',
+    backgroundColor: isWindows11OrLater ? '#00000000' : '#090A0F',
+    backgroundMaterial: isWindows11OrLater ? 'mica' : undefined,
     icon: path.resolve(__dirname, '../build/icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -518,10 +584,33 @@ function openSettingsWindow(initialTab) {
 
 function createTray() {
   try {
-    const iconPath = path.resolve(__dirname, '../build/icon.png');
-    if (!fs.existsSync(iconPath)) return;
+    const icon32Path = path.resolve(__dirname, '../build/icons/32x32.png');
+    const icon16Path = path.resolve(__dirname, '../build/icons/16x16.png');
+    const iconDefaultPath = path.resolve(__dirname, '../build/icon.png');
 
-    tray = new Tray(iconPath);
+    let trayIcon = null;
+    if (process.platform === 'linux') {
+      if (fs.existsSync(icon32Path)) {
+        trayIcon = nativeImage.createFromPath(icon32Path).resize({ width: 22, height: 22 });
+      } else if (fs.existsSync(icon16Path)) {
+        trayIcon = nativeImage.createFromPath(icon16Path);
+      } else if (fs.existsSync(iconDefaultPath)) {
+        trayIcon = nativeImage.createFromPath(iconDefaultPath).resize({ width: 22, height: 22 });
+      }
+    } else if (fs.existsSync(iconDefaultPath)) {
+      trayIcon = nativeImage.createFromPath(iconDefaultPath);
+    }
+
+    if (!trayIcon || trayIcon.isEmpty()) {
+      if (fs.existsSync(iconDefaultPath)) {
+        tray = new Tray(iconDefaultPath);
+      } else {
+        return;
+      }
+    } else {
+      tray = new Tray(trayIcon);
+    }
+
     tray.setToolTip('Soko — Dynamic Island Companion');
 
     const contextMenu = Menu.buildFromTemplate([
@@ -785,6 +874,13 @@ ipcMain.on('soko:open-external', (_event, url) => {
 
 ipcMain.handle('soko:get-version', () => {
   return app.getVersion();
+});
+
+ipcMain.on('soko:set-ignore-mouse-events', (event, { ignore, forward }) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (win && !win.isDestroyed()) {
+    win.setIgnoreMouseEvents(Boolean(ignore), { forward: forward !== false });
+  }
 });
 
 ipcMain.on('soko:set-window-size', (_event, { width, height }) => {

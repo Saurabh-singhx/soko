@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   moveWindow: (deltaX, deltaY) => ipcRenderer.send('soko:move-window', { deltaX, deltaY }),
   resetPosition: () => ipcRenderer.send('soko:reset-window-pos'),
   recenterIsland: () => ipcRenderer.send('soko:recenter-island'),
+  setIgnoreMouseEvents: (ignore, forward) => ipcRenderer.send('soko:set-ignore-mouse-events', { ignore, forward }),
   setWindowSize: (width, height) => ipcRenderer.send('soko:set-window-size', { width, height }),
   getDisplayServer: () => ipcRenderer.invoke('soko:get-display-server'),
   onDisplayChanged: (callback) => {
