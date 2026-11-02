@@ -101,17 +101,35 @@ trap cleanup EXIT INT TERM
 
 # -----------------------------------------------------------------------------
 # 4. Linux Desktop Binary Execution
+# Dynamically selects the newest binary between local unpacked build,
+# installed /opt/Soko package, or AppImage artifact.
 # -----------------------------------------------------------------------------
-if [ -x "/opt/Soko/soko" ]; then
-  exec /opt/Soko/soko "${STABILITY_FLAGS[@]}" "$@"
-elif [ -x "$UNPACKED_BIN" ]; then
-  # On Ubuntu 24.04+, unprivileged user namespaces require --no-sandbox if chrome-sandbox lacks root SUID
-  if [ ! -u "$SCRIPT_DIR/dist-desktop/linux-unpacked/chrome-sandbox" ]; then
-    STABILITY_FLAGS+=("--no-sandbox")
+TARGET_BIN=""
+if [ -x "$UNPACKED_BIN" ] && [ -x "/opt/Soko/soko" ]; then
+  if [ "$UNPACKED_BIN" -nt "/opt/Soko/soko" ]; then
+    TARGET_BIN="$UNPACKED_BIN"
+  else
+    TARGET_BIN="/opt/Soko/soko"
   fi
-  exec "$UNPACKED_BIN" "${STABILITY_FLAGS[@]}" "$@"
+elif [ -x "$UNPACKED_BIN" ]; then
+  TARGET_BIN="$UNPACKED_BIN"
+elif [ -x "/opt/Soko/soko" ]; then
+  TARGET_BIN="/opt/Soko/soko"
 elif [ -x "$APPIMAGE_BIN" ]; then
-  exec "$APPIMAGE_BIN" --appimage-extract-and-run "${STABILITY_FLAGS[@]}" "$@"
+  TARGET_BIN="$APPIMAGE_BIN"
+fi
+
+if [ -n "$TARGET_BIN" ]; then
+  if [ "$TARGET_BIN" = "$UNPACKED_BIN" ]; then
+    if [ ! -u "$SCRIPT_DIR/dist-desktop/linux-unpacked/chrome-sandbox" ]; then
+      STABILITY_FLAGS+=("--no-sandbox")
+    fi
+    exec "$TARGET_BIN" "${STABILITY_FLAGS[@]}" "$@"
+  elif [ "$TARGET_BIN" = "$APPIMAGE_BIN" ]; then
+    exec "$TARGET_BIN" --appimage-extract-and-run "${STABILITY_FLAGS[@]}" "$@"
+  else
+    exec "$TARGET_BIN" "${STABILITY_FLAGS[@]}" "$@"
+  fi
 else
   echo "Desktop binary not found. Run 'npm run build:linux' first."
   exit 1

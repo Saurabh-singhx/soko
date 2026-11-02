@@ -1,5 +1,4 @@
 {
-  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
   "appId": "com.soko.desktop",
   "productName": "Soko",
   "executableName": "soko",
@@ -45,10 +44,6 @@
         "arch": ["x64"]
       },
       {
-        "target": "rpm",
-        "arch": ["x64"]
-      },
-      {
         "target": "tar.gz",
         "arch": ["x64"]
       },
@@ -81,7 +76,6 @@
       }
     ],
     "icon": "build/icon.ico",
-    "publisherName": "Soko Project",
     "verifyUpdateCodeSignature": false,
     "signAndEditExecutable": true
   },
