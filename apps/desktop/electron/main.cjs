@@ -84,10 +84,12 @@ function setAutoStart(enable) {
           fs.mkdirSync(AUTOSTART_DIR, { recursive: true });
         }
 
-        // Dynamically resolve executable path: AppImage -> /opt/Soko/soko -> process.execPath
+        // Dynamically resolve executable path: AppImage -> current executable -> /opt/Soko/soko
         let execPath;
         if (process.env.APPIMAGE && fs.existsSync(process.env.APPIMAGE)) {
           execPath = process.env.APPIMAGE;
+        } else if (process.execPath && !process.execPath.endsWith('/node') && !process.execPath.endsWith('/electron') && fs.existsSync(process.execPath)) {
+          execPath = process.execPath;
         } else if (fs.existsSync('/opt/Soko/soko')) {
           execPath = '/opt/Soko/soko';
         } else {
@@ -879,6 +881,14 @@ ipcMain.handle('soko:get-version', () => {
 ipcMain.on('soko:set-ignore-mouse-events', (event, { ignore, forward }) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win && !win.isDestroyed()) {
+    // On Linux (X11 & Wayland), forward: true is NOT supported by Chromium/Electron.
+    // Calling setIgnoreMouseEvents(true) permanently disables all mouse events on the window,
+    // breaking all hover, clicks, and dragging. The window bounds are already tightly fitted
+    // to the capsule via soko:set-window-size, so keep mouse events active on Linux.
+    if (process.platform === 'linux') {
+      win.setIgnoreMouseEvents(false);
+      return;
+    }
     win.setIgnoreMouseEvents(Boolean(ignore), { forward: forward !== false });
   }
 });

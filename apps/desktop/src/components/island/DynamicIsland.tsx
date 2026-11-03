@@ -1027,14 +1027,10 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     dims.height,
   ]);
 
-  // Synchronize OS mouse pass-through hit-testing on Windows DWM / Linux compositors
+  // Ensure OS mouse events are active for the interactive Dynamic Island
   useEffect(() => {
-    if (isConnectionPopoverOpen || mode !== 'compact') {
-      window.electronAPI?.setIgnoreMouseEvents?.(false);
-    } else if (!isHovered && !isDragging) {
-      window.electronAPI?.setIgnoreMouseEvents?.(true, true);
-    }
-  }, [isConnectionPopoverOpen, isHovered, mode, isDragging]);
+    window.electronAPI?.setIgnoreMouseEvents?.(false);
+  }, [isConnectionPopoverOpen, mode]);
 
   useEffect(() => {
     return () => {
@@ -1115,8 +1111,8 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     };
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
-      // If mouse button was released outside the window
-      if (moveEvent.buttons !== 1) {
+      // If primary mouse button was released outside the window
+      if ((moveEvent.buttons & 1) === 0) {
         handleMouseUp();
         return;
       }
@@ -1227,9 +1223,6 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         onMouseLeave={() => {
           setIsHovered(false);
           resetIdleTimer();
-          if (!isConnectionPopoverOpen && !isDraggingRef.current && mode === 'compact') {
-            window.electronAPI?.setIgnoreMouseEvents?.(true, true);
-          }
         }}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -1386,6 +1379,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                     transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
                     className="w-full flex flex-col justify-center min-w-0 pr-0.5 cursor-pointer group/msg"
                     onClick={(e) => {
+                      if (isDraggingRef.current) return;
                       e.stopPropagation();
                       setIsConnectionPopoverOpen((prev) => !prev);
                     }}
@@ -1447,6 +1441,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                   <div
                     className="flex-1 flex flex-col justify-center min-w-0 px-1 cursor-pointer"
                     onClick={(e) => {
+                      if (isDraggingRef.current) return;
                       e.stopPropagation();
                       setIsConnectionPopoverOpen((prev) => !prev);
                     }}

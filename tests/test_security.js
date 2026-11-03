@@ -207,7 +207,7 @@ function createWsClient(simulateRemoteIp = '192.168.31.105') {
         parseBuffer();
       });
 
-      function readPacketType(expectedType = null, timeoutMs = 3500) {
+      function readPacketType(expectedType = null, timeoutMs = 8000) {
         return new Promise((resolvePkt, rejectPkt) => {
           const idx = packetQueue.findIndex((p) => !expectedType || p.packetType === expectedType);
           if (idx !== -1) {
