@@ -611,6 +611,10 @@ function createWsClient() {
             if (buffer.length < 4) break;
             len = buffer.readUInt16BE(2);
             offset = 4;
+          } else if (len === 127) {
+            if (buffer.length < 10) break;
+            len = Number(buffer.readBigUInt64BE(2));
+            offset = 10;
           }
           if (buffer.length < offset + len) break;
           const payload = buffer.slice(offset, offset + len);
