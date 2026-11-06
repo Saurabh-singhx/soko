@@ -192,17 +192,32 @@ function buildCodewords(dataBytes: Uint8Array, capacity: VersionCapacity): numbe
   return result;
 }
 
-function selectVersion(textLength: number, ecLevel: 'L' | 'M'): { version: number; capacity: VersionCapacity } {
-  const table = ecLevel === 'L' ? VERSION_CAPACITY_L : VERSION_CAPACITY_M;
+function selectVersion(textLength: number, requestedEcLevel: 'L' | 'M'): { version: number; capacity: VersionCapacity; ecLevel: 'L' | 'M' } {
+  let table = requestedEcLevel === 'L' ? VERSION_CAPACITY_L : VERSION_CAPACITY_M;
   for (let v = 1; v < table.length; v++) {
     const entry = table[v];
     if (!entry) continue;
     const countBits = v < 10 ? 8 : 16;
     const headerBytes = Math.ceil((4 + countBits) / 8);
     if (textLength + headerBytes <= entry.data) {
-      return { version: v, capacity: entry };
+      return { version: v, capacity: entry, ecLevel: requestedEcLevel };
     }
   }
+
+  // Graceful fallback to Level L if Level M overflows
+  if (requestedEcLevel !== 'L') {
+    table = VERSION_CAPACITY_L;
+    for (let v = 1; v < table.length; v++) {
+      const entry = table[v];
+      if (!entry) continue;
+      const countBits = v < 10 ? 8 : 16;
+      const headerBytes = Math.ceil((4 + countBits) / 8);
+      if (textLength + headerBytes <= entry.data) {
+        return { version: v, capacity: entry, ecLevel: 'L' };
+      }
+    }
+  }
+
   const last = table[table.length - 1];
   throw new Error(`Data too large for QR generator (${textLength} bytes, max capacity: ${last ? last.data : 0} bytes)`);
 }
@@ -217,11 +232,11 @@ export interface QrRenderOptions {
 }
 
 export function generateQrMatrix(text: string, options: QrRenderOptions = {}): boolean[][] {
-  const ecLevel = options.ecLevel === 'L' ? 'L' : 'M';
+  const requestedEcLevel = options.ecLevel === 'L' ? 'L' : 'M';
   const encoder = new TextEncoder();
   const textBytes = encoder.encode(text);
 
-  const { version, capacity } = selectVersion(textBytes.length, ecLevel);
+  const { version, capacity, ecLevel } = selectVersion(textBytes.length, requestedEcLevel);
   const matrixSize = 17 + 4 * version;
 
   const matrix: (boolean | null)[][] = Array.from({ length: matrixSize }, () => new Array(matrixSize).fill(null));

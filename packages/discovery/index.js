@@ -29,6 +29,21 @@ const {
   handleDiscoveryHttpRequest,
 } = require('./src/discoveryEndpoint');
 
+// Dedicated Universal QR Pairing Engine
+const qr = require('./src/qr');
+const {
+  buildUniversalQrPayload,
+  parseUniversalQrPayload,
+  resolveNetworkInterfaces,
+  classifyInterfaceType,
+  isVirtualInterface,
+  validateQrSecurity,
+  PairingMode,
+  InterfaceType,
+  escapeWifiString,
+  unescapeWifiString,
+} = qr;
+
 module.exports = {
   // mDNS / Zeroconf
   MdnsAdvertiser,
@@ -47,6 +62,19 @@ module.exports = {
   // Pairing payload & URI format
   createPairingPayload,
   parsePairingPayload,
+
+  // Universal QR Pairing Engine (Option 3 Dedicated Module)
+  qr,
+  buildUniversalQrPayload,
+  parseUniversalQrPayload,
+  resolveNetworkInterfaces,
+  classifyInterfaceType,
+  isVirtualInterface,
+  validateQrSecurity,
+  PairingMode,
+  InterfaceType,
+  escapeWifiString,
+  unescapeWifiString,
 
   // HTTP Discovery endpoint
   buildDiscoveryMetadata,

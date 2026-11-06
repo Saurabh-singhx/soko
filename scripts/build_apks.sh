@@ -128,17 +128,39 @@ rm -rf "${BUILD_DIR}"
 mkdir -p "${BUILD_DIR}/desktop"
 mkdir -p "${BUILD_DIR}/mobile"
 
-# Persistent keystore for signing (ensures signature compatibility across updates)
+# ==============================================================================
+# Persistent Keystore & Signing Secrets Resolution
+# Guarantees signature parity between Local Builds and GitHub Actions CI.
+# ==============================================================================
+
+# 1. Load signing secrets from .env.signing or .env if present (local environment)
+if [ -f "${PROJECT_ROOT}/.env.signing" ]; then
+  echo "[Signing] Loading credentials from .env.signing..."
+  # shellcheck disable=SC1091
+  set -a
+  source "${PROJECT_ROOT}/.env.signing"
+  set +a
+elif [ -f "${PROJECT_ROOT}/.env" ]; then
+  # shellcheck disable=SC1091
+  set -a
+  source "${PROJECT_ROOT}/.env"
+  set +a
+fi
+
 KEYSTORE_PASS="${ANDROID_KEYSTORE_PASSWORD:-sokopassword}"
 KEY_ALIAS="${ANDROID_KEY_ALIAS:-soko-key}"
 KEY_PASS="${ANDROID_KEY_PASSWORD:-${KEYSTORE_PASS}}"
 
 if [ -n "${ANDROID_KEYSTORE_BASE64}" ]; then
-  echo "Decoding release signing keystore from ANDROID_KEYSTORE_BASE64..."
+  echo "[Signing] Decoding release signing keystore from ANDROID_KEYSTORE_BASE64..."
   KEYSTORE="${BUILD_DIR}/release_signing.keystore"
-  echo "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${KEYSTORE}"
+  echo "${ANDROID_KEYSTORE_BASE64}" | tr -d '\r\n ' | base64 -d > "${KEYSTORE}"
+  if [ ! -s "${KEYSTORE}" ]; then
+    echo "[WARNING] Decoded keystore is empty! Falling back to repository keystore."
+    KEYSTORE="${PROJECT_ROOT}/scripts/keystore/soko.keystore"
+  fi
 elif [ -n "${ANDROID_KEYSTORE_FILE}" ] && [ -f "${ANDROID_KEYSTORE_FILE}" ]; then
-  echo "Using existing signing keystore from ANDROID_KEYSTORE_FILE: ${ANDROID_KEYSTORE_FILE}"
+  echo "[Signing] Using existing signing keystore from ANDROID_KEYSTORE_FILE: ${ANDROID_KEYSTORE_FILE}"
   KEYSTORE="${ANDROID_KEYSTORE_FILE}"
 else
   KEYSTORE_DIR="${PROJECT_ROOT}/scripts/keystore"
@@ -153,7 +175,7 @@ else
       KEY_PASS="sokopassword"
     fi
   else
-    echo "Generating persistent signing keystore at ${KEYSTORE}..."
+    echo "[Signing] Generating persistent signing keystore at ${KEYSTORE}..."
     keytool -genkeypair -v \
       -keystore "${KEYSTORE}" \
       -alias "${KEY_ALIAS}" \
@@ -164,6 +186,12 @@ else
       -keypass "${KEY_PASS}" \
       -dname "CN=Soko, OU=Mobile, O=Soko Ecosystem, L=San Francisco, ST=CA, C=US"
   fi
+fi
+
+# Print authoritative certificate fingerprint for build verification
+CERT_SHA256="$(keytool -list -v -keystore "${KEYSTORE}" -storepass "${KEYSTORE_PASS}" 2>/dev/null | grep -E "SHA256:|SHA-256:" | head -n 1 | awk '{print $2}' || true)"
+if [ -n "${CERT_SHA256}" ]; then
+  echo "[Signing] Active Certificate SHA-256: ${CERT_SHA256}"
 fi
 
 # ------------------------------------------------------------------------------
@@ -247,6 +275,9 @@ EOF
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
@@ -322,6 +353,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.webkit.WebChromeClient;
+import android.webkit.PermissionRequest;
 import android.webkit.DownloadListener;
 import android.webkit.URLUtil;
 import android.webkit.ValueCallback;
@@ -957,6 +989,23 @@ public class MainActivity extends Activity {
 
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
+            public void onPermissionRequest(final PermissionRequest request) {
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        String origin = request.getOrigin() != null ? request.getOrigin().toString() : "";
+                        boolean isAllowedOrigin = origin.startsWith("file://") ||
+                            origin.matches("^https?://(127\\.0\\.0\\.1|localhost|10\\.\\d+\\.\\d+\\.\\d+|192\\.168\\.\\d+\\.\\d+|172\\.(1[6-9]|2\\d|3[0-1])\\.\\d+\\.\\d+)(:\\d+)?(/.*)?$");
+                        if (isAllowedOrigin) {
+                            request.grant(request.getResources());
+                        } else {
+                            request.deny();
+                        }
+                    }
+                });
+            }
+
+            @Override
             public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
                 if (uploadMessage != null) {
                     uploadMessage.onReceiveValue(null);
@@ -1040,6 +1089,12 @@ public class MainActivity extends Activity {
         }
 
         setContentView(webView);
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            if (checkSelfPermission(android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{android.Manifest.permission.CAMERA}, 102);
+            }
+        }
     }
 
     @Override

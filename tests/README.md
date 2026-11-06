@@ -16,11 +16,13 @@ The test harness runs against an isolated port (`PORT 8799` by default) and auto
 | [`test_display_and_updater.js`](file:///home/saurabh/coding/soko/tests/test_display_and_updater.js) | Desktop display server & multi-monitor robustness: workArea centering, fractional DPI scaling (1.25x, 1.5x), negative X multi-monitor offsets, disconnect clamping, Linux X11/Wayland platform resolution, and in-app auto-updater asset parsing. | `npm run test:display` |
 | [`test_audio_and_resilience.js`](file:///home/saurabh/coding/soko/tests/test_audio_and_resilience.js) | Audio pipeline, daemon services & observability: FFmpeg binary resolution hierarchy, Opus 96k / MP3 192k codec configuration, dynamic device switching hot-swap, rolling file logger (10MB bounds, 3 historical files), React IslandErrorBoundary crash recovery, and service configs (systemd, launchd, Windows). | `npm run test:audio` |
 | [`test_idle_and_agent_completion.js`](file:///home/saurabh/coding/soko/tests/test_idle_and_agent_completion.js) | Dynamic Island idle orb transitions, agent completion status badges, token formatting (`14.5k tokens`), layout clipping defense, and notification sizing. | `npm run test:island` |
+| [`test_universal_qr.js`](file:///home/saurabh/coding/soko/tests/test_universal_qr.js) | Universal hybrid QR pairing engine: network interface ranking, virtual bridge filtering (Docker/Podman/libvirt), universal Web URLs, native URIs, Wi-Fi schemas, 5-minute expiration, and timing-safe Zero-Trust validation. | `npm run test:qr` |
+| [`packages/agent-remote/tests/agent_remote.test.js`](file:///home/saurabh/coding/soko/packages/agent-remote/tests/agent_remote.test.js) & [`test_agent_remote_integration.js`](file:///home/saurabh/coding/soko/tests/test_agent_remote_integration.js) | Agent remote terminal & transcript streaming: ANSI cleaning, tool output capping, session discovery, path traversal guardrails, delta reading, prompt dispatch, and real-time WebSocket telemetry ingestion. | `npm run test:agent` |
 | [`test_integration.js`](file:///home/saurabh/coding/soko/tests/test_integration.js) | End-to-end integration: HTTP discovery, notification mirroring, high-speed file transfers, SHA-256 upload verification, WebSocket framing, PipeWire desktop audio stream, and multi-session CLI telemetry. | `npm test` |
 
 ## Running Tests
 
-Run the full end-to-end test suite (all 9 test suites):
+Run the full end-to-end test suite (all 12 test suites):
 ```bash
 npm run test:all
 ```
@@ -32,6 +34,12 @@ npm run test:characters
 
 # Zero-Trust Security & Sandbox Isolation
 npm run test:security
+
+# Universal Hybrid QR Pairing Engine
+npm run test:qr
+
+# Agent Remote & Transcript Streaming
+npm run test:agent
 
 # Zero-Configuration mDNS Discovery & QR Code Pairing
 npm run test:discovery

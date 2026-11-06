@@ -113,12 +113,28 @@ Whether you need to beam 100MB+ APKs and media files across devices in seconds w
 - **Android 14+ Foreground Service Compliance**: Manifest and service registered with combined `FOREGROUND_SERVICE_CONNECTED_DEVICE` and `FOREGROUND_SERVICE_MEDIA_PLAYBACK` flags.
 - **Power & Wi-Fi Lock Synchronization**: Integrates `PowerManager.WakeLock` (`PARTIAL_WAKE_LOCK`) and `WifiManager.WifiLock` (`WIFI_MODE_FULL_LOW_LATENCY` / `HIGH_PERF`) with safety timeout caps and automatic release on stream completion or idle.
 
-### 🌐 Zero-Configuration Discovery & Instant QR Pairing
-- **mDNS / Bonjour / Zeroconf Discovery**: Built-in zero-dependency RFC 6762 / 6763 multicast responder broadcasts `_soko._tcp.local` with PTR, SRV, TXT, and A records. Discovers local desktop instances automatically with 1-tap connect.
-- **Fallback HTTP Discovery (`/api/discovery`)**: Robust JSON discovery probe endpoint for networks where routers restrict UDP multicast traffic.
-- **Dynamic QR Code Pairing**: Desktop Dynamic Island Connection Popover dynamically generates ISO/IEC 18004 vector QR codes (`soko://pair?host=<ip>&port=8766&pin=<pin>&fp=<fingerprint>`) with zero-latency client-side SVG rendering.
-- **In-App Camera Scanner & URL Deep-Linking**: Mobile companion integrates an HTML5 camera QR scanner (`BarcodeDetector` Web API) and automatic URL handshake (`?pin=<pin>&host=<ip>`), completing the connection in a single tap without manually typing the 6-digit PIN.
-- **Resilient Device Discovery & Scanning Guardrails**: One-time startup scan with manual rescan trigger, concurrency debouncing, and zero-clobber active session preservation.
+### 🌐 Universal Hybrid QR Pairing & Multi-Interface Engine (Option 3)
+- **Universal Smartphone Camera Compatibility**: Dynamic Island Connection Popover renders high-contrast SVG QR codes embedding Universal Web URLs (`http://<ip>:8766/?pair=1&pin=<pin>&exp=<exp>&alts=<alts>`). Any default smartphone camera (iOS Camera, Google Lens, Samsung Camera) opens the mobile web companion and completes 1-tap auto-pairing.
+- **Dedicated 3-Tab Card**: Switch seamlessly between **Phone Cam** (Universal Web URL), **Soko App** (Native `soko://pair` deep link), and **Hotspot** (standard `WIFI:S:...` schema) directly in the Dynamic Island popover.
+- **Multi-Interface Hardware Classification**: Intelligently classifies network interfaces, automatically filtering out virtual machine hypervisors and container bridges (`docker0`, `virbr0`, `veth*`, `tailscale*`, `cni*`). Prioritizes physical Wi-Fi and Hotspot over Ethernet.
+- **Candidate Fallback Routing (`alts`)**: Multi-homed developer workstations encode alternative candidate IP addresses. If primary routing fails, the mobile companion probes candidates automatically.
+- **Time-Sensitive 5-Minute Countdown Expiration**: Pairing tokens expire after 300 seconds (`exp`) with live countdown timer and automatic refresh to thwart screenshot replay attacks.
+- **Timing-Safe Zero-Trust Pinning**: SAS PIN matching and TLS SHA-256 certificate fingerprints (`fp`) are verified with constant-time cryptographic checks (`crypto.timingSafeEqual`) to eliminate timing side-channel attacks.
+
+### 🤖 Real-Time Mobile Agent Terminal & Transcript Streaming
+- **Live Agent Terminal Deck**: Direct mobile mirror for AI developer CLI agents (Google Antigravity `agy`, Claude Code, Codex).
+- **Sub-Second Delta Streaming**: 400ms delta tailing engine tracks transcript byte offsets (`readDelta`), streaming conversational turns, thought processes, and tool executions over WebSockets with zero polling latency.
+- **Mobile-First Conversational Ergonomics**:
+  - Automatically strips internal XML scaffolding (`<USER_REQUEST>`, `<ADDITIONAL_METADATA>`, `<identity>`) to present clean user prompts.
+  - **Collapsible Thought Accordions**: Agent reasoning blocks fold cleanly into interactive disclosure pills (`[Show ▾] / [Hide ▴]`).
+  - **Unified Activity Pills**: Replaces bulky tool JSONs with concise execution summaries (e.g. `$ npm test`, `Edit main.ts`).
+  - **Tool Output Capping**: Caps oversized command outputs to 40 lines / 4KB to protect mobile device memory.
+- **Remote Prompt Turn Dispatching**: Type instructions and send prompts directly from your mobile device. Includes optimistic turn insertion, child process detachment (`child.unref()`), session queueing, and strict CLI `mode`/`effort` allowlists to prevent command injection.
+
+### 🔐 Android APK Release Signing Parity & Hardware Permissions
+- **Keystore CI/CD Parity**: Local builds (`scripts/build_apks.sh`) and GitHub Actions CI share canonical release keystore credentials via `.env.signing` and `ANDROID_KEYSTORE_BASE64`.
+- **Signature Parity Verifier**: Run `bash scripts/verify_apk_signature.sh [apk]` to confirm signature matches canonical release key before distributing updates.
+- **Hardware Camera Integration**: Companion WebView incorporates camera permissions with origin-restricted runtime approval, enabling live QR scanning.
 
 ### 🛡️ Zero-Trust Security & Network Hardening
 - **Local Transport Layer Security (TLS / HTTPS & WSS)**: Self-signed certificate generation with automated SAN coverage and socket multiplexing on port 8766. Certificate fingerprints (`SHA256:XX:...`) are exported for client-side pinning.
@@ -407,6 +423,8 @@ Explore our comprehensive engineering logs and feature architecture documents:
 | **Low-Latency Desktop Audio Streaming (Dual Codec & Hot-Swap)** | [docs/features/08-desktop-audio-streaming.md](docs/features/08-desktop-audio-streaming.md) |
 | **Mobile Dynamic Island & Fluid Cloud Technical Analysis** | [docs/features/09-mobile-dynamic-island-fluid-cloud.md](docs/features/09-mobile-dynamic-island-fluid-cloud.md) |
 | **YouTube Music Offline Desktop Connector** | [docs/features/10-youtube-music-offline-connector.md](docs/features/10-youtube-music-offline-connector.md) |
+| **Universal QR Pairing & Multi-Interface Fallback Engine** | [docs/features/11-universal-qr-pairing-engine.md](docs/features/11-universal-qr-pairing-engine.md) |
+| **Real-Time Mobile Agent Terminal & Transcript Streaming** | [docs/features/12-agent-remote-terminal-streaming.md](docs/features/12-agent-remote-terminal-streaming.md) |
 | **Custom Character Creation Guide & AI Prompt (Mascots & Atmospheric Backgrounds)** | [docs/characters/README.md](docs/characters/README.md) |
 | **Multi-Agent Orchestration Protocol** | [AGENTS.md](AGENTS.md) |
 

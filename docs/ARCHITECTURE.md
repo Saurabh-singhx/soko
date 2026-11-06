@@ -97,8 +97,12 @@ soko/
 │           ├── services/         # BLE service, Hotspot HTTP file server, Notification listener
 │           └── ui/               # Glassmorphic dashboard, terminal deck, file sender
 ├── packages/
-│   └── protocol/                 # Shared JSON schemas, packet specs & constants
-│       └── schema/               # Formal JSON schemas for packets
+│   ├── protocol/                 # Shared JSON schemas, packet specs & constants
+│   │   └── schema/               # Formal JSON schemas for packets
+│   ├── discovery/                # mDNS, zeroconf, and Universal QR pairing engine
+│   │   └── src/qr/               # Network interface classifier, timing-safe validator, hybrid QR
+│   ├── security/                 # TLS engine, token manager, rate limiter, CORS hardener
+│   └── agent-remote/             # Agent session manager, transcript delta tailing, & agy CLI bridge
 ├── docs/
 │   ├── ARCHITECTURE.md           # This document
 │   └── features/                 # In-depth technical research & failed attempt logs
@@ -110,7 +114,10 @@ soko/
 │       ├── 06-security-and-pairing.md
 │       ├── 07-grok-bot-monochrome-animation.md
 │       ├── 08-desktop-audio-streaming.md
-│       └── 09-mobile-dynamic-island-fluid-cloud.md
+│       ├── 09-mobile-dynamic-island-fluid-cloud.md
+│       ├── 10-youtube-music-offline-connector.md
+│       ├── 11-universal-qr-pairing-engine.md
+│       └── 12-agent-remote-terminal-streaming.md
 └── README.md
 ```
 

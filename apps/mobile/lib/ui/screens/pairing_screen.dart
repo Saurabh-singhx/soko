@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/glass_theme.dart';
 import '../../services/bluetooth/ble_service.dart';
+import '../../services/pairing/universal_qr_parser.dart';
 import '../widgets/glass_card.dart';
+import 'qr_scanner/qr_scanner_view.dart';
 
-/// Bluetooth Pairing & Security Verification Screen.
+/// Bluetooth & Universal QR Pairing & Security Verification Screen.
 class PairingScreen extends StatefulWidget {
   final MobileBleService bleService;
   final VoidCallback onBack;
@@ -19,11 +21,62 @@ class PairingScreen extends StatefulWidget {
 }
 
 class _PairingScreenState extends State<PairingScreen> {
-  final String activeSasPin = '482 195';
+  String activeSasPin = '482 195';
+  bool _isScannerActive = false;
+  String? _connectedHost;
+
+  void _handleScannedPayload(ParsedQrPayload payload) {
+    if (!payload.isValid) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(payload.error ?? 'Invalid QR code scanned'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      if (payload.formattedPin != null) {
+        activeSasPin = payload.formattedPin!;
+      }
+      _connectedHost = payload.host;
+      _isScannerActive = false;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Instant QR Paired with ${payload.workstationName ?? payload.host ?? "Desktop"}! PIN: $activeSasPin'),
+        backgroundColor: GlassTheme.emeraldAccent,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final isConnected = widget.bleService.status == MobileBleStatus.connected;
+
+    if (_isScannerActive) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.close_rounded, color: Colors.white),
+            onPressed: () => setState(() => _isScannerActive = false),
+          ),
+          title: const Text(
+            'Scan Dynamic Island QR',
+            style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+        ),
+        body: QrScannerView(
+          onScanned: _handleScannedPayload,
+          onManualPinTap: () => setState(() => _isScannerActive = false),
+        ),
+      );
+    }
 
     return Scaffold(
       backgroundColor: GlassTheme.bgDark,
@@ -35,7 +88,7 @@ class _PairingScreenState extends State<PairingScreen> {
           onPressed: widget.onBack,
         ),
         title: const Text(
-          'Bluetooth Pairing',
+          'Device Pairing',
           style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
         ),
       ),
@@ -43,6 +96,57 @@ class _PairingScreenState extends State<PairingScreen> {
         child: Padding(
           padding: const EdgeInsets.all(20.0),
           children: [
+            // Instant QR Code Camera Scanner Action Card
+            GlassCard(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              child: InkWell(
+                onTap: () => setState(() => _isScannerActive = true),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: GlassTheme.purpleAccent.withOpacity(0.18),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: GlassTheme.purpleAccent.withOpacity(0.35)),
+                      ),
+                      child: const Icon(Icons.qr_code_scanner_rounded, color: GlassTheme.purpleAccent, size: 24),
+                    ),
+                    const SizedBox(width: 14),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Scan Desktop QR Code',
+                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                          ),
+                          Text(
+                            'Universal 1-tap instant handshake via camera',
+                            style: TextStyle(color: Colors.white54, fontSize: 11),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: GlassTheme.cyanAccent.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: GlassTheme.cyanAccent.withOpacity(0.3)),
+                      ),
+                      child: const Text(
+                        'SCAN',
+                        style: TextStyle(color: GlassTheme.cyanAccent, fontWeight: FontWeight.bold, fontSize: 11),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
             // Security PIN Card
             GlassCard(
               padding: const EdgeInsets.all(24),
@@ -78,7 +182,9 @@ class _PairingScreenState extends State<PairingScreen> {
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    'Ensure this 6-digit number matches the PIN displayed on your Desktop Dynamic Island.',
+                    _connectedHost != null
+                      ? 'Connected to Workstation host: $_connectedHost'
+                      : 'Ensure this 6-digit number matches the PIN displayed on your Desktop Dynamic Island.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12),
                   ),
@@ -86,7 +192,7 @@ class _PairingScreenState extends State<PairingScreen> {
               ),
             ),
 
-            const SizedBox(height: 24),
+            const SizedBox(height: 20),
 
             // Discovered Desktop Device Card
             GlassCard(
@@ -110,7 +216,7 @@ class _PairingScreenState extends State<PairingScreen> {
                           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
                         ),
                         Text(
-                          isConnected ? 'Connected & Verified' : 'mDNS Discovered (_soko._tcp.local)',
+                          isConnected ? 'Connected & Verified' : 'mDNS / LAN Ready (_soko._tcp.local)',
                           style: TextStyle(
                             color: isConnected ? GlassTheme.emeraldAccent : Colors.white54,
                             fontSize: 12,
@@ -136,53 +242,6 @@ class _PairingScreenState extends State<PairingScreen> {
                     child: Text(isConnected ? 'Disconnect' : 'Connect'),
                   ),
                 ],
-              ),
-            ),
-
-            const SizedBox(height: 16),
-
-            // QR Code Instant Scan Action
-            GlassCard(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              child: InkWell(
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Camera QR Scanner: Scan desktop Dynamic Island to pair instantly'),
-                      duration: Duration(seconds: 2),
-                    ),
-                  );
-                },
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: GlassTheme.purpleAccent.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: GlassTheme.purpleAccent.withOpacity(0.3)),
-                      ),
-                      child: const Icon(Icons.qr_code_scanner_rounded, color: GlassTheme.purpleAccent, size: 22),
-                    ),
-                    const SizedBox(width: 14),
-                    const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Scan Desktop QR Code',
-                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14),
-                          ),
-                          Text(
-                            'Zero-configuration 1-tap instant handshake',
-                            style: TextStyle(color: Colors.white54, fontSize: 11),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const Icon(Icons.chevron_right_rounded, color: Colors.white38),
-                  ],
-                ),
               ),
             ),
           ],

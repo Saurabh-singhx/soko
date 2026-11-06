@@ -9,16 +9,19 @@ const os = require('os');
 const { createPairingPayload } = require('./pairingPayload');
 const { generateQrSvg } = require('./qrGenerator');
 const { getLocalIpv4Addresses } = require('./mdnsAdvertiser');
+const { resolveNetworkInterfaces } = require('./qr/networkInterfaceResolver');
+const { buildUniversalQrPayload, escapeWifiString } = require('./qr/universalPairing');
 
 /**
  * Builds the full discovery metadata payload.
  */
 function buildDiscoveryMetadata(context = {}) {
   const port = context.port || 8766;
+  const net = resolveNetworkInterfaces({ preferredIp: context.primaryIp });
   const addresses = context.addresses && context.addresses.length > 0
     ? context.addresses
-    : getLocalIpv4Addresses();
-  const primaryIp = addresses[0] || '127.0.0.1';
+    : (net.candidateIps.length > 0 ? net.candidateIps : getLocalIpv4Addresses());
+  const primaryIp = addresses[0] || net.primaryIp || '127.0.0.1';
   const name = context.name || `Soko (${os.hostname()})`;
   const hostname = os.hostname();
   const sasPin = context.sasPin || '000000';
@@ -47,6 +50,21 @@ function buildDiscoveryMetadata(context = {}) {
     };
   }
 
+  // Universal pairing payload with expiration and candidate fallback IPs
+  let universalInfo = null;
+  try {
+    universalInfo = buildUniversalQrPayload({
+      host: primaryIp,
+      port,
+      pin: sasPin,
+      fingerprint: certFingerprint,
+      name,
+      tls,
+      alts: net.alts,
+      ttlSeconds: context.ttlSeconds || 300,
+    });
+  } catch {}
+
   return {
     service: 'soko',
     protocol: 'soko-v1',
@@ -54,16 +72,21 @@ function buildDiscoveryMetadata(context = {}) {
     hostname,
     port,
     addresses,
+    candidateAddresses: net.candidateIps,
     primaryAddress: primaryIp,
+    primaryInterface: net.primaryInterface,
+    alts: net.alts,
     version,
     tls,
     certFingerprint,
     requiresPairing: !paired,
     paired,
     pairingUri: pairingInfo.uri,
-    webUrl: pairingInfo.webUrl,
+    webUrl: universalInfo ? universalInfo.webUrl : pairingInfo.webUrl,
     qrPayload: pairingInfo.qrPayload,
+    universalQrPayload: universalInfo ? universalInfo.qrPayload : pairingInfo.webUrl,
     formattedPin: pairingInfo.formattedPin,
+    expiresAt: universalInfo ? universalInfo.expiresAt : null,
     timestamp: Date.now(),
   };
 }
@@ -80,7 +103,12 @@ function handleDiscoveryHttpRequest(req, res, context = {}) {
     const metadata = buildDiscoveryMetadata(context);
 
     if (url.searchParams.get('format') === 'qr' || url.searchParams.get('format') === 'svg') {
-      const svg = generateQrSvg(metadata.pairingUri, {
+      const mode = url.searchParams.get('mode');
+      let targetPayload = metadata.pairingUri;
+      if (mode === 'web' || mode === 'universal' || url.searchParams.get('universal') === '1') {
+        targetPayload = metadata.universalQrPayload || metadata.webUrl;
+      }
+      const svg = generateQrSvg(targetPayload, {
         size: parseInt(url.searchParams.get('size'), 10) || 280,
         margin: 2,
         darkColor: '#000000',
@@ -107,7 +135,17 @@ function handleDiscoveryHttpRequest(req, res, context = {}) {
   if (url.pathname === '/api/discovery/qr' && req.method === 'GET') {
     const metadata = buildDiscoveryMetadata(context);
     const size = parseInt(url.searchParams.get('size'), 10) || 280;
-    const svg = generateQrSvg(metadata.pairingUri, {
+    const mode = url.searchParams.get('mode');
+    let targetPayload = metadata.pairingUri;
+    if (mode === 'web' || mode === 'universal' || url.searchParams.get('universal') === '1') {
+      targetPayload = metadata.universalQrPayload || metadata.webUrl;
+    } else if (mode === 'wifi' && context.wifiSsid) {
+      const escapedSsid = escapeWifiString(context.wifiSsid);
+      const escapedPass = escapeWifiString(context.wifiPassword || '');
+      targetPayload = `WIFI:S:${escapedSsid};T:${context.wifiPassword ? 'WPA' : 'nopass'};P:${escapedPass};;`;
+    }
+
+    const svg = generateQrSvg(targetPayload, {
       size,
       margin: 2,
       darkColor: '#000000',

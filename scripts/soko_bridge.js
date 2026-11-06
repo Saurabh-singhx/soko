@@ -69,6 +69,17 @@ const {
 
 let mdnsAdvertiser = null;
 
+// Agent Remote & Transcript Streaming Engine
+let agentSessionManager = null;
+try {
+  const { AgentSessionManager } = require(path.resolve(__dirname, '../packages/agent-remote'));
+  agentSessionManager = new AgentSessionManager();
+} catch (err) {
+  console.warn('[Bridge] AgentSessionManager load notice:', err.message);
+}
+const activeSessionCursors = new Map(); // sessionId -> byteOffset
+const activeSubscribedSessions = new Set(); // Set of sessionIds subscribed by clients
+
 let appVersion = '1.0.0';
 try {
   const pkgPath = path.resolve(__dirname, '../package.json');
@@ -2585,7 +2596,34 @@ setInterval(() => {
     lastAgentStateKey = key;
     broadcastAgentActivity();
   }
-}, 1500);
+
+  // Stream real-time transcript deltas to mobile clients (sub-second streaming)
+  if (agentSessionManager) {
+    const targets = new Set([active.sessionId, ...activeSubscribedSessions].filter(Boolean));
+    for (const sId of targets) {
+      const curOffset = activeSessionCursors.get(sId) || 0;
+      const delta = agentSessionManager.readDelta(sId, curOffset);
+      if (delta && delta.events && delta.events.length > 0) {
+        activeSessionCursors.set(sId, delta.newCursor);
+        broadcastPacket({
+          magic: 'SK',
+          version: 1,
+          packetId: Date.now(),
+          timestamp: Date.now(),
+          packetType: 'AGENT_TRANSCRIPT_CHUNK',
+          payload: {
+            sessionId: sId,
+            newCursor: delta.newCursor,
+            events: delta.events,
+          },
+        });
+      } else if (delta && delta.newCursor) {
+        activeSessionCursors.set(sId, delta.newCursor);
+      }
+    }
+  }
+}, 400);
+
 
 // Strict CLI execution whitelist to prevent Remote Code Execution (RCE)
 const CLI_WHITELIST = {
@@ -4077,6 +4115,17 @@ function handleWsFrame(socket, buffer) {
         packetType: 'AGENT_ACTIVITY_STATUS',
         payload: activity,
       });
+      if (agentSessionManager) {
+        const sessions = agentSessionManager.discoverSessions();
+        sendWsPacket(socket, {
+          magic: 'SK',
+          version: 1,
+          packetId: Date.now(),
+          timestamp: Date.now(),
+          packetType: 'FETCH_AGENT_SESSIONS_RESULT',
+          payload: { sessions },
+        });
+      }
       return;
     }
 
@@ -4095,8 +4144,94 @@ function handleWsFrame(socket, buffer) {
       return;
     }
 
+    // Fetch Agent Transcript History & Live Stream Subscription
+    if (packet.packetType === 'AGENT_GET_TRANSCRIPT_HISTORY' || packet.packetType === 'AGENT_SUBSCRIBE_SESSION') {
+      if (!socket.isAuthorized) {
+        sendWsPacket(socket, {
+          magic: 'SK',
+          version: 1,
+          packetId: Date.now(),
+          timestamp: Date.now(),
+          packetType: 'SECURITY_ALERT',
+          payload: { status: 'unauthorized', error: 'Pairing required to view agent transcript.' },
+        });
+        return;
+      }
+      const sId = packet.payload?.sessionId || currentAgentActivity.sessionId;
+      if (sId) {
+        activeSubscribedSessions.add(sId);
+      }
+      if (agentSessionManager && sId) {
+        const hist = agentSessionManager.getTranscriptHistory(sId, { maxTurns: packet.payload?.maxTurns || 30 });
+        if (hist.cursor) {
+          activeSessionCursors.set(sId, hist.cursor);
+        }
+        sendWsPacket(socket, {
+          magic: 'SK',
+          version: 1,
+          packetId: Date.now(),
+          timestamp: Date.now(),
+          packetType: 'AGENT_TRANSCRIPT_HISTORY',
+          payload: hist,
+        });
+      }
+      return;
+    }
+
+    // Dispatch User Prompt to Agent Session (Privileged)
+    if (packet.packetType === 'AGENT_SEND_PROMPT') {
+      if (!socket.isAuthorized) {
+        sendWsPacket(socket, {
+          magic: 'SK',
+          version: 1,
+          packetId: Date.now(),
+          timestamp: Date.now(),
+          packetType: 'SECURITY_ALERT',
+          payload: { status: 'unauthorized', error: 'Pairing required to dispatch prompts.' },
+        });
+        return;
+      }
+      const sId = packet.payload?.sessionId || currentAgentActivity.sessionId;
+      const prompt = packet.payload?.prompt;
+      if (!agentSessionManager || !sId || !prompt) {
+        sendWsPacket(socket, {
+          magic: 'SK',
+          version: 1,
+          packetId: Date.now(),
+          timestamp: Date.now(),
+          packetType: 'AGENT_PROMPT_RESULT',
+          payload: { success: false, error: 'Session ID and prompt are required.' },
+        });
+        return;
+      }
+
+      agentSessionManager.dispatchPrompt(sId, prompt)
+        .then((result) => {
+          sendWsPacket(socket, {
+            magic: 'SK',
+            version: 1,
+            packetId: Date.now(),
+            timestamp: Date.now(),
+            packetType: 'AGENT_PROMPT_RESULT',
+            payload: result,
+          });
+          broadcastAgentActivity();
+        })
+        .catch((err) => {
+          sendWsPacket(socket, {
+            magic: 'SK',
+            version: 1,
+            packetId: Date.now(),
+            timestamp: Date.now(),
+            packetType: 'AGENT_PROMPT_RESULT',
+            payload: { success: false, error: err.message },
+          });
+        });
+      return;
+    }
+
     // Guard privileged packets against unauthorized sockets (CLI & file storage & notifications)
-    const PRIVILEGED_PACKETS = ['CLI_EXECUTE', 'FILE_OFFER', 'FILE_START', 'NOTIFICATION_POST'];
+    const PRIVILEGED_PACKETS = ['CLI_EXECUTE', 'FILE_OFFER', 'FILE_START', 'NOTIFICATION_POST', 'AGENT_SEND_PROMPT'];
     if (PRIVILEGED_PACKETS.includes(packet.packetType) && !socket.isAuthorized) {
       console.warn(`[Security Alert] Blocked privileged packet ${packet.packetType} from unauthorized socket.`);
       sendWsPacket(socket, {
@@ -4564,6 +4699,46 @@ const serverHandler = (req, res) => {
         fs.createReadStream(COMPANION_INDEX).pipe(res);
       }
       return;
+    }
+  }
+
+  // Serve static companion assets (e.g. /qr/universalScanner.js, /icon.png)
+  if ((req.method === 'GET' || req.method === 'HEAD') && !url.pathname.startsWith('/api/') && !url.pathname.startsWith('/transfers/')) {
+    const companionDir = path.resolve(path.dirname(COMPANION_INDEX));
+    const companionDirWithSep = companionDir.endsWith(path.sep) ? companionDir : companionDir + path.sep;
+    const safeRel = path.normalize(url.pathname).replace(/^(\.\.[\/\\])+/, '');
+    const candidatePath = path.resolve(companionDir, '.' + safeRel);
+    if ((candidatePath === companionDir || candidatePath.startsWith(companionDirWithSep)) && fs.existsSync(candidatePath)) {
+      try {
+        const realCandidatePath = fs.realpathSync(candidatePath);
+        const realCompanionDir = fs.realpathSync(companionDir);
+        const realCompanionWithSep = realCompanionDir.endsWith(path.sep) ? realCompanionDir : realCompanionDir + path.sep;
+        if (realCandidatePath.startsWith(realCompanionWithSep) && fs.statSync(realCandidatePath).isFile()) {
+          const ext = path.extname(realCandidatePath).toLowerCase();
+          const mimeTypes = {
+            '.js': 'application/javascript; charset=utf-8',
+            '.css': 'text/css; charset=utf-8',
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.svg': 'image/svg+xml',
+            '.ico': 'image/x-icon',
+            '.json': 'application/json',
+          };
+          const contentType = mimeTypes[ext] || 'application/octet-stream';
+          res.writeHead(200, {
+            'Content-Type': contentType,
+            'Cache-Control': 'public, max-age=3600',
+            'Access-Control-Allow-Origin': '*',
+          });
+          if (req.method === 'HEAD') {
+            res.end();
+          } else {
+            fs.createReadStream(realCandidatePath).pipe(res);
+          }
+          return;
+        }
+      } catch {}
     }
   }
 
@@ -5338,6 +5513,91 @@ const serverHandler = (req, res) => {
         });
       } catch (err) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // 4b. Discover active agent sessions (supports both GET and mobile POST)
+  if (url.pathname === '/api/agent/sessions' && (req.method === 'GET' || req.method === 'POST')) {
+    if (!isRequestAuthorized(req)) {
+      rejectUnauthorized(res, req);
+      return;
+    }
+    const sessions = agentSessionManager ? agentSessionManager.discoverSessions() : [];
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(JSON.stringify({ success: true, sessions }));
+    return;
+  }
+
+  // 4c. Fetch agent transcript turns (supports both GET and mobile POST)
+  if (url.pathname === '/api/agent/transcript' && (req.method === 'GET' || req.method === 'POST')) {
+    if (!isRequestAuthorized(req)) {
+      rejectUnauthorized(res, req);
+      return;
+    }
+
+    const respondWithTranscript = (bodySessionId) => {
+      const sessionId = bodySessionId || url.searchParams.get('sessionId') || currentAgentActivity.sessionId;
+      if (!agentSessionManager || !sessionId) {
+        res.writeHead(404, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ success: false, error: 'No active session found.' }));
+        return;
+      }
+      const data = agentSessionManager.getTranscriptHistory(sessionId);
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify(data));
+    };
+
+    if (req.method === 'POST') {
+      let body = '';
+      req.on('data', (chunk) => (body += chunk));
+      req.on('end', () => {
+        try {
+          const parsed = body ? JSON.parse(body) : {};
+          respondWithTranscript(parsed.sessionId);
+        } catch {
+          respondWithTranscript(null);
+        }
+      });
+    } else {
+      respondWithTranscript(null);
+    }
+    return;
+  }
+
+  // 4d. Dispatch user prompt turn to agent
+  if (url.pathname === '/api/agent/prompt' && req.method === 'POST') {
+    if (!isRequestAuthorized(req)) {
+      rejectUnauthorized(res, req);
+      return;
+    }
+    let body = '';
+    req.on('data', (chunk) => (body += chunk));
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body);
+        const sessionId = data.sessionId || currentAgentActivity.sessionId;
+        const prompt = data.prompt;
+        if (!agentSessionManager || !sessionId || !prompt) {
+          res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ success: false, error: 'Session ID and prompt are required.' }));
+          return;
+        }
+
+        agentSessionManager.dispatchPrompt(sessionId, prompt)
+          .then((result) => {
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+            res.end(JSON.stringify(result));
+            broadcastAgentActivity();
+          })
+          .catch((err) => {
+            res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+            res.end(JSON.stringify({ success: false, error: err.message }));
+          });
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
         res.end(JSON.stringify({ error: err.message }));
       }
     });

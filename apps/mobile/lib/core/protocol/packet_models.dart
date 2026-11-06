@@ -14,6 +14,12 @@ enum PacketType {
   fileOffer,
   fileProgress,
   fileCompleted,
+  agentActivityStatus,
+  agentTranscriptHistory,
+  agentTranscriptChunk,
+  agentSendPrompt,
+  agentPromptResult,
+  fetchAgentSessions,
 }
 
 extension PacketTypeExtension on PacketType {
@@ -43,6 +49,18 @@ extension PacketTypeExtension on PacketType {
         return 'FILE_PROGRESS';
       case PacketType.fileCompleted:
         return 'FILE_COMPLETED';
+      case PacketType.agentActivityStatus:
+        return 'AGENT_ACTIVITY_STATUS';
+      case PacketType.agentTranscriptHistory:
+        return 'AGENT_TRANSCRIPT_HISTORY';
+      case PacketType.agentTranscriptChunk:
+        return 'AGENT_TRANSCRIPT_CHUNK';
+      case PacketType.agentSendPrompt:
+        return 'AGENT_SEND_PROMPT';
+      case PacketType.agentPromptResult:
+        return 'AGENT_PROMPT_RESULT';
+      case PacketType.fetchAgentSessions:
+        return 'FETCH_AGENT_SESSIONS';
     }
   }
 

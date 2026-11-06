@@ -192,15 +192,28 @@ function buildCodewords(dataBytes, capacity) {
   return result;
 }
 
-function selectVersion(textLength, ecLevel = 'M') {
-  const table = ecLevel === 'L' ? VERSION_CAPACITY_L : VERSION_CAPACITY_M;
+function selectVersion(textLength, requestedEcLevel = 'M') {
+  let table = requestedEcLevel === 'L' ? VERSION_CAPACITY_L : VERSION_CAPACITY_M;
   for (let v = 1; v < table.length; v++) {
     const countBits = v < 10 ? 8 : 16;
     const headerBytes = Math.ceil((4 + countBits) / 8);
     if (textLength + headerBytes <= table[v].data) {
-      return { version: v, capacity: table[v] };
+      return { version: v, capacity: table[v], ecLevel: requestedEcLevel };
     }
   }
+
+  // Graceful fallback: If Level M overflowed, automatically check Level L
+  if (requestedEcLevel !== 'L') {
+    table = VERSION_CAPACITY_L;
+    for (let v = 1; v < table.length; v++) {
+      const countBits = v < 10 ? 8 : 16;
+      const headerBytes = Math.ceil((4 + countBits) / 8);
+      if (textLength + headerBytes <= table[v].data) {
+        return { version: v, capacity: table[v], ecLevel: 'L' };
+      }
+    }
+  }
+
   throw new Error(`Data too large for QR generator (${textLength} bytes, max capacity: ${table[table.length - 1].data} bytes)`);
 }
 
@@ -214,10 +227,10 @@ function selectVersion(textLength, ecLevel = 'M') {
  * @returns {boolean[][]} - 2D matrix where true = dark module, false = light module
  */
 function generateQrMatrix(text, options = {}) {
-  const ecLevel = options.ecLevel === 'L' ? 'L' : 'M';
+  const requestedEcLevel = options.ecLevel === 'L' ? 'L' : 'M';
   const textBytes = Buffer.from(text, 'utf8');
 
-  const { version, capacity } = selectVersion(textBytes.length, ecLevel);
+  const { version, capacity, ecLevel } = selectVersion(textBytes.length, requestedEcLevel);
   const matrixSize = 17 + 4 * version;
 
   const matrix = Array.from({ length: matrixSize }, () => new Array(matrixSize).fill(null));

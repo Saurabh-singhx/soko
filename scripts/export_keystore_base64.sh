@@ -30,12 +30,29 @@ if [ ! -f "${KEYSTORE}" ]; then
 fi
 
 B64_KEYSTORE="$(base64 -w 0 "${KEYSTORE}" 2>/dev/null || base64 "${KEYSTORE}" | tr -d '\n')"
+CERT_SHA256="$(keytool -list -v -keystore "${KEYSTORE}" -storepass "${KEY_PASS}" 2>/dev/null | grep -E "SHA256:|SHA-256:" | head -n 1 | awk '{print $2}' || true)"
+
+if [[ "$1" == "--write-env" || "$1" == "--env" ]]; then
+  ENV_FILE="${PROJECT_ROOT}/.env.signing"
+  cat <<EOF > "${ENV_FILE}"
+# Soko Android APK Release Signing Secrets
+# Synchronized with GitHub Actions and Local Builds
+ANDROID_KEYSTORE_BASE64=${B64_KEYSTORE}
+ANDROID_KEYSTORE_PASSWORD=${KEY_PASS}
+ANDROID_KEY_ALIAS=${KEY_ALIAS}
+ANDROID_KEY_PASSWORD=${KEY_PASS}
+EOF
+  echo "[SUCCESS] Generated local signing secrets file: ${ENV_FILE}"
+  echo "Certificate SHA-256: ${CERT_SHA256}"
+  exit 0
+fi
 
 echo "=============================================================================="
 echo " Soko Android Production Keystore Base64 Encoded"
 echo "=============================================================================="
-echo "Keystore Path: ${KEYSTORE}"
-echo "Key Alias:     ${KEY_ALIAS}"
+echo "Keystore Path:   ${KEYSTORE}"
+echo "Key Alias:       ${KEY_ALIAS}"
+echo "Cert SHA-256:    ${CERT_SHA256}"
 echo "=============================================================================="
 echo ""
 echo "To configure GitHub Actions for persistent signing across all CI builds:"

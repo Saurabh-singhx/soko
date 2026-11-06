@@ -42,3 +42,9 @@ apks/*.idsig
 transfers/*
 !transfers/.gitkeep
 screenshot_p
+
+# Local Environment & Signing Overrides
+.env.signing
+.env.local
+.env
+!.env.signing.example

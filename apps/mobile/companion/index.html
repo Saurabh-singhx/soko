@@ -163,7 +163,9 @@
       display: flex;
       align-items: center;
       gap: 7px;
-      padding: 6px 12px;
+      padding: 8px 14px;
+      min-height: 40px;
+      box-sizing: border-box;
       background: rgba(0, 0, 0, 0.55);
       border: 1px solid var(--border-subtle);
       border-radius: 100px;
@@ -172,6 +174,7 @@
       font-family: ui-monospace, monospace;
       cursor: pointer;
       transition: all 0.2s ease;
+      touch-action: manipulation;
     }
 
     .conn-pill:active {
@@ -373,6 +376,7 @@
       color: #fff;
       border: none;
       border-radius: 12px;
+      min-height: 44px;
       padding: 12px 18px;
       font-size: 13px;
       font-weight: 600;
@@ -385,6 +389,7 @@
       box-shadow: 0 4px 14px rgba(99, 102, 241, 0.3);
       position: relative;
       overflow: hidden;
+      touch-action: manipulation;
     }
 
     .btn:active {
@@ -429,6 +434,21 @@
       border: 1px solid var(--border-subtle);
       color: var(--text-secondary);
       font-family: ui-monospace, monospace;
+    }
+
+    button.badge, .badge[onclick], .badge[style*="cursor: pointer"] {
+      min-height: 40px;
+      padding: 8px 14px;
+      font-size: 12px;
+      cursor: pointer;
+      touch-action: manipulation;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    button.badge:active, .badge[onclick]:active {
+      transform: scale(0.96);
+      background: rgba(255, 255, 255, 0.14);
     }
 
     .badge.green {
@@ -738,8 +758,9 @@
         border-radius: 16px;
       }
       .btn {
+        min-height: 44px;
         padding: 10px 14px;
-        font-size: 12px;
+        font-size: 13px;
       }
       .ip-row {
         gap: 8px;
@@ -798,27 +819,40 @@
       background: rgba(99, 102, 241, 0.08);
     }
   </style>
+  <link rel="stylesheet" href="agent-terminal/terminal.css">
 </head>
 <body>
 
-  <!-- Top App Header -->
-  <header>
+  <!-- Top App Header (Adapts dynamically when in Terminal Cockpit mode) -->
+  <header id="mainAppHeader">
     <div class="header-brand">
-      <div class="bot-avatar" id="mascotBot" title="Grok Bot Mascot — Tap to animate">
+      <div class="bot-avatar" id="mascotBot" title="Soko Mascot Bot">
         <div class="bot-eyes-container">
           <div class="bot-eye" id="eyeLeft"></div>
           <div class="bot-eye" id="eyeRight"></div>
         </div>
       </div>
       <div class="header-titles">
-        <h1>Soko Mobile</h1>
-        <p>Companion Controller</p>
+        <h1 id="headerAppTitle">Soko Mobile</h1>
+        <p id="headerSubtitle">Companion Controller</p>
       </div>
     </div>
 
+    <!-- Standard Tab Mode: Connection Status Pill -->
     <div class="conn-pill" id="connPill" onclick="switchTab('tab-link')" title="Tap to open Connection Manager">
       <div class="status-dot" id="statusDot"></div>
       <span id="connLabel">Offline</span>
+    </div>
+
+    <!-- Terminal Tab Mode: Integrated Header Controls -->
+    <div class="header-terminal-controls" id="headerTerminalControls" style="display: none;">
+      <div class="header-status-badge">
+        <span class="agent-status-dot idle" id="agentStatusDot"></span>
+        <span id="agentStatusText">Connecting</span>
+      </div>
+      <select class="header-session-select" id="agentSessionSelect" title="Switch active session">
+        <option value="">Detecting sessions...</option>
+      </select>
     </div>
   </header>
 
@@ -864,7 +898,7 @@
         </div>
 
         <!-- Quick IP Presets -->
-        <div style="display: flex; gap: 8px; margin-bottom: 12px; overflow-x: auto; padding-bottom: 2px;">
+        <div style="display: flex; gap: 8px; margin-bottom: 12px; overflow-x: auto; padding-bottom: 4px;">
           <button class="badge" style="cursor: pointer;" onclick="setPresetIp('192.168.31.210:8766')">Wi-Fi IP</button>
           <button class="badge" style="cursor: pointer;" onclick="setPresetIp('192.168.43.1:8766')">Hotspot IP</button>
           <button class="badge" style="cursor: pointer;" onclick="setPresetIp('127.0.0.1:8766')">Localhost</button>
@@ -881,8 +915,8 @@
               </svg>
               <span>Discovered Desktops (mDNS / LAN)</span>
             </div>
-            <button class="badge" id="btnScanDesktops" onclick="discoverDesktops()" style="cursor: pointer; display: flex; align-items: center; gap: 4px; background: rgba(99, 102, 241, 0.18); border-color: rgba(99, 102, 241, 0.4); color: #c7d2fe;">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+            <button class="badge" id="btnScanDesktops" onclick="discoverDesktops()" style="cursor: pointer; display: flex; align-items: center; gap: 6px; background: rgba(99, 102, 241, 0.18); border-color: rgba(99, 102, 241, 0.4); color: #c7d2fe; min-height: 40px; padding: 8px 14px;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
               <span>Scan LAN</span>
             </button>
           </div>
@@ -894,9 +928,9 @@
         </div>
 
         <!-- Instant QR Code Pairing Button -->
-        <div style="display: flex; gap: 8px; margin-bottom: 12px;">
-          <button class="btn" onclick="openQrScanner()" style="flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.35); color: #c7d2fe; padding: 10px 14px; font-weight: 600;">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <div style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px;">
+          <button class="btn" onclick="openQrScanner()" style="width: 100%; min-height: 46px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: rgba(99, 102, 241, 0.2); border: 1.5px solid rgba(99, 102, 241, 0.45); color: #e0e7ff; padding: 12px 16px; font-weight: 700; border-radius: 14px; box-shadow: 0 4px 14px rgba(99, 102, 241, 0.18);">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="3" y="3" width="7" height="7"></rect>
               <rect x="14" y="3" width="7" height="7"></rect>
               <rect x="14" y="14" width="7" height="7"></rect>
@@ -904,6 +938,9 @@
             </svg>
             <span>Scan QR Code to Pair Instantly</span>
           </button>
+          <div style="font-size: 11px; color: var(--text-secondary); text-align: center;">
+            Supports live video scan, camera photo snap, or screenshot upload
+          </div>
         </div>
 
         <!-- SAS 6-Digit PIN Pairing -->
@@ -988,7 +1025,7 @@
           </div>
           <div style="display: flex; align-items: center; gap: 6px;">
             <span class="badge green">Native</span>
-            <button onclick="fetchMobileTokenStats()" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; padding: 4px; display: flex; align-items: center;" title="Refresh Tokens">
+            <button onclick="fetchMobileTokenStats()" style="min-width: 40px; min-height: 40px; background: rgba(255,255,255,0.04); border: 1px solid var(--border-subtle); border-radius: 8px; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center; touch-action: manipulation;" title="Refresh Tokens" aria-label="Refresh AI Token Telemetry">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="23 4 23 10 17 10"></polyline>
                 <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
@@ -1339,118 +1376,88 @@
     </div>
 
     <!-- ============================================================ -->
-    <!-- TAB 5: REMOTE CLI -->
+    <!-- TAB 5: REMOTE AGENT TERMINAL -->
     <!-- ============================================================ -->
     <div id="tab-cli" class="tab-content">
-      <div class="card">
-        <div class="card-title">
-          <div class="card-title-left">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="4 17 10 11 4 5"></polyline>
-              <line x1="12" y1="19" x2="20" y2="19"></line>
-            </svg>
-            <span>Remote PC Telemetry & Controls</span>
+      <div class="agent-terminal-container">
+        <!-- Real-time Conversational Feed & Tool Execution View -->
+        <div class="agent-feed-card">
+          <div class="agent-feed-scroll" id="agentFeedScroll">
+            <!-- Feed items will be rendered dynamically here -->
           </div>
-          <span class="badge">Antigravity Hub</span>
         </div>
-
-        <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.5;">
-          Execute safe, whitelisted diagnostic commands on your PC and view live output in real-time.
-        </p>
-
-        <div class="cli-grid">
-          <button class="cli-card" onclick="executeRemoteCli('sysinfo', 'System Specs & Health')">
-            <div class="cli-card-title">System Specs</div>
-            <div class="cli-card-cmd">$ uname, uptime, RAM</div>
-          </button>
-
-          <button class="cli-card" onclick="executeRemoteCli('mem', 'Memory & Swap Telemetry')">
-            <div class="cli-card-title">Memory & RAM</div>
-            <div class="cli-card-cmd">$ free -h</div>
-          </button>
-
-          <button class="cli-card" onclick="executeRemoteCli('disk', 'Storage & Filesystems')">
-            <div class="cli-card-title">Disk Storage</div>
-            <div class="cli-card-cmd">$ df -h (partitions)</div>
-          </button>
-
-          <button class="cli-card" onclick="executeRemoteCli('top-procs', 'Top CPU Processes')">
-            <div class="cli-card-title">Top Processes</div>
-            <div class="cli-card-cmd">$ ps top 6 CPU</div>
-          </button>
-
-          <button class="cli-card" onclick="executeRemoteCli('battery', 'Power & Battery')">
-            <div class="cli-card-title">Power / Battery</div>
-            <div class="cli-card-cmd">$ upower / battery</div>
-          </button>
-
-          <button class="cli-card" onclick="executeRemoteCli('net-stats', 'Network Interfaces')">
-            <div class="cli-card-title">Network & IPs</div>
-            <div class="cli-card-cmd">$ ip addr / route</div>
-          </button>
-
-          <button class="cli-card" onclick="executeRemoteCli('ports', 'Active Ports & Services')">
-            <div class="cli-card-title">Listening Ports</div>
-            <div class="cli-card-cmd">$ ss -tlpn (:8766)</div>
-          </button>
-
-          <button class="cli-card" onclick="executeRemoteCli('git-status', 'Git Workspace')">
-            <div class="cli-card-title">Git Status</div>
-            <div class="cli-card-cmd">$ git status & log</div>
-          </button>
-        </div>
-
-        <div class="terminal-box" id="termLog">Ready for remote PC command execution...</div>
       </div>
     </div>
 
   </div>
 
-  <!-- Bottom Navigation Bar -->
-  <nav class="bottom-nav">
-    <div class="nav-item active" onclick="switchTab('tab-link')" id="nav-tab-link">
-      <div class="nav-indicator"></div>
-      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
-        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
-      </svg>
-      <span class="nav-label">Link</span>
+  <!-- Bottom Navigation Bar & Terminal Command Dock -->
+  <nav class="bottom-nav" id="bottomNav">
+    <div class="nav-tabs-dock" id="navTabsDock">
+      <div class="nav-item active" onclick="switchTab('tab-link')" id="nav-tab-link">
+        <div class="nav-indicator"></div>
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+        </svg>
+        <span class="nav-label">Link</span>
+      </div>
+
+      <div class="nav-item" onclick="switchTab('tab-alerts')" id="nav-tab-alerts">
+        <div class="nav-indicator"></div>
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+          <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+        </svg>
+        <span class="nav-label">Alerts</span>
+      </div>
+
+      <div class="nav-item" onclick="switchTab('tab-audio')" id="nav-tab-audio">
+        <div class="nav-indicator"></div>
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 18v-6a9 9 0 0 1 18 0v6"></path>
+          <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path>
+        </svg>
+        <span class="nav-label">Audio</span>
+      </div>
+
+      <div class="nav-item" onclick="switchTab('tab-files')" id="nav-tab-files">
+        <div class="nav-indicator"></div>
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+          <polyline points="14 2 14 8 20 8"></polyline>
+        </svg>
+        <span class="nav-label">Files</span>
+      </div>
+
+      <div class="nav-item" onclick="switchTab('tab-cli')" id="nav-tab-cli">
+        <div class="nav-indicator"></div>
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="4 17 10 11 4 5"></polyline>
+          <line x1="12" y1="19" x2="20" y2="19"></line>
+        </svg>
+        <span class="nav-label">Terminal</span>
+      </div>
     </div>
 
-    <div class="nav-item" onclick="switchTab('tab-alerts')" id="nav-tab-alerts">
-      <div class="nav-indicator"></div>
-      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
-        <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
-      </svg>
-      <span class="nav-label">Alerts</span>
-    </div>
-
-    <div class="nav-item" onclick="switchTab('tab-audio')" id="nav-tab-audio">
-      <div class="nav-indicator"></div>
-      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M3 18v-6a9 9 0 0 1 18 0v6"></path>
-        <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path>
-      </svg>
-      <span class="nav-label">Audio</span>
-    </div>
-
-    <div class="nav-item" onclick="switchTab('tab-files')" id="nav-tab-files">
-      <div class="nav-indicator"></div>
-      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-        <polyline points="14 2 14 8 20 8"></polyline>
-      </svg>
-      <span class="nav-label">Files</span>
-    </div>
-
-    <div class="nav-item" onclick="switchTab('tab-cli')" id="nav-tab-cli">
-      <div class="nav-indicator"></div>
-      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <polyline points="4 17 10 11 4 5"></polyline>
-        <line x1="12" y1="19" x2="20" y2="19"></line>
-      </svg>
-      <span class="nav-label">Terminal</span>
+    <!-- Terminal Mode Dock: Exit button + Prompt input + Send button -->
+    <div class="terminal-command-dock" id="terminalCommandDock" style="display: none;">
+      <button class="term-exit-btn" id="agentExitBtn" onclick="exitTerminalMode()" title="Exit Terminal Mode">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        <span>Exit</span>
+      </button>
+      <div class="agent-dock-input-wrap">
+        <input
+          type="text"
+          id="agentPromptInput"
+          class="agent-dock-input"
+          placeholder="Message PC agent or give instruction..."
+          autocomplete="off"
+        />
+      </div>
+      <button class="agent-dock-send-btn" id="agentSendBtn" title="Send message to PC">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+      </button>
     </div>
   </nav>
 
@@ -1460,43 +1467,129 @@
     <span id="toastMsg">Ready</span>
   </div>
 
+  <!-- Hidden File Pickers for HTTP Native Camera Snapshot & Gallery Upload -->
+  <input type="file" id="qrPhotoInput" accept="image/*" capture="environment" style="display: none;" onchange="handleQrFileSelected(event)">
+  <input type="file" id="qrGalleryInput" accept="image/*" style="display: none;" onchange="handleQrFileSelected(event)">
+
   <!-- QR Code Camera Scanner Modal Overlay -->
-  <div id="qrScannerModal" style="display: none; position: fixed; inset: 0; z-index: 9999; background: rgba(0, 0, 0, 0.88); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); align-items: center; justify-content: center; padding: 20px;">
-    <div style="width: 100%; max-width: 360px; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 20px; padding: 18px; display: flex; flex-direction: column; align-items: center; gap: 14px; box-shadow: 0 24px 60px rgba(0,0,0,0.85);">
+  <div id="qrScannerModal" style="display: none; position: fixed; inset: 0; z-index: 9999; background: rgba(0, 0, 0, 0.88); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); align-items: center; justify-content: center; padding: 16px; box-sizing: border-box;">
+    <div style="width: 100%; max-width: 380px; background: var(--bg-surface-elevated, #131722); border: 1px solid var(--border-subtle); border-radius: 22px; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 14px; box-shadow: 0 24px 60px rgba(0,0,0,0.9); box-sizing: border-box;">
+      
+      <!-- Modal Header -->
       <div style="width: 100%; display: flex; align-items: center; justify-content: space-between;">
-        <span style="font-size: 13px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 6px;">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="3" y="3" width="7" height="7"></rect>
-            <rect x="14" y="3" width="7" height="7"></rect>
-            <rect x="14" y="14" width="7" height="7"></rect>
-            <rect x="3" y="14" width="7" height="7"></rect>
-          </svg>
-          Scan Dynamic Island QR Code
-        </span>
-        <button onclick="closeQrScanner()" style="background: rgba(255,255,255,0.08); border: 1px solid var(--border-subtle); border-radius: 8px; color: var(--text-secondary); cursor: pointer; padding: 4px 6px; display: flex; align-items: center; justify-content: center;">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <div style="width: 32px; height: 32px; border-radius: 10px; background: rgba(99, 102, 241, 0.2); border: 1px solid rgba(99, 102, 241, 0.4); display: flex; align-items: center; justify-content: center; color: #a5b4fc;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="7" height="7"></rect>
+              <rect x="14" y="3" width="7" height="7"></rect>
+              <rect x="14" y="14" width="7" height="7"></rect>
+              <rect x="3" y="14" width="7" height="7"></rect>
+            </svg>
+          </div>
+          <div>
+            <div style="font-size: 14px; font-weight: 700; color: #fff;">Pair via QR Code</div>
+            <div style="font-size: 11px; color: var(--text-secondary);" id="qrModalSubtitle">Dynamic Island Pairing</div>
+          </div>
+        </div>
+        <button onclick="closeQrScanner()" aria-label="Close Scanner" style="width: 40px; height: 40px; min-width: 40px; min-height: 40px; background: rgba(255,255,255,0.08); border: 1px solid var(--border-subtle); border-radius: 10px; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center; touch-action: manipulation;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
       </div>
 
-      <div style="position: relative; width: 100%; aspect-ratio: 1; border-radius: 16px; overflow: hidden; background: #000; border: 1px solid rgba(255,255,255,0.1);">
-        <video id="qrScannerVideo" playsinline autoplay muted style="width: 100%; height: 100%; object-fit: cover;"></video>
-        <div style="position: absolute; inset: 24px; border: 2px dashed #6366F1; border-radius: 12px; pointer-events: none; box-shadow: 0 0 0 9999px rgba(0,0,0,0.5);"></div>
-        <div id="qrScanBeam" style="position: absolute; left: 24px; right: 24px; height: 2px; background: #10B981; box-shadow: 0 0 12px #10B981; top: 24px; animation: qrScanBeam 2s ease-in-out infinite alternate;"></div>
+      <!-- VIEW 1: Live Video Camera Stream -->
+      <div id="qrLiveView" style="display: flex; flex-direction: column; width: 100%; gap: 12px; align-items: center;">
+        <div style="position: relative; width: 100%; aspect-ratio: 1; max-width: 280px; border-radius: 16px; overflow: hidden; background: #000; border: 1px solid rgba(255,255,255,0.12);">
+          <video id="qrScannerVideo" playsinline autoplay muted style="width: 100%; height: 100%; object-fit: cover;"></video>
+          <div style="position: absolute; inset: 20px; border: 2px dashed #6366F1; border-radius: 14px; pointer-events: none; box-shadow: 0 0 0 9999px rgba(0,0,0,0.5);"></div>
+          <div id="qrScanBeam" style="position: absolute; left: 20px; right: 20px; height: 2px; background: #10B981; box-shadow: 0 0 14px #10B981; top: 20px; animation: qrScanBeam 2s ease-in-out infinite alternate;"></div>
+        </div>
+        <span style="font-size: 11.5px; color: var(--text-secondary); text-align: center; line-height: 1.4;">
+          Point your phone camera at the QR code displayed on your desktop screen.
+        </span>
+        <div style="display: flex; gap: 8px; width: 100%;">
+          <button class="btn" onclick="triggerQrCameraPhoto()" style="flex: 1; min-height: 40px; padding: 8px 12px; font-size: 12px; background: rgba(255,255,255,0.08); border: 1px solid var(--border-subtle); color: #fff;">
+            📷 Snap Photo
+          </button>
+          <button class="btn" onclick="triggerQrGalleryUpload()" style="flex: 1; min-height: 40px; padding: 8px 12px; font-size: 12px; background: rgba(255,255,255,0.08); border: 1px solid var(--border-subtle); color: #fff;">
+            🖼️ Choose Image
+          </button>
+        </div>
       </div>
 
-      <div style="text-align: center; line-height: 1.4;">
-        <span style="font-size: 11.5px; color: var(--text-secondary);">Point your phone camera at the QR code in your desktop Connection Popover.</span>
+      <!-- VIEW 2: HTTP Insecure Context / Camera Access Denied Actionable Fallback -->
+      <div id="qrDeniedFallback" style="display: none; flex-direction: column; width: 100%; gap: 12px;">
+        <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 14px; padding: 12px; display: flex; gap: 10px; align-items: flex-start;">
+          <div style="color: #fbbf24; font-size: 18px; line-height: 1; margin-top: 2px;">⚠️</div>
+          <div style="display: flex; flex-direction: column; gap: 3px;">
+            <div style="font-size: 12px; font-weight: 700; color: #fbbf24;">Camera Live Stream Restricted</div>
+            <div id="qrDeniedReason" style="font-size: 11px; color: #d1d5db; line-height: 1.4;">
+              Mobile browsers restrict continuous video streaming over local Wi-Fi HTTP. You can snap a photo with your native camera or pick from gallery to pair instantly!
+            </div>
+          </div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 8px; width: 100%;">
+          <!-- Primary Action: Snap Photo with Native Camera -->
+          <button class="btn" onclick="triggerQrCameraPhoto()" style="width: 100%; min-height: 46px; background: #4f46e5; border: 1px solid #6366f1; color: #fff; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 8px; box-shadow: 0 4px 16px rgba(79, 70, 229, 0.4);">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+              <circle cx="12" cy="13" r="4"></circle>
+            </svg>
+            <span>Snap Photo of Desktop QR Code</span>
+          </button>
+
+          <!-- Secondary Action: Upload Screenshot/Image -->
+          <button class="btn" onclick="triggerQrGalleryUpload()" style="width: 100%; min-height: 44px; background: rgba(255, 255, 255, 0.08); border: 1px solid var(--border-subtle); color: #e2e8f0; display: flex; align-items: center; justify-content: center; gap: 8px;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <circle cx="8.5" cy="8.5" r="1.5"></circle>
+              <polyline points="21 15 16 10 5 21"></polyline>
+            </svg>
+            <span>Upload Photo / Screenshot from Gallery</span>
+          </button>
+
+          <!-- Third Action: Fast Manual PIN -->
+          <button class="btn" onclick="fallbackToPinInput()" style="width: 100%; min-height: 42px; background: rgba(255, 255, 255, 0.04); border: 1px solid var(--border-subtle); color: var(--text-secondary); display: flex; align-items: center; justify-content: center; gap: 8px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+            <span>Enter 6-Digit PIN Manually</span>
+          </button>
+        </div>
+
+        <div style="font-size: 11px; color: var(--text-secondary); text-align: center; line-height: 1.4;">
+          💡 Tip: The Soko Android APK companion supports full continuous camera streaming natively.
+        </div>
       </div>
 
-      <button class="btn" onclick="closeQrScanner()" style="width: 100%; padding: 10px; background: rgba(255,255,255,0.06); border: 1px solid var(--border-subtle); color: var(--text-secondary);">Cancel</button>
+      <!-- VIEW 3: Decoding Spinner State -->
+      <div id="qrDecodingView" style="display: none; flex-direction: column; align-items: center; gap: 12px; padding: 20px 0;">
+        <div style="width: 38px; height: 38px; border: 3px solid rgba(99, 102, 241, 0.2); border-top-color: #6366f1; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+        <div style="font-size: 13px; font-weight: 600; color: #fff;">Analyzing QR Code...</div>
+        <div style="font-size: 11px; color: var(--text-secondary);">Extracting pairing credentials and IP address</div>
+      </div>
+
+      <!-- Cancel Button -->
+      <button class="btn" onclick="closeQrScanner()" style="width: 100%; min-height: 42px; background: rgba(255,255,255,0.06); border: 1px solid var(--border-subtle); color: var(--text-secondary);">Close</button>
     </div>
   </div>
 
+  <!-- Option 3 Universal Hybrid Scanner Engine & Pure JS Offline Fallback -->
+  <script src="qr/jsQR.min.js"></script>
+  <script src="qr/universalScanner.js"></script>
   <script>
     // ============================================================
     // TAB NAVIGATION CONTROLLER
     // ============================================================
+    let previousTabId = 'tab-link';
+
     function switchTab(tabId) {
+      const activeEl = document.querySelector('.tab-content.active');
+      if (activeEl && activeEl.id && activeEl.id !== 'tab-cli') {
+        previousTabId = activeEl.id;
+      }
+
       document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
       document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
 
@@ -1506,9 +1599,46 @@
       if (targetContent) targetContent.classList.add('active');
       if (targetNav) targetNav.classList.add('active');
 
+      const bottomNav = document.getElementById('bottomNav');
+      const navTabsDock = document.getElementById('navTabsDock');
+      const terminalCommandDock = document.getElementById('terminalCommandDock');
+      const headerTerminalControls = document.getElementById('headerTerminalControls');
+      const connPill = document.getElementById('connPill');
+      const headerAppTitle = document.getElementById('headerAppTitle');
+      const headerSubtitle = document.getElementById('headerSubtitle');
+
+      if (tabId === 'tab-cli') {
+        // Activate full-bleed Agent Terminal Cockpit mode
+        if (bottomNav) bottomNav.classList.add('terminal-active');
+        if (navTabsDock) navTabsDock.style.display = 'none';
+        if (terminalCommandDock) terminalCommandDock.style.display = 'flex';
+        if (connPill) connPill.style.display = 'none';
+        if (headerTerminalControls) headerTerminalControls.style.display = 'flex';
+        if (headerAppTitle) headerAppTitle.textContent = 'Soko Agent';
+        if (headerSubtitle) headerSubtitle.textContent = 'Remote Cockpit';
+
+        if (window.AgentTerminal && typeof window.AgentTerminal.onTabActivated === 'function') {
+          window.AgentTerminal.onTabActivated();
+        }
+      } else {
+        // Restore standard 5-tab companion view
+        if (bottomNav) bottomNav.classList.remove('terminal-active');
+        if (navTabsDock) navTabsDock.style.display = 'flex';
+        if (terminalCommandDock) terminalCommandDock.style.display = 'none';
+        if (headerTerminalControls) headerTerminalControls.style.display = 'none';
+        if (connPill) connPill.style.display = 'flex';
+        if (headerAppTitle) headerAppTitle.textContent = 'Soko Mobile';
+        if (headerSubtitle) headerSubtitle.textContent = 'Companion Controller';
+      }
+
       localStorage.setItem('soko_active_tab', tabId);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
+
+    function exitTerminalMode() {
+      switchTab(previousTabId && previousTabId !== 'tab-cli' ? previousTabId : 'tab-link');
+    }
+    window.exitTerminalMode = exitTerminalMode;
 
     // ============================================================
     // APPLICATION CORE STATE & NETWORKING
@@ -1602,9 +1732,14 @@
     function checkUrlPairingParams() {
       const search = window.location.search || '';
       const hash = window.location.hash || '';
-      const payload = parsePairingPayload(search) || parsePairingPayload(hash.replace(/^#/, ''));
+      const payload = (window.SokoUniversalScanner && window.SokoUniversalScanner.parsePayload(search || hash.replace(/^#/, ''))) ||
+                      parsePairingPayload(search) || parsePairingPayload(hash.replace(/^#/, ''));
 
       if (payload && payload.pin) {
+        if (payload.isExpired) {
+          showToast('Pairing QR code has expired. Please refresh code on your desktop screen.', 'amber');
+          return;
+        }
         if (payload.host) {
           ipInput.value = `${payload.host}:${payload.port || DEFAULT_PORT}`;
         }
@@ -1612,7 +1747,7 @@
         if (pinInput) {
           pinInput.value = `${payload.pin.slice(0, 3)} ${payload.pin.slice(3, 6)}`;
         }
-        showToast('Instant QR Pairing detected! Connecting...', 'success');
+        showToast('Instant Universal QR Pairing detected! Connecting...', 'success');
         connectWs();
         setTimeout(() => {
           requestPairing();
@@ -1690,9 +1825,9 @@
               <span style="font-size: 12px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
                 ${meta.name || 'Soko Desktop HUD'}
               </span>
-              ${meta.tls ? '<span class="badge" style="font-size: 9px; padding: 1px 4px; background: rgba(16,185,129,0.15); border-color: rgba(16,185,129,0.3); color: #34d399;">TLS</span>' : ''}
+              ${meta.tls ? '<span class="badge" style="font-size: 11px; padding: 2px 6px; background: rgba(16,185,129,0.15); border-color: rgba(16,185,129,0.3); color: #34d399;">TLS</span>' : ''}
             </div>
-            <div style="font-size: 10.5px; font-family: ui-monospace, monospace; color: var(--text-secondary);">
+            <div style="font-size: 11px; font-family: ui-monospace, monospace; color: var(--text-secondary);">
               ${target} ${meta.hostname ? `• ${meta.hostname}` : ''}
             </div>
           </div>
@@ -1710,47 +1845,162 @@
       connectWs();
     }
 
+    function triggerQrCameraPhoto() {
+      const input = document.getElementById('qrPhotoInput');
+      if (input) {
+        input.value = '';
+        input.click();
+      }
+    }
+
+    function triggerQrGalleryUpload() {
+      const input = document.getElementById('qrGalleryInput');
+      if (input) {
+        input.value = '';
+        input.click();
+      }
+    }
+
+    function fallbackToPinInput() {
+      closeQrScanner();
+      const pinInput = document.getElementById('sasPinInput');
+      if (pinInput) {
+        pinInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setTimeout(() => pinInput.focus(), 300);
+      }
+    }
+
+    async function handleQrFileSelected(event) {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+
+      const liveView = document.getElementById('qrLiveView');
+      const fallbackView = document.getElementById('qrDeniedFallback');
+      const decodingView = document.getElementById('qrDecodingView');
+
+      if (liveView) liveView.style.display = 'none';
+      if (fallbackView) fallbackView.style.display = 'none';
+      if (decodingView) decodingView.style.display = 'flex';
+
+      try {
+        let codeData = null;
+        if (window.SokoUniversalScanner && typeof window.SokoUniversalScanner.decodeImageFile === 'function') {
+          codeData = await window.SokoUniversalScanner.decodeImageFile(file);
+        } else if ('BarcodeDetector' in window) {
+          const detector = new BarcodeDetector({ formats: ['qr_code'] });
+          const bitmap = await createImageBitmap(file);
+          const barcodes = await detector.detect(bitmap);
+          if (barcodes.length > 0) codeData = barcodes[0].rawValue;
+        }
+
+        if (codeData) {
+          handleQrScanPayload(codeData);
+        } else {
+          showToast('No clear QR code detected in photo. Please retake or enter PIN.', 'amber');
+          if (decodingView) decodingView.style.display = 'none';
+          if (fallbackView) fallbackView.style.display = 'flex';
+        }
+      } catch (err) {
+        console.warn('QR photo decoding error:', err);
+        showToast('Error analyzing image: ' + (err.message || 'Image unreadable'), 'error');
+        if (decodingView) decodingView.style.display = 'none';
+        if (fallbackView) fallbackView.style.display = 'flex';
+      }
+    }
+
     async function openQrScanner() {
       const modal = document.getElementById('qrScannerModal');
       const video = document.getElementById('qrScannerVideo');
-      if (!modal || !video) return;
+      const liveView = document.getElementById('qrLiveView');
+      const fallbackView = document.getElementById('qrDeniedFallback');
+      const decodingView = document.getElementById('qrDecodingView');
+      const deniedReason = document.getElementById('qrDeniedReason');
+      if (!modal) return;
 
       modal.style.display = 'flex';
+      if (decodingView) decodingView.style.display = 'none';
+
+      // Support simulation query param for automated testing & visual audit
+      if (location.search.includes('simulateCameraDenied=1')) {
+        if (liveView) liveView.style.display = 'none';
+        if (fallbackView) fallbackView.style.display = 'flex';
+        if (deniedReason) {
+          deniedReason.innerText = 'Mobile browsers restrict continuous video streaming over local Wi-Fi HTTP. Take a photo with your native camera or pick from gallery to pair instantly!';
+        }
+        return;
+      }
+
+      // Check secure context and mediaDevices availability
+      const isSecure = (window.SokoUniversalScanner && typeof window.SokoUniversalScanner.isSecureContext === 'function')
+        ? window.SokoUniversalScanner.isSecureContext()
+        : (location.protocol === 'https:' || ['localhost', '127.0.0.1'].includes(location.hostname));
+
+      const hasMediaDevices = Boolean(navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function');
+
+      if (!isSecure && !hasMediaDevices) {
+        // HTTP local Wi-Fi context: show instant photo snapshot fallback
+        if (liveView) liveView.style.display = 'none';
+        if (fallbackView) fallbackView.style.display = 'flex';
+        if (deniedReason) {
+          deniedReason.innerText = 'Mobile browsers restrict continuous video streaming over local Wi-Fi HTTP. You can snap a photo with your native camera or pick from gallery to pair instantly!';
+        }
+        return;
+      }
 
       try {
+        if (liveView) liveView.style.display = 'flex';
+        if (fallbackView) fallbackView.style.display = 'none';
+
         qrMediaStream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'environment', width: { ideal: 720 }, height: { ideal: 720 } }
         });
-        video.srcObject = qrMediaStream;
-        await video.play();
+        if (video) {
+          video.srcObject = qrMediaStream;
+          await video.play();
+        }
 
-        // Native BarcodeDetector loop (Supported in Chromium / Android WebView)
-        if ('BarcodeDetector' in window) {
-          const detector = new BarcodeDetector({ formats: ['qr_code'] });
-          qrScanTimer = setInterval(async () => {
-            if (!video.videoWidth || !video.videoHeight) return;
-            try {
+        const hasBarcodeDetector = 'BarcodeDetector' in window;
+        const detector = hasBarcodeDetector ? new BarcodeDetector({ formats: ['qr_code'] }) : null;
+
+        qrScanTimer = setInterval(async () => {
+          if (!video || !video.videoWidth || !video.videoHeight) return;
+          try {
+            if (detector) {
               const barcodes = await detector.detect(video);
               if (barcodes.length > 0) {
-                const scannedVal = barcodes[0].rawValue;
-                handleQrScanPayload(scannedVal);
+                handleQrScanPayload(barcodes[0].rawValue);
               }
-            } catch {}
-          }, 200);
-        } else {
-          showToast('Camera active. Align QR code within frame.', 'info');
-        }
+            } else if (window.SokoUniversalScanner && typeof window.SokoUniversalScanner.decodeVideoFrame === 'function') {
+              const scanned = window.SokoUniversalScanner.decodeVideoFrame(video);
+              if (scanned) {
+                handleQrScanPayload(scanned);
+              }
+            }
+          } catch {}
+        }, 200);
       } catch (err) {
-        console.warn('Camera error:', err);
-        showToast('Camera access denied or unavailable: ' + (err.message || 'Error'), 'error');
-        closeQrScanner();
+        console.warn('Camera stream error:', err);
+        if (liveView) liveView.style.display = 'none';
+        if (fallbackView) fallbackView.style.display = 'flex';
+        if (deniedReason) {
+          deniedReason.innerText = (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError')
+            ? 'Camera permission was denied in your browser settings. You can snap a photo with your native camera below or enter PIN.'
+            : 'Live camera stream is unavailable: ' + (err.message || 'Stream blocked');
+        }
       }
     }
 
     function closeQrScanner() {
       const modal = document.getElementById('qrScannerModal');
       const video = document.getElementById('qrScannerVideo');
+      const liveView = document.getElementById('qrLiveView');
+      const fallbackView = document.getElementById('qrDeniedFallback');
+      const decodingView = document.getElementById('qrDecodingView');
+
       if (modal) modal.style.display = 'none';
+      if (liveView) liveView.style.display = 'flex';
+      if (fallbackView) fallbackView.style.display = 'none';
+      if (decodingView) decodingView.style.display = 'none';
 
       if (qrScanTimer) {
         clearInterval(qrScanTimer);
@@ -1773,8 +2023,12 @@
         navigator.vibrate([40, 60, 40]);
       }
 
-      const payload = parsePairingPayload(text);
+      const payload = (window.SokoUniversalScanner && window.SokoUniversalScanner.parsePayload(text)) || parsePairingPayload(text);
       if (payload && payload.pin) {
+        if (payload.isExpired) {
+          showToast('Scanned QR code has expired. Please refresh the code on your desktop screen.', 'amber');
+          return;
+        }
         if (payload.host) {
           ipInput.value = `${payload.host}:${payload.port || DEFAULT_PORT}`;
         }
@@ -2110,6 +2364,7 @@
 
         ws.onopen = () => {
           blinkBot();
+          window.isWsConnected = true;
 
           const token = getPairToken();
           const deviceId = getDeviceId();
@@ -2133,6 +2388,9 @@
           }
 
           startHeartbeat();
+          if (window.AgentTerminal && typeof window.AgentTerminal.onWsConnected === 'function') {
+            window.AgentTerminal.onWsConnected();
+          }
         };
 
         ws.onmessage = (e) => {
@@ -2145,6 +2403,7 @@
         };
 
         ws.onclose = () => {
+          window.isWsConnected = false;
           stopHeartbeat();
           if (!getPairToken()) {
             isDevicePaired = false;
@@ -2157,6 +2416,7 @@
         };
 
         ws.onerror = () => {
+          window.isWsConnected = false;
           stopHeartbeat();
           setStatus('offline', 'Offline');
         };
@@ -2275,6 +2535,9 @@
         sendPacket('FETCH_TOKEN_STATS', {});
         sendPacket('FETCH_AGENT_ACTIVITY', {});
         fetchMobileTokenStats();
+        if (window.AgentTerminal && typeof window.AgentTerminal.onWsConnected === 'function') {
+          window.AgentTerminal.onWsConnected();
+        }
       } else if (packet.packetType === 'PAIR_REJECT') {
         localStorage.removeItem('soko_pair_token');
         if (window.SokoNative && typeof window.SokoNative.savePairToken === 'function') {
@@ -2349,6 +2612,21 @@
         renderTokenStats(packet.payload);
       } else if (packet.packetType === 'AGENT_ACTIVITY_STATUS') {
         renderAgentActivity(packet.payload);
+        if (window.AgentTerminal && typeof window.AgentTerminal.handleActivityStatus === 'function') {
+          window.AgentTerminal.handleActivityStatus(packet.payload);
+        }
+      } else if (packet.packetType === 'AGENT_TRANSCRIPT_HISTORY') {
+        if (window.AgentTerminal && typeof window.AgentTerminal.handleTranscriptHistory === 'function') {
+          window.AgentTerminal.handleTranscriptHistory(packet.payload);
+        }
+      } else if (packet.packetType === 'AGENT_TRANSCRIPT_CHUNK') {
+        if (window.AgentTerminal && typeof window.AgentTerminal.handleTranscriptChunk === 'function') {
+          window.AgentTerminal.handleTranscriptChunk(packet.payload);
+        }
+      } else if (packet.packetType === 'FETCH_AGENT_SESSIONS_RESULT') {
+        if (window.AgentTerminal && typeof window.AgentTerminal.updateSessionList === 'function') {
+          window.AgentTerminal.updateSessionList(packet.payload?.sessions);
+        }
       }
     }
 
@@ -2533,6 +2811,8 @@
       }
       return false;
     }
+    window.sendPacket = sendPacket;
+    window.getHttpBaseUrl = getHttpBaseUrl;
 
     function toggleConnection() {
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
@@ -2570,6 +2850,7 @@
         console.warn('HTTP fallback dispatch:', err);
       }
     }
+    window.postHttp = postHttp;
 
     // ============================================================
     // NOTIFICATION MIRRORING DISPATCHER
@@ -3664,5 +3945,6 @@
       }, 20000);
     });
   </script>
+  <script src="agent-terminal/terminal.js"></script>
 </body>
 </html>

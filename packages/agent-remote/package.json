@@ -1,0 +1,18 @@
+{
+  "name": "@soko/agent-remote",
+  "version": "1.0.0",
+  "description": "Agent session mirroring, live transcript tailing, and bidirectional turn dispatch for Soko",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "test": "node tests/agent_remote.test.js"
+  },
+  "keywords": [
+    "soko",
+    "antigravity",
+    "transcript",
+    "remote-terminal"
+  ],
+  "author": "Soko Project",
+  "license": "MIT"
+}
