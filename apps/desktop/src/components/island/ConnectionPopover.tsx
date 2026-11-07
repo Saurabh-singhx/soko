@@ -638,6 +638,8 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
             <UniversalQrCard
               sasPin={sasPin}
               localIps={localIps}
+              certFingerprint={connectionService.getCertFingerprint()}
+              tlsEnabled={Boolean(connectionService.getCertFingerprint())}
               onRegeneratePin={onRegeneratePin}
             />
           )}

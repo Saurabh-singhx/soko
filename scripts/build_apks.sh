@@ -993,9 +993,44 @@ public class MainActivity extends Activity {
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        String origin = request.getOrigin() != null ? request.getOrigin().toString() : "";
-                        boolean isAllowedOrigin = origin.startsWith("file://") ||
-                            origin.matches("^https?://(127\\.0\\.0\\.1|localhost|10\\.\\d+\\.\\d+\\.\\d+|192\\.168\\.\\d+\\.\\d+|172\\.(1[6-9]|2\\d|3[0-1])\\.\\d+\\.\\d+)(:\\d+)?(/.*)?$");
+                        boolean isAllowedOrigin = false;
+                        Uri originUri = request.getOrigin();
+                        if (originUri != null) {
+                            String scheme = originUri.getScheme();
+                            if ("file".equalsIgnoreCase(scheme)) {
+                                isAllowedOrigin = true;
+                            } else if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
+                                String host = originUri.getHost();
+                                if (host != null) {
+                                    if (host.equals("localhost") || host.equals("127.0.0.1") || host.equals("::1") || host.equals("[::1]")) {
+                                        isAllowedOrigin = true;
+                                    } else {
+                                        int firstDot = host.indexOf('.');
+                                        if (firstDot > 0) {
+                                            try {
+                                                int p0 = Integer.parseInt(host.substring(0, firstDot));
+                                                int secondDot = host.indexOf('.', firstDot + 1);
+                                                if (secondDot > firstDot) {
+                                                    int p1 = Integer.parseInt(host.substring(firstDot + 1, secondDot));
+                                                    int thirdDot = host.indexOf('.', secondDot + 1);
+                                                    if (thirdDot > secondDot) {
+                                                        int p2 = Integer.parseInt(host.substring(secondDot + 1, thirdDot));
+                                                        int p3 = Integer.parseInt(host.substring(thirdDot + 1));
+                                                        if (p0 >= 0 && p0 <= 255 && p1 >= 0 && p1 <= 255 && p2 >= 0 && p2 <= 255 && p3 >= 0 && p3 <= 255) {
+                                                            // RFC 1918 Private Address Ranges:
+                                                            // 10.0.0.0/8, 172.16.0.0/12 (172.16-172.31), 192.168.0.0/16
+                                                            if (p0 == 10 || (p0 == 192 && p1 == 168) || (p0 == 172 && p1 >= 16 && p1 <= 31)) {
+                                                                isAllowedOrigin = true;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            } catch (Exception ignored) {}
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         if (isAllowedOrigin) {
                             request.grant(request.getResources());
                         } else {

@@ -142,7 +142,7 @@ class AgentSessionManager {
    * Validates sessionId format to prevent directory traversal attacks.
    */
   isValidSessionId(id) {
-    return typeof id === 'string' && /^[a-zA-Z0-9_\-\.]+$/.test(id) && !id.includes('..');
+    return typeof id === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_\-\.]*$/.test(id) && !id.includes('..');
   }
 
   /**
@@ -176,7 +176,7 @@ class AgentSessionManager {
   /**
    * Discovers all active and recent sessions across brain directories.
    */
-  discoverSessions(recentLimitMs = 24 * 60 * 60 * 1000) {
+  discoverSessions(recentLimitMs = 7 * 24 * 60 * 60 * 1000) {
     const sessions = [];
     const now = Date.now();
     const seen = new Set();
@@ -221,13 +221,19 @@ class AgentSessionManager {
           }
 
           seen.add(sessionId);
+          const meta = this._peekSessionMetadata(tPath, stat);
           sessions.push({
             sessionId,
+            name: meta.workspaceName || 'Antigravity Agent',
+            workspace: meta.workspace || '',
+            workspaceName: meta.workspaceName || 'soko',
             mtimeMs: stat.mtimeMs,
             sizeBytes: stat.size,
             isLocked,
             status: ageMs < 60000 ? 'working' : (isLocked || ageMs < 10 * 60 * 1000 ? 'active' : 'idle'),
             ageSeconds: Math.floor(ageMs / 1000),
+            tokensUsed: meta.tokensUsed || 0,
+            taskSummary: meta.taskSummary || '',
           });
         }
       } catch (err) {
@@ -236,6 +242,60 @@ class AgentSessionManager {
     }
 
     return sessions.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  }
+
+  /**
+   * Fast metadata peek without reading the entire transcript file.
+   */
+  _peekSessionMetadata(tPath, stat) {
+    let workspace = '';
+    let taskSummary = '';
+    let tokensUsed = 0;
+
+    let fd;
+    try {
+      const readSize = Math.min(stat.size, 32768);
+      if (readSize > 0) {
+        fd = fs.openSync(tPath, 'r');
+        const buffer = Buffer.alloc(readSize);
+        fs.readSync(fd, buffer, 0, readSize, 0);
+
+        const text = buffer.toString('utf8');
+        const wsMatch = text.match(/Active Workspaces:\s*\n\s*-\s*([^\n\r]+)/i) ||
+                        text.match(/Command Working Directory:\s*([^\n\r]+)/i);
+        if (wsMatch && wsMatch[1]) {
+          workspace = wsMatch[1].trim();
+        }
+
+        const tailBuf = Buffer.alloc(readSize);
+        fs.readSync(fd, tailBuf, 0, readSize, Math.max(0, stat.size - readSize));
+
+        const tailLines = tailBuf.toString('utf8').trim().split('\n');
+        for (let i = tailLines.length - 1; i >= 0; i--) {
+          try {
+            const item = JSON.parse(tailLines[i]);
+            if (!taskSummary && item.type === 'USER_INPUT') {
+              taskSummary = extractCleanUserInput(item.content);
+            }
+            if (item.input_tokens || item.output_tokens) {
+              tokensUsed += (item.input_tokens || 0) + (item.output_tokens || 0);
+            }
+          } catch {}
+        }
+      }
+    } catch {} finally {
+      if (fd !== undefined) {
+        try { fs.closeSync(fd); } catch {}
+      }
+    }
+
+    const workspaceName = workspace ? path.basename(workspace) : 'soko';
+    return {
+      workspace,
+      workspaceName,
+      taskSummary,
+      tokensUsed,
+    };
   }
 
   /**
@@ -305,9 +365,25 @@ class AgentSessionManager {
             }
           }
 
-          if (item.content && (type === 'PLANNER_RESPONSE' || type === 'MODEL' || item.source === 'MODEL')) {
+          // In Antigravity transcripts, tool outputs (command stdout, read_file dumps, search redirects)
+          // are recorded with type 'GENERIC' (and source 'MODEL').
+          // These are NOT agent conversational responses and must not clutter the mobile screen.
+          // Only actual PLANNER_RESPONSE / MODEL assistant messages to the user should be treated as responses.
+          if (
+            item.content &&
+            (type === 'PLANNER_RESPONSE' || type === 'MODEL') &&
+            type !== 'GENERIC' &&
+            item.type !== 'GENERIC'
+          ) {
             const cleanText = cleanAnsi(item.content).trim();
-            if (cleanText && !cleanText.startsWith('<') && !currentTurn.responses.includes(cleanText)) {
+            if (
+              cleanText &&
+              !cleanText.startsWith('<') &&
+              !cleanText.includes('vertexaisearch.cloud.google.com') &&
+              !cleanText.includes('grounding-api-redirect') &&
+              !cleanText.startsWith('Created At:') &&
+              !currentTurn.responses.includes(cleanText)
+            ) {
               currentTurn.responses.push(cleanText);
             }
           }
@@ -386,6 +462,10 @@ class AgentSessionManager {
         if (!trimmed) continue;
         try {
           const parsed = JSON.parse(trimmed);
+          // Omit noisy raw tool execution dumps (e.g. 50KB-1MB file reads, raw shell stdout, search redirects)
+          if (parsed.type === 'GENERIC') {
+            continue;
+          }
           events.push(parsed);
         } catch {
           // Incomplete line write in progress, skip partial
