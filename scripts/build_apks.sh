@@ -654,6 +654,46 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public void saveCertFingerprint(String fp) {
+            try {
+                SharedPreferences prefs = getSharedPreferences("soko_prefs", MODE_PRIVATE);
+                prefs.edit().putString("cert_fp", fp != null ? fp.trim() : "").apply();
+            } catch (Exception e) {
+                Log.e("SokoApp", "Error saving cert fingerprint", e);
+            }
+        }
+
+        @JavascriptInterface
+        public String getSavedCertFingerprint() {
+            try {
+                SharedPreferences prefs = getSharedPreferences("soko_prefs", MODE_PRIVATE);
+                return prefs.getString("cert_fp", "");
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
+        @JavascriptInterface
+        public void saveSessionKey(String key) {
+            try {
+                SharedPreferences prefs = getSharedPreferences("soko_prefs", MODE_PRIVATE);
+                prefs.edit().putString("session_key", key != null ? key.trim() : "").apply();
+            } catch (Exception e) {
+                Log.e("SokoApp", "Error saving session key", e);
+            }
+        }
+
+        @JavascriptInterface
+        public String getSavedSessionKey() {
+            try {
+                SharedPreferences prefs = getSharedPreferences("soko_prefs", MODE_PRIVATE);
+                return prefs.getString("session_key", "");
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
+        @JavascriptInterface
         public boolean isBatteryOptimizationIgnored() {
             try {
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
@@ -984,6 +1024,49 @@ public class MainActivity extends Activity {
             @Override
             public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
                 Log.e("SokoApp", "Resource error on " + failingUrl + ": " + description);
+            }
+
+            @Override
+            public void onReceivedSslError(WebView view, android.webkit.SslErrorHandler handler, android.net.http.SslError error) {
+                try {
+                    SharedPreferences prefs = getSharedPreferences("soko_prefs", MODE_PRIVATE);
+                    String pinnedFp = prefs.getString("cert_fp", "");
+                    if (pinnedFp != null && !pinnedFp.trim().isEmpty()) {
+                        android.net.http.SslCertificate sslCert = error != null ? error.getCertificate() : null;
+                        if (sslCert != null) {
+                            java.security.cert.X509Certificate x509 = sslCert.getX509Certificate();
+                            if (x509 == null) {
+                                Bundle bundle = android.net.http.SslCertificate.saveState(sslCert);
+                                byte[] bytes = bundle != null ? bundle.getByteArray("x509-certificate") : null;
+                                if (bytes != null) {
+                                    java.security.cert.CertificateFactory cf = java.security.cert.CertificateFactory.getInstance("X.509");
+                                    x509 = (java.security.cert.X509Certificate) cf.generateCertificate(new java.io.ByteArrayInputStream(bytes));
+                                }
+                            }
+                            if (x509 != null) {
+                                java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+                                byte[] digest = md.digest(x509.getEncoded());
+                                StringBuilder sb = new StringBuilder("SHA256:");
+                                for (int i = 0; i < digest.length; i++) {
+                                    sb.append(String.format("%02X", digest[i]));
+                                    if (i < digest.length - 1) sb.append(":");
+                                }
+                                String cleanPinned = pinnedFp.replaceAll("[^0-9A-Fa-f]", "").toUpperCase();
+                                String cleanActual = sb.toString().replaceAll("[^0-9A-Fa-f]", "").toUpperCase();
+                                if (cleanPinned.equals(cleanActual)) {
+                                    Log.i("SokoApp", "TLS Certificate Pinning Verified for " + error.getUrl());
+                                    handler.proceed();
+                                    return;
+                                } else {
+                                    Log.w("SokoApp", "TLS Pinning MISMATCH! Pinned: " + cleanPinned + ", Actual: " + cleanActual);
+                                }
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    Log.e("SokoApp", "SSL Pinning verification exception: " + e.getMessage());
+                }
+                handler.cancel();
             }
         });
 
@@ -1518,15 +1601,20 @@ public class SokoNotificationListener extends NotificationListenerService {
         SharedPreferences prefs = getSharedPreferences("soko_prefs", MODE_PRIVATE);
         String bridgeIp = prefs.getString("bridge_ip", "192.168.31.210:8766");
         String pairToken = prefs.getString("pair_token", "");
+        String pinnedFp = prefs.getString("cert_fp", "");
         if (bridgeIp == null || bridgeIp.trim().isEmpty()) {
             bridgeIp = "192.168.31.210:8766";
         }
-        if (!bridgeIp.startsWith("http://") && !bridgeIp.startsWith("https://")) {
+        if (pinnedFp != null && !pinnedFp.trim().isEmpty() && !bridgeIp.startsWith("https://")) {
+            bridgeIp = bridgeIp.replaceFirst("^http://", "");
+            bridgeIp = "https://" + bridgeIp;
+        } else if (!bridgeIp.startsWith("http://") && !bridgeIp.startsWith("https://")) {
             bridgeIp = "http://" + bridgeIp;
         }
 
         final String endpoint = bridgeIp + "/api/notify";
         final String finalPairToken = pairToken;
+        final String finalPinnedFp = pinnedFp;
         final String jsonPayload = "{"
             + "\"id\":\"" + escapeJson(sbn.getKey() != null ? sbn.getKey() : packageName + "_" + System.currentTimeMillis()) + "\","
             + "\"appName\":\"" + escapeJson(appName) + "\","
@@ -1544,6 +1632,40 @@ public class SokoNotificationListener extends NotificationListenerService {
                 try {
                     URL url = new URL(endpoint);
                     HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                    if (conn instanceof javax.net.ssl.HttpsURLConnection && finalPinnedFp != null && !finalPinnedFp.trim().isEmpty()) {
+                        javax.net.ssl.HttpsURLConnection httpsConn = (javax.net.ssl.HttpsURLConnection) conn;
+                        javax.net.ssl.TrustManager[] trustManagers = new javax.net.ssl.TrustManager[] {
+                            new javax.net.ssl.X509TrustManager() {
+                                public java.security.cert.X509Certificate[] getAcceptedIssuers() { return new java.security.cert.X509Certificate[0]; }
+                                public void checkClientTrusted(java.security.cert.X509Certificate[] chain, String authType) {}
+                                public void checkServerTrusted(java.security.cert.X509Certificate[] chain, String authType) throws java.security.cert.CertificateException {
+                                    if (chain == null || chain.length == 0) throw new java.security.cert.CertificateException("No server certificates");
+                                    try {
+                                        java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+                                        byte[] digest = md.digest(chain[0].getEncoded());
+                                        StringBuilder sb = new StringBuilder();
+                                        for (byte b : digest) sb.append(String.format("%02X", b));
+                                        String cleanPinned = finalPinnedFp.replaceAll("[^0-9A-Fa-f]", "").toUpperCase();
+                                        if (!cleanPinned.equalsIgnoreCase(sb.toString())) {
+                                            throw new java.security.cert.CertificateException("Pinned certificate fingerprint mismatch!");
+                                        }
+                                    } catch (java.security.cert.CertificateException ce) {
+                                        throw ce;
+                                    } catch (Exception ex) {
+                                        throw new java.security.cert.CertificateException("Pinning check error: " + ex.getMessage());
+                                    }
+                                }
+                            }
+                        };
+                        javax.net.ssl.SSLContext sc = javax.net.ssl.SSLContext.getInstance("TLS");
+                        sc.init(null, trustManagers, new java.security.SecureRandom());
+                        httpsConn.setSSLSocketFactory(sc.getSocketFactory());
+                        httpsConn.setHostnameVerifier(new javax.net.ssl.HostnameVerifier() {
+                            public boolean verify(String hostname, javax.net.ssl.SSLSession session) {
+                                return true;
+                            }
+                        });
+                    }
                     conn.setRequestMethod("POST");
                     conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
                     if (finalPairToken != null && !finalPairToken.trim().isEmpty()) {

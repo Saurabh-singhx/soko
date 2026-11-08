@@ -107,3 +107,65 @@ export declare const RATE_LIMIT_CONFIG: Record<string, any>;
 export declare function resolveConfigDir(): string;
 export declare function ensureConfigDir(customDir?: string): string;
 export declare function getSecurityPaths(customConfigDir?: string): SecurityPaths;
+
+export declare const CRYPTO_CONSTANTS: Record<string, any>;
+
+export declare class ReplayGuard {
+  constructor(options?: { maxDriftMs?: number; windowCapacity?: number });
+  checkAndRecord(deviceId: string, packetId: number, timestamp: number, nowMs?: number): { valid: boolean; reason?: string; driftMs?: number; packetId?: number; highestPacketId?: number };
+  resetDevice(deviceId: string): void;
+  clear(): void;
+}
+
+export declare class SasPin {
+  static derive(sharedSecret: Buffer | Uint8Array): string;
+  static format(pin: string): string;
+  static verifyConstantTime(enteredPin: string, expectedPin: string): boolean;
+}
+
+export declare class CertFingerprint {
+  static compute(cert: string | Buffer): string;
+  static normalize(fp: string): string;
+  static verifyConstantTime(actualFingerprint: string, pinnedFingerprint: string): boolean;
+}
+
+export declare class KeyExchange {
+  static generateEphemeralKeypair(curve?: 'x25519' | 'prime256v1'): {
+    curve: string;
+    privateKey: any;
+    publicKey: any;
+    publicKeyDer: Buffer;
+    publicKeyBase64: string;
+    publicKeyHex: string;
+  };
+  static importPeerPublicKey(peerPublicKeyDer: Buffer | string): any;
+  static computeSharedSecret(localPrivateKey: any, peerPublicKey: any): Buffer;
+  static deriveSessionKey(sharedSecret: Buffer, options?: { salt?: string; info?: string }): Buffer;
+  static deriveSessionArtifacts(sharedSecret: Buffer, options?: { mixPinInKey?: boolean; salt?: string; info?: string }): {
+    sessionKey: Buffer;
+    sasPin: string;
+    formattedPin: string;
+  };
+}
+
+export declare class EnvelopeCipher {
+  constructor(sessionKey: Buffer | Uint8Array | string, options?: { replayGuard?: ReplayGuard; deviceId?: string });
+  encrypt(payload: any, options?: { packetId?: number; innerType?: string }): {
+    magic: string;
+    version: number;
+    packet_id: number;
+    timestamp: number;
+    packet_type: string;
+    nonce: string;
+    tag: string;
+    ciphertext: string;
+    inner_type: string | null;
+  };
+  decrypt(envelope: any, options?: { skipReplayCheck?: boolean; deviceId?: string }): {
+    packetId: number;
+    timestamp: number;
+    innerType: string | null;
+    payload: any;
+  };
+}
+

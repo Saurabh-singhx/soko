@@ -83,6 +83,7 @@ class TrustStore {
     const expiresAt = record.expiresAt || (createdAt + DEFAULT_TOKEN_TTL_MS);
     const token = record.token || crypto.randomBytes(16).toString('hex');
     const refreshToken = record.refreshToken || crypto.randomBytes(16).toString('hex');
+    const sessionKey = record.sessionKey || crypto.randomBytes(32).toString('hex');
 
     return {
       id: deviceId,
@@ -90,6 +91,7 @@ class TrustStore {
       model: record.model || 'Companion Device',
       token,
       refreshToken,
+      sessionKey,
       createdAt,
       pairedAt,
       expiresAt,

@@ -37,8 +37,11 @@
       "enum": [
         "HEARTBEAT_PING",
         "HEARTBEAT_PONG",
+        "PAIR_INIT",
+        "PAIR_RESP",
         "PAIR_REQUEST",
         "PAIR_CONFIRM",
+        "ENCRYPTED_PACKET",
         "NOTIFICATION_POST",
         "NOTIFICATION_DISMISS",
         "CLI_EXECUTE",
@@ -52,7 +55,23 @@
     },
     "payload": {
       "type": "object",
-      "description": "Type-specific decrypted message body"
+      "description": "Type-specific decrypted message body (optional when packet_type is ENCRYPTED_PACKET)"
+    },
+    "nonce": {
+      "type": "string",
+      "description": "12-byte Base64-encoded initialization vector for AES-256-GCM"
+    },
+    "tag": {
+      "type": "string",
+      "description": "16-byte Base64-encoded authentication tag for AES-256-GCM"
+    },
+    "ciphertext": {
+      "type": "string",
+      "description": "Base64-encoded AES-256-GCM encrypted payload"
+    },
+    "inner_type": {
+      "type": "string",
+      "description": "Inner packet type tag of the encrypted payload"
     }
   }
 }

@@ -4,8 +4,11 @@ import 'dart:convert';
 enum PacketType {
   heartbeatPing,
   heartbeatPong,
+  pairInit,
+  pairResp,
   pairRequest,
   pairConfirm,
+  encryptedPacket,
   notificationPost,
   notificationDismiss,
   cliExecute,
@@ -29,10 +32,16 @@ extension PacketTypeExtension on PacketType {
         return 'HEARTBEAT_PING';
       case PacketType.heartbeatPong:
         return 'HEARTBEAT_PONG';
+      case PacketType.pairInit:
+        return 'PAIR_INIT';
+      case PacketType.pairResp:
+        return 'PAIR_RESP';
       case PacketType.pairRequest:
         return 'PAIR_REQUEST';
       case PacketType.pairConfirm:
         return 'PAIR_CONFIRM';
+      case PacketType.encryptedPacket:
+        return 'ENCRYPTED_PACKET';
       case PacketType.notificationPost:
         return 'NOTIFICATION_POST';
       case PacketType.notificationDismiss:
@@ -80,6 +89,10 @@ class SokoEnvelope {
   final int timestamp;
   final PacketType packetType;
   final Map<String, dynamic> payload;
+  final String? nonce;
+  final String? tag;
+  final String? ciphertext;
+  final String? innerType;
 
   SokoEnvelope({
     this.magic = 'SK',
@@ -87,7 +100,11 @@ class SokoEnvelope {
     required this.packetId,
     required this.timestamp,
     required this.packetType,
-    required this.payload,
+    this.payload = const {},
+    this.nonce,
+    this.tag,
+    this.ciphertext,
+    this.innerType,
   });
 
   Map<String, dynamic> toJson() => {
@@ -97,6 +114,10 @@ class SokoEnvelope {
         'timestamp': timestamp,
         'packet_type': packetType.toWireString(),
         'payload': payload,
+        if (nonce != null) 'nonce': nonce,
+        if (tag != null) 'tag': tag,
+        if (ciphertext != null) 'ciphertext': ciphertext,
+        if (innerType != null) 'inner_type': innerType,
       };
 
   factory SokoEnvelope.fromJson(Map<String, dynamic> json) {
@@ -107,7 +128,13 @@ class SokoEnvelope {
       timestamp: json['timestamp'] as int? ?? 0,
       packetType: PacketTypeExtension.fromWireString(json['packet_type'] as String? ?? ''),
       payload: json['payload'] as Map<String, dynamic>? ?? {},
+      nonce: json['nonce'] as String?,
+      tag: json['tag'] as String?,
+      ciphertext: json['ciphertext'] as String?,
+      innerType: json['inner_type'] as String?,
     );
+  }
+}
   }
 
   String toSerializedJson() => jsonEncode(toJson());

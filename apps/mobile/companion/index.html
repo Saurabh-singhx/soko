@@ -1676,6 +1676,7 @@
   <!-- Option 3 Universal Hybrid Scanner Engine & Pure JS Offline Fallback -->
   <script src="qr/jsQR.min.js"></script>
   <script src="qr/universalScanner.js"></script>
+  <script src="crypto/sokoCrypto.js"></script>
   <script>
     // ============================================================
     // TAB NAVIGATION CONTROLLER
@@ -2349,6 +2350,19 @@
               if (window.SokoNative && typeof window.SokoNative.savePairToken === 'function') {
                 window.SokoNative.savePairToken(data.token);
               }
+              if (data.sessionKey) {
+                localStorage.setItem('soko_session_key', data.sessionKey);
+                if (window.SokoCrypto) window.SokoCrypto.setSessionKey(data.sessionKey);
+                if (window.SokoNative && typeof window.SokoNative.saveSessionKey === 'function') {
+                  window.SokoNative.saveSessionKey(data.sessionKey);
+                }
+              }
+              if (data.certFingerprint) {
+                localStorage.setItem('soko_cert_fp', data.certFingerprint);
+                if (window.SokoNative && typeof window.SokoNative.saveCertFingerprint === 'function') {
+                  window.SokoNative.saveCertFingerprint(data.certFingerprint);
+                }
+              }
               isDevicePaired = true;
               setStatus('online', 'Connected');
               updatePairingUI('paired', 'Paired & Verified with Desktop Dynamic Island.');
@@ -2393,8 +2407,13 @@
         });
       } catch {}
       localStorage.removeItem('soko_pair_token');
-      if (window.SokoNative && typeof window.SokoNative.savePairToken === 'function') {
-        window.SokoNative.savePairToken('');
+      localStorage.removeItem('soko_session_key');
+      localStorage.removeItem('soko_cert_fp');
+      if (window.SokoCrypto) window.SokoCrypto.clearSessionKey();
+      if (window.SokoNative) {
+        if (typeof window.SokoNative.savePairToken === 'function') window.SokoNative.savePairToken('');
+        if (typeof window.SokoNative.saveSessionKey === 'function') window.SokoNative.saveSessionKey('');
+        if (typeof window.SokoNative.saveCertFingerprint === 'function') window.SokoNative.saveCertFingerprint('');
       }
       isDevicePaired = false;
       updatePairingUI('unpaired', 'Device unlinked & forgotten. Enter PIN to re-pair.');
@@ -2497,6 +2516,11 @@
 
           const token = getPairToken();
           const deviceId = getDeviceId();
+          const savedKey = localStorage.getItem('soko_session_key') || (window.SokoNative?.getSavedSessionKey ? window.SokoNative.getSavedSessionKey() : '');
+          if (savedKey && window.SokoCrypto) {
+            window.SokoCrypto.setSessionKey(savedKey);
+          }
+
           if (token) {
             setStatus('connecting', 'Authenticating...');
             updatePairingUI('pending', 'Authenticating with saved pairing token...');
@@ -2586,6 +2610,40 @@
     }
 
     function handleInboundPacket(packet) {
+      if (packet.packetType === 'ENCRYPTED_PACKET' || packet.packet_type === 'ENCRYPTED_PACKET') {
+        if (window.SokoCrypto && window.SokoCrypto.hasActiveSession()) {
+          window.SokoCrypto.decryptEnvelope(packet).then(decrypted => {
+            handleInboundPacket({
+              magic: 'SK',
+              version: 1,
+              packetType: decrypted.innerType || (decrypted.payload && (decrypted.payload.type || decrypted.payload.packetType)),
+              payload: decrypted.payload,
+              packetId: decrypted.packetId,
+              timestamp: decrypted.timestamp,
+            });
+          }).catch(err => {
+            console.warn('[Crypto] Failed to decrypt inbound envelope:', err);
+          });
+          return;
+        }
+      }
+
+      if (packet.packetType === 'PAIR_CONFIRM') {
+        if (packet.payload?.sessionKey) {
+          localStorage.setItem('soko_session_key', packet.payload.sessionKey);
+          if (window.SokoCrypto) window.SokoCrypto.setSessionKey(packet.payload.sessionKey);
+          if (window.SokoNative && typeof window.SokoNative.saveSessionKey === 'function') {
+            window.SokoNative.saveSessionKey(packet.payload.sessionKey);
+          }
+        }
+        if (packet.payload?.certFingerprint) {
+          localStorage.setItem('soko_cert_fp', packet.payload.certFingerprint);
+          if (window.SokoNative && typeof window.SokoNative.saveCertFingerprint === 'function') {
+            window.SokoNative.saveCertFingerprint(packet.payload.certFingerprint);
+          }
+        }
+      }
+
       if (packet.packetType === 'HEARTBEAT_PONG' || packet.packetType === 'HEARTBEAT_PING') {
         const ping = Date.now() - (packet.payload?.timestamp || lastPingTimestamp);
         pingBadge.innerText = `${Math.max(1, ping)} ms`;
@@ -2923,6 +2981,25 @@
         if (token && !finalPayload.token) finalPayload.token = token;
         if (deviceId && !finalPayload.deviceId) finalPayload.deviceId = deviceId;
       }
+
+      // If active session key is established, automatically encrypt sensitive payloads
+      const sensitiveTypes = ['NOTIFICATION_POST', 'CLI_EXECUTE', 'AGENT_SEND_PROMPT', 'FILE_OFFER'];
+      if (window.SokoCrypto && window.SokoCrypto.hasActiveSession() && sensitiveTypes.includes(type)) {
+        window.SokoCrypto.encryptPayload(finalPayload, type).then(encryptedEnvelope => {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify(encryptedEnvelope));
+          }
+        }).catch(err => {
+          console.warn('[Crypto] Envelope encryption error, falling back:', err);
+          sendPlainPacket(type, finalPayload, token, deviceId);
+        });
+        return true;
+      }
+
+      return sendPlainPacket(type, finalPayload, token, deviceId);
+    }
+
+    function sendPlainPacket(type, finalPayload, token, deviceId) {
       const packet = {
         magic: 'SK',
         version: 1,

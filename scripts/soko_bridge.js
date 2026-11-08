@@ -53,6 +53,11 @@ const {
   CorsHardener,
   TokenManager,
   TlsEngine,
+  EnvelopeCipher,
+  KeyExchange,
+  SasPin,
+  CertFingerprint,
+  ReplayGuard,
   resolveConfigDir,
   getSecurityPaths,
   DEFAULT_TOKEN_TTL_MS,
@@ -3433,7 +3438,53 @@ function handleWsFrame(socket, buffer) {
 
   const messageStr = payload.toString('utf8');
   try {
-    const packet = JSON.parse(messageStr);
+    let packet = JSON.parse(messageStr);
+
+    // End-to-End Encryption Layer: Decrypt ENCRYPTED_PACKET transparently
+    if (packet.packetType === 'ENCRYPTED_PACKET' || packet.packet_type === 'ENCRYPTED_PACKET') {
+      const devId = socket.deviceId || packet.deviceId;
+      let devRecord = devId ? trustedDevices.get(devId) : null;
+      if (!devRecord && socket.token) {
+        devRecord = trustStore.findByToken(socket.token);
+      }
+      if (!devRecord && pairedDevice && pairedDevice.id) {
+        devRecord = trustedDevices.get(pairedDevice.id);
+      }
+
+      if (devRecord && devRecord.sessionKey) {
+        try {
+          if (!socket.envelopeCipher || socket.cipherSessionKey !== devRecord.sessionKey) {
+            socket.envelopeCipher = new EnvelopeCipher(devRecord.sessionKey, { deviceId: devId || 'socket-peer' });
+            socket.cipherSessionKey = devRecord.sessionKey;
+          }
+          const decrypted = socket.envelopeCipher.decrypt(packet);
+          packet = {
+            magic: packet.magic || 'SK',
+            version: packet.version || 1,
+            packetId: decrypted.packetId,
+            timestamp: decrypted.timestamp,
+            packetType: decrypted.innerType || (decrypted.payload && (decrypted.payload.type || decrypted.payload.packetType)) || 'DECRYPTED_PAYLOAD',
+            payload: decrypted.payload,
+            token: socket.token || devRecord.token,
+            deviceId: devId || devRecord.id,
+            encrypted: true,
+          };
+        } catch (decErr) {
+          console.warn(`[Security Alert] Decryption failed for incoming ENCRYPTED_PACKET: ${decErr.message}`);
+          sendWsPacket(socket, {
+            magic: 'SK',
+            version: 1,
+            packetId: Date.now(),
+            timestamp: Date.now(),
+            packetType: 'SECURITY_ALERT',
+            payload: { error: 'DECRYPTION_FAILED', message: decErr.message },
+          });
+          return;
+        }
+      } else {
+        console.warn('[Security Alert] Received ENCRYPTED_PACKET from unauthenticated socket (no session key found)');
+      }
+    }
 
     // Security Gate: Check framing, magic bytes, clock drift, and monotonic nonces
     const sec = validateInboundPacket(packet);
@@ -3615,6 +3666,7 @@ function handleWsFrame(socket, buffer) {
             paired: true,
             token,
             refreshToken: trusted.refreshToken,
+            sessionKey: trusted.sessionKey,
             expiresAt: trusted.expiresAt,
             certFingerprint: tlsEngine.getFingerprint(),
             deviceId: matchedDevId,
@@ -3698,6 +3750,7 @@ function handleWsFrame(socket, buffer) {
       // Valid PIN matches! Clear failure counters and generate fresh token pair
       rateLimiter.recordSuccess(socket.remoteAddress);
       const tokenPair = tokenManager.createTokenPair();
+      const sessionKey = crypto.randomBytes(32).toString('hex');
       const pendingInfo = {
         socket,
         deviceId,
@@ -3706,6 +3759,7 @@ function handleWsFrame(socket, buffer) {
         pin: packet.payload?.pin || activeSasPin,
         token: tokenPair.token,
         refreshToken: tokenPair.refreshToken,
+        sessionKey,
         expiresAt: tokenPair.expiresAt,
         timestamp: Date.now(),
         ip: socket.remoteAddress,
@@ -3781,6 +3835,7 @@ function handleWsFrame(socket, buffer) {
             model: pending.model,
             token: pending.token,
             refreshToken: pending.refreshToken,
+            sessionKey: pending.sessionKey || crypto.randomBytes(32).toString('hex'),
             expiresAt: pending.expiresAt,
             pairedAt: Date.now(),
           });
@@ -3790,6 +3845,7 @@ function handleWsFrame(socket, buffer) {
               model: pending.model,
               token: pending.token,
               refreshToken: pending.refreshToken,
+              sessionKey: pending.sessionKey || crypto.randomBytes(32).toString('hex'),
               expiresAt: pending.expiresAt,
               pairedAt: Date.now(),
             });
@@ -3824,6 +3880,7 @@ function handleWsFrame(socket, buffer) {
                 paired: true,
                 token: pending.token,
                 refreshToken: pending.refreshToken,
+                sessionKey: pending.sessionKey,
                 expiresAt: pending.expiresAt,
                 certFingerprint: tlsEngine.getFingerprint(),
                 deviceId: pending.deviceId,
@@ -4883,6 +4940,7 @@ const serverHandler = (req, res) => {
           model: finalModel,
           token,
           refreshToken: pending.refreshToken,
+          sessionKey: pending.sessionKey || crypto.randomBytes(32).toString('hex'),
           expiresAt: pending.expiresAt,
           pairedAt: Date.now(),
         });
@@ -4892,6 +4950,7 @@ const serverHandler = (req, res) => {
             model: finalModel,
             token,
             refreshToken: pending.refreshToken,
+            sessionKey: pending.sessionKey || crypto.randomBytes(32).toString('hex'),
             expiresAt: pending.expiresAt,
             pairedAt: Date.now(),
           });
@@ -4941,6 +5000,7 @@ const serverHandler = (req, res) => {
               paired: true,
               token,
               refreshToken: pending.refreshToken,
+              sessionKey: pending.sessionKey || (trustedDevices.get(finalDeviceId) && trustedDevices.get(finalDeviceId).sessionKey) || crypto.randomBytes(32).toString('hex'),
               expiresAt: pending.expiresAt,
               certFingerprint: tlsEngine.getFingerprint(),
               deviceId: finalDeviceId,
@@ -5218,6 +5278,7 @@ const serverHandler = (req, res) => {
           }
         }
 
+        const sessionKey = crypto.randomBytes(32).toString('hex');
         const pendingInfo = {
           socket: companionSocket,
           deviceId,
@@ -5226,6 +5287,7 @@ const serverHandler = (req, res) => {
           pin: body.pin || activeSasPin,
           token: tokenPair.token,
           refreshToken: tokenPair.refreshToken,
+          sessionKey,
           expiresAt: tokenPair.expiresAt,
           timestamp: Date.now(),
           ip: req.socket.remoteAddress,
@@ -5286,6 +5348,7 @@ const serverHandler = (req, res) => {
           refreshToken: record.refreshToken,
           expiresAt: record.expiresAt,
           certFingerprint: tlsEngine.getFingerprint(),
+          sessionKey: record.sessionKey,
         })
       );
     } else if (deviceId && pendingPairRequests.has(deviceId)) {

@@ -18,7 +18,8 @@
     "build:all": "bash scripts/build_apks.sh && npm --prefix apps/desktop run dist",
     "bridge": "node scripts/soko_bridge.js",
     "start": "node scripts/soko_bridge.js",
-    "test": "node tests/test_character_system.js && node tests/test_integration.js && node packages/agent-remote/tests/agent_remote.test.js && node tests/test_agent_remote_integration.js",
+    "test": "node packages/security/tests/crypto_unit.test.js && node tests/test_crypto_e2ee.js && node tests/test_character_system.js && node tests/test_integration.js && node packages/agent-remote/tests/agent_remote.test.js && node tests/test_agent_remote_integration.js",
+    "test:crypto": "node packages/security/tests/crypto_unit.test.js && node tests/test_crypto_e2ee.js",
     "test:agent": "node packages/agent-remote/tests/agent_remote.test.js && node tests/test_agent_remote_integration.js",
     "test:characters": "node tests/test_character_system.js",
     "test:security": "node tests/test_security.js",
@@ -29,7 +30,7 @@
     "test:workspace": "node tests/test_workspace_resolution.js",
     "test:display": "node tests/test_display_and_updater.js",
     "test:audio": "node tests/test_audio_and_resilience.js",
-    "test:all": "node tests/test_character_system.js && node tests/test_security.js && node tests/test_discovery.js && node tests/test_universal_qr.js && node tests/test_device_scanning_edge_cases.js && node tests/test_workspace_resolution.js && node tests/test_display_and_updater.js && node tests/test_audio_and_resilience.js && node tests/test_idle_and_agent_completion.js && node tests/test_integration.js && node packages/agent-remote/tests/agent_remote.test.js && node tests/test_agent_remote_integration.js",
+    "test:all": "node packages/security/tests/crypto_unit.test.js && node tests/test_crypto_e2ee.js && node tests/test_character_system.js && node tests/test_security.js && node tests/test_discovery.js && node tests/test_universal_qr.js && node tests/test_device_scanning_edge_cases.js && node tests/test_workspace_resolution.js && node tests/test_display_and_updater.js && node tests/test_audio_and_resilience.js && node tests/test_idle_and_agent_completion.js && node tests/test_integration.js && node packages/agent-remote/tests/agent_remote.test.js && node tests/test_agent_remote_integration.js",
     "version:bump": "node scripts/update_version.js"
   },
   "keywords": [

@@ -19,6 +19,7 @@ const { RateLimiter } = require('./src/rateLimiter');
 const { CorsHardener } = require('./src/corsHardener');
 const { TokenManager } = require('./src/tokenManager');
 const { TlsEngine } = require('./src/tlsEngine');
+const cryptoSubsystem = require('./src/crypto');
 
 module.exports = {
   // Constants
@@ -37,4 +38,8 @@ module.exports = {
   CorsHardener,
   TokenManager,
   TlsEngine,
+
+  // Modular Cryptography Engine
+  ...cryptoSubsystem,
+  crypto: cryptoSubsystem,
 };
