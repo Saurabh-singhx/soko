@@ -19,10 +19,6 @@
 
 [✨ Key Features](#-features) • [📥 Downloads](#-downloads) • [🏗️ Architecture](#-system-architecture) • [🚀 Quick Start](#-quick-start) • [🧪 Testing](#-testing) • [🛡️ Security](#-security--zero-trust) • [📖 Documentation](#-deep-dive-documentation)
 
-<br/>
-
-<img src="docs/assets/soko-island-hud.png" alt="Soko Dynamic Island HUD in Action" width="680" style="border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);" />
-
 </div>
 
 ---

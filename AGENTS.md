@@ -1,61 +1,77 @@
 # Multi-Agent Orchestration Protocol for Soko Monorepo
 
 You are the **Lead Architect & Orchestrator** for the Soko project (`/home/saurabh/coding/soko`).
-You have two dedicated worker VMs running independent Google Antigravity accounts to execute specialized tasks concurrently.
+You orchestrate two dedicated worker KVM guests running independent Google Antigravity accounts to execute specialized tasks concurrently.
 
 ---
 
-## 🖥️ Worker Fleet Topography
+## Worker Fleet Topography
 
 | Node | Address | Role | Account | Primary Domain |
 | :--- | :--- | :--- | :--- | :--- |
-| **Host** | `192.168.122.1` | **Lead Architect / Orchestrator** | Account 0 | Root config, contracts, planning, integration, fallback |
-| **VM 1** | `192.168.122.54` | **Backend & Core Systems** | Account 1 | `packages/`, Tauri Rust core (`apps/desktop/src-tauri`), Hotspot/Bluetooth protocol |
+| **Host** | `192.168.122.1` | **Lead Architect / Orchestrator** | Account 0 | Root config, IPC contracts, planning, final validation, fallback |
+| **VM 1** | `192.168.122.54` | **Backend & Core Systems** | Account 1 | `packages/` (protocol, security, discovery, agent-remote), `apps/desktop/src-tauri` |
 | **VM 2** | `192.168.122.174` | **Frontend, Mobile & QA** | Account 2 | `apps/desktop/src/` (Dynamic Island UI), `apps/mobile/` (Flutter), `tests/` |
 
 ---
 
-## ⚡ Dynamic Execution Rules
+## Dynamic Execution Rules
 
 ### 1. Task Decomposition & Routing
-When given a user goal:
-1. **Analyze scope**: Identify whether the task touches backend/protocols, UI/mobile, or both.
-2. **Deconstruct**: Split the task into standalone subtasks with clear contracts (file paths and function signatures).
+1. **Analyze Scope**: Classify tasks into backend/protocol, UI/mobile, or cross-cutting.
+2. **Deconstruct**: Split features into standalone subtasks with rigid boundaries.
 3. **Dispatch**:
-   - Backend logic, complex Rust/C++ algorithms, or database changes ➔ **VM 1**
-   - Dynamic Island UI, Flutter companion, CSS/glassmorphism, or test suites ➔ **VM 2**
-   - High-level architecture, shared types, or PR merges ➔ **Host**
+   - Backend logic, Rust systems, hotspot protocols, or encryption ➔ **VM 1**
+   - Dynamic Island UI, Flutter companion, CSS/glassmorphism, or QA tests ➔ **VM 2**
+   - Cross-domain schemas (`packages/protocol/schema/`), Tauri IPC definitions, and release merges ➔ **Host**
+4. **Don't Delegate Trivial Changes**: Single-line bugfixes, typo corrections, or simple doc updates should be executed directly on the Host. The network sync overhead exceeds the local execution cost.
 
-### 2. Command & Mode Selection
-Use the appropriate mode and reasoning effort for the target task:
-- **`--effort max` / `/boost`**: Use for VM 1 when tackling concurrency, cryptographic checks, or low-level hotspot protocols.
-- **`--mode plan` / `/plan`**: Use on the Host before launching large multi-file refactors.
-- **`--mode auto` / `/goal`**: Use on VM 2 for iterative UI design and running test loops until 100% green.
+### 2. Mode, Reasoning Effort & Timeout Budgets
+Choose the appropriate mode, effort, and timeout budget:
+
+| Goal / Complexity | Mode | Effort | Timeout | Node |
+| :--- | :--- | :--- | :--- | :--- |
+| Concurrency, crypto, low-level packet protocol | `auto` | `high` / `xhigh` | 30m (`1800s`) | VM 1 |
+| Architecture planning, contract design, multi-file refactor | `plan` | `high` | 30m (`1800s`) | Host |
+| Iterative UI component styling, glassmorphism | `auto` | `medium` | 15m (`900s`) | VM 2 |
+| Test suite fixes, QA test loops until green | `auto` | `medium` | 15m (`900s`) | VM 2 |
+| Deep architectural review or root-cause security investigation | `plan` | `max` | 45m (`2700s`) | Host |
 
 ### 3. Automatic Fallback Policy (Zero-Downtime Guarantee)
-Before delegating any task, check node availability via:
-```bash
-./scripts/agent_dispatch.sh status
+All node invocations use `./scripts/agent_dispatch.sh run`.
+1. **Auto-Boot**: The dispatcher automatically checks VM readiness and boots offline guests via `virsh -c qemu:///system start`.
+2. **Crash & Timeout Handling**: If a remote task fails (non-zero exit) or exceeds the timeout budget:
+   - The dispatcher leaves the Host working tree completely clean (no remote files are pulled).
+   - The dispatcher automatically triggers local execution on the Host.
+   - Host execution preserves developer safety prompts (no `--dangerously-skip-permissions` on Host).
+
+### 4. Verification Gates (Per-Domain Acceptance)
+A dispatched task is only considered complete when its domain verification gate passes cleanly:
+
+| Domain | Node | Acceptance Command |
+| :--- | :--- | :--- |
+| **Rust / Tauri Core** | VM 1 | `cargo fmt --check && cargo clippy -- -D warnings && cargo test` (in `apps/desktop/src-tauri`) |
+| **Desktop Frontend** | VM 2 | `npm run build` (in `apps/desktop`) && `npm test` |
+| **Mobile Companion** | VM 2 | `flutter analyze && flutter test` (in `apps/mobile`) |
+| **Host Integration** | Host | `npm run test:all` |
+
+### 5. Cross-Domain Contract Integrity & Guardrails
+- **Host Contract Ownership**: The data contracts in `packages/protocol/schema/` and Tauri IPC bridge definitions (`apps/desktop/src-tauri/src` commands) are owned by the Host. Workers must never unilaterally alter IPC signatures or packet JSON schemas. VM 2 works against mock stubs until VM 1 and Host finalize contracts.
+- **No Weakening Tests**: Workers must never delete, skip, or weaken test assertions to pass a gate. Failing tests must be fixed in implementation code or reported to the Host.
+- **No Hand-Rolled Cryptography**: VM 1 must strictly utilize vetted crates and `packages/security`. Never bypass certificate pinning or disable encryption for testing convenience.
+- **Dependency Transparency**: Workers must declare any new dependency added to `package.json`, `Cargo.toml`, or `pubspec.yaml` in their final report.
+
+---
+
+## Standard Task Specification Template
+
+When dispatching tasks via `./scripts/agent_dispatch.sh run <vm1|vm2> "<prompt>"`, format the prompt using this structured template:
+
+```text
+Goal: <Specific objective and context>
+Allowed Paths: <Exact directory or file list the agent is permitted to touch>
+Forbidden Paths: <Explicit out-of-bounds files>
+Contracts: <Signatures, schema files, or interfaces to adhere to>
+Acceptance Commands: <Exact commands that must pass before reporting done>
+Deliverable Report: <List files changed, verification output, and any blockers>
 ```
-If a VM is **OFFLINE**, times out, or returns a non-zero exit code:
-1. **Do NOT abort or wait indefinitely.**
-2. Log an explicit notice: `[FALLBACK] VM {1|2} offline or failed. Host agent executing task locally.`
-3. Switch execution context and complete the assigned subtask directly on the Host using your local tools.
-
-### 4. Dispatch Commands
-Use the pre-configured dispatcher helper:
-```bash
-# Check node health
-./scripts/agent_dispatch.sh status
-
-# Dispatch to VM 1 (Backend) with high reasoning effort:
-./scripts/agent_dispatch.sh run vm1 "Refactor hotspot transfer packet validation in packages/transfer" auto high
-
-# Dispatch to VM 2 (Frontend/QA) with auto mode:
-./scripts/agent_dispatch.sh run vm2 "Run npm test and fix any failing integration tests in tests/" auto medium
-```
-
-### 5. Conflict Prevention & Verification
-- **Domain Boundaries**: Never allow VM 1 to modify UI files, nor VM 2 to modify core transfer protocols directly.
-- **Contract-First**: If VM 1 changes an API signature, notify VM 2 via contract diff before VM 2 implements the UI component.
-- **Host Final Pass**: Always run `npm test` or the appropriate test suite on the Host before presenting the final result to the user.

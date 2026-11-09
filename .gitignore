@@ -48,3 +48,6 @@ screenshot_p
 .env.local
 .env
 !.env.signing.example
+
+# Dispatch & Multi-Agent Logs
+logs/
