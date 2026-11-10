@@ -17,8 +17,9 @@ VM2_IP="192.168.122.174"
 VM_USER="saurabh"
 REMOTE_DIR="/home/saurabh/soko"
 LIBVIRT_URI="qemu:///system"
-LOCK_FILE="/tmp/soko_agent_dispatch.lock"
+HOST_SYNC_LOCK="/tmp/soko_host_sync.lock"
 LOG_DIR="${PROJECT_DIR}/logs"
+RUN_LOG_DIR="${LOG_DIR}/runs"
 LOG_FILE="${LOG_DIR}/dispatch.log"
 
 # Domain boundaries (relative to PROJECT_DIR)
@@ -33,6 +34,12 @@ VM2_OWNED_PATHS=(
     "tests"
 )
 
+# Host-owned paths inside worker domains that must NEVER be overwritten by a VM pull
+HOST_PROTECTED_EXCLUDES=(
+    --exclude '/protocol/schema/'
+    --exclude 'packages/protocol/schema/'
+)
+
 # Robust rsync exclusion rules
 RSYNC_EXCLUDES=(
     # Secret keys & credentials
@@ -45,7 +52,7 @@ RSYNC_EXCLUDES=(
     --exclude 'google-services.json'
     --exclude 'scripts/keystore'
 
-    # Build outputs & caches
+    # Build outputs & caches (preserved on remote VM even when --delete is used)
     --exclude '/dist'
     --exclude '/dist-desktop'
     --exclude '/transfers'
@@ -61,14 +68,33 @@ RSYNC_EXCLUDES=(
     --exclude '*.mp4'
     --exclude '*.mp3'
     --exclude '/logs'
+    --exclude '/extra_audits'
+    --exclude '/audits'
 )
 
-# Concurrency lock
-acquire_lock() {
-    exec 9>"$LOCK_FILE"
-    if ! flock -n 9; then
-        echo "Error: Another agent_dispatch operation is currently running." >&2
-        exit 1
+# Per-target lock so VM1 and VM2 can execute concurrently without colliding
+acquire_target_lock() {
+    local target="$1"
+    local lock_file="/tmp/soko_agent_dispatch_${target}.lock"
+    if [ "$target" = "vm1" ]; then
+        exec 8>"$lock_file"
+        if ! flock -n 8; then
+            echo "Error: Another operation is currently running on vm1." >&2
+            exit 1
+        fi
+    elif [ "$target" = "vm2" ]; then
+        exec 9>"$lock_file"
+        if ! flock -n 9; then
+            echo "Error: Another operation is currently running on vm2." >&2
+            exit 1
+        fi
+    else
+        exec 8>"/tmp/soko_agent_dispatch_vm1.lock"
+        exec 9>"/tmp/soko_agent_dispatch_vm2.lock"
+        if ! flock -n 8 || ! flock -n 9; then
+            echo "Error: Another agent_dispatch operation is currently running on vm1 or vm2." >&2
+            exit 1
+        fi
     fi
 }
 
@@ -83,7 +109,8 @@ log_dispatch() {
     mkdir -p "$LOG_DIR"
     local timestamp
     timestamp="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-    echo "${timestamp} | target=${target} | mode=${mode} | effort=${effort} | rc=${exit_code} | dur=${duration}s | prompt=\"${prompt:0:80}...\"" >> "$LOG_FILE"
+    local clean_prompt="${prompt//$'\n'/ }"
+    echo "${timestamp} | target=${target} | mode=${mode} | effort=${effort} | rc=${exit_code} | dur=${duration}s | prompt=\"${clean_prompt:0:80}...\"" >> "$LOG_FILE"
 }
 
 check_network() {
@@ -128,9 +155,12 @@ start_vm_if_offline() {
 sync_to_vm() {
     local target="$1"
     local ip="$2"
-    echo "Pushing workspace snapshot to $target ($ip)..."
+    echo "Pushing clean workspace snapshot to $target ($ip)..."
     ssh -o BatchMode=yes -o StrictHostKeyChecking=no "${VM_USER}@${ip}" "mkdir -p ${REMOTE_DIR}"
-    rsync -az "${RSYNC_EXCLUDES[@]}" "${PROJECT_DIR}/" "${VM_USER}@${ip}:${REMOTE_DIR}/"
+    (
+        flock -w 60 7
+        rsync -az --delete "${RSYNC_EXCLUDES[@]}" "${PROJECT_DIR}/" "${VM_USER}@${ip}:${REMOTE_DIR}/"
+    ) 7>"$HOST_SYNC_LOCK"
 }
 
 pull_scoped_from_vm() {
@@ -145,14 +175,28 @@ pull_scoped_from_vm() {
         paths=("${VM2_OWNED_PATHS[@]}")
     fi
 
-    for rel_path in "${paths[@]}"; do
-        if ssh -o BatchMode=yes -o StrictHostKeyChecking=no "${VM_USER}@${ip}" "[ -e '${REMOTE_DIR}/${rel_path}' ]"; then
-            mkdir -p "${PROJECT_DIR}/${rel_path}"
-            rsync -az --delete "${RSYNC_EXCLUDES[@]}" \
-                "${VM_USER}@${ip}:${REMOTE_DIR}/${rel_path}/" \
-                "${PROJECT_DIR}/${rel_path}/"
+    (
+        flock -w 60 7
+        for rel_path in "${paths[@]}"; do
+            if ssh -o BatchMode=yes -o StrictHostKeyChecking=no "${VM_USER}@${ip}" "[ -e '${REMOTE_DIR}/${rel_path}' ]"; then
+                mkdir -p "${PROJECT_DIR}/${rel_path}"
+                rsync -az --delete \
+                    "${RSYNC_EXCLUDES[@]}" \
+                    "${HOST_PROTECTED_EXCLUDES[@]}" \
+                    "${VM_USER}@${ip}:${REMOTE_DIR}/${rel_path}/" \
+                    "${PROJECT_DIR}/${rel_path}/"
+            fi
+        done
+    ) 7>"$HOST_SYNC_LOCK"
+
+    if command -v git >/dev/null 2>&1 && [ -d "${PROJECT_DIR}/.git" ]; then
+        local dep_diff
+        dep_diff="$(git -C "$PROJECT_DIR" diff --stat -- '*/Cargo.toml' '*/package.json' '*/pubspec.yaml' 'Cargo.toml' 'package.json' 'pubspec.yaml' 2>/dev/null || true)"
+        if [ -n "$dep_diff" ]; then
+            echo "=== [NOTICE] Dependency Manifest Changes Detected ==="
+            echo "$dep_diff"
         fi
-    done
+    fi
 }
 
 cmd_status() {
@@ -173,7 +217,7 @@ cmd_status() {
 
 cmd_start() {
     local target="${1:-all}"
-    acquire_lock
+    acquire_target_lock "$target"
 
     if [ "$target" = "vm1" ] || [ "$target" = "all" ]; then
         echo "Starting VM 1 (antigravity-vm1)..."
@@ -203,7 +247,7 @@ cmd_start() {
 
 cmd_stop() {
     local target="${1:-all}"
-    acquire_lock
+    acquire_target_lock "$target"
 
     if [ "$target" = "vm1" ] || [ "$target" = "all" ]; then
         echo "Shutting down VM 1 (antigravity-vm1)..."
@@ -218,7 +262,7 @@ cmd_stop() {
 
 cmd_sync() {
     local target="${1:-all}"
-    acquire_lock
+    acquire_target_lock "$target"
 
     if [ "$target" = "vm1" ] || [ "$target" = "all" ]; then
         if check_network "$VM1_IP"; then sync_to_vm "vm1" "$VM1_IP"; fi
@@ -230,7 +274,11 @@ cmd_sync() {
 
 cmd_pull() {
     local target="${1:-}"
-    acquire_lock
+    if [ -z "$target" ]; then
+        echo "Usage: $0 pull <vm1|vm2|all>" >&2
+        exit 1
+    fi
+    acquire_target_lock "$target"
 
     if [ "$target" = "vm1" ]; then
         pull_scoped_from_vm "vm1" "$VM1_IP"
@@ -283,37 +331,46 @@ cmd_run() {
         esac
     fi
 
-    acquire_lock
+    acquire_target_lock "$target"
+    mkdir -p "$RUN_LOG_DIR"
+    local run_ts
+    run_ts="$(date -u +"%Y%m%dT%H%M%SZ")"
+    local run_log="${RUN_LOG_DIR}/${run_ts}_${target}.log"
+
     local start_time
     start_time="$(date +%s)"
 
-    # 1. Health & Auto-Boot verification
+    # 1. Health & Auto-Boot verification (Infrastructure Fallback if VM cannot boot)
     if ! start_vm_if_offline "$domain" "$ip"; then
         echo "[FALLBACK] Target $target ($ip) is unavailable. Executing locally on Host..."
         cd "$PROJECT_DIR"
-        agy --mode "$mode" --effort "$effort" -p "$prompt"
-        local host_rc=$?
-        local end_time; end_time="$(date +%s)"
+        set +e
+        agy --mode "$mode" --effort "$effort" -p "$prompt" 2>&1 | tee "$run_log"
+        local host_rc=${PIPESTATUS[0]}
+        set -e
+        local end_time
+        end_time="$(date +%s)"
         log_dispatch "host-fallback" "$mode" "$effort" "$host_rc" "$((end_time - start_time))" "$prompt"
         return $host_rc
     fi
 
-    # 2. Push latest snapshot
+    # 2. Push clean snapshot (removes stale untracked files from prior failed runs)
     sync_to_vm "$target" "$ip"
 
-    # 3. Construct quote-safe remote command with PATH guaranteed
+    # 3. Construct quote-safe remote command with remote timeout enforcement
     local remote_cmd
-    remote_cmd="export PATH=\"\$HOME/.local/bin:\$PATH\"; cd $(printf %q "$REMOTE_DIR") && agy --mode $(printf %q "$mode") --effort $(printf %q "$effort") --dangerously-skip-permissions -p $(printf %q "$prompt")"
+    remote_cmd="export PATH=\"\$HOME/.cargo/bin:\$HOME/.local/bin:\$PATH\"; cd $(printf %q "$REMOTE_DIR") && timeout --kill-after=10s $(printf %q "$timeout_secs") agy --mode $(printf %q "$mode") --effort $(printf %q "$effort") --dangerously-skip-permissions -p $(printf %q "$prompt")"
 
     echo "Dispatching to $target ($ip) [mode: $mode, effort: $effort, timeout: ${timeout_secs}s]..."
+    echo "Run log: $run_log"
 
     set +e
-    timeout "${timeout_secs}" ssh -o BatchMode=yes \
+    ssh -o BatchMode=yes \
         -o ServerAliveInterval=15 \
         -o ServerAliveCountMax=3 \
         -o StrictHostKeyChecking=no \
-        "${VM_USER}@${ip}" "$remote_cmd"
-    local rc=$?
+        "${VM_USER}@${ip}" "$remote_cmd" 2>&1 | tee "$run_log"
+    local rc=${PIPESTATUS[0]}
     set -e
 
     local end_time
@@ -321,23 +378,26 @@ cmd_run() {
     local duration=$((end_time - start_time))
     log_dispatch "$target" "$mode" "$effort" "$rc" "$duration" "$prompt"
 
-    # 4. Handle results & fallback
+    # 4. Handle results & cleanup
     if [ $rc -eq 0 ]; then
         echo "Remote task succeeded. Pulling domain-scoped artifacts..."
         pull_scoped_from_vm "$target" "$ip"
         echo "=== Task completed and synced cleanly to Host (${duration}s) ==="
         return 0
-    elif [ $rc -eq 124 ]; then
-        echo "[TIMEOUT] Task timed out after ${timeout_secs}s on $target ($ip)." >&2
+    fi
+
+    # Ensure no orphaned agy worker remains running on the guest VM
+    ssh -o BatchMode=yes -o StrictHostKeyChecking=no "${VM_USER}@${ip}" \
+        "pkill -f 'agy --mode' || true" >/dev/null 2>&1 || true
+
+    if [ $rc -eq 124 ]; then
+        echo "[TIMEOUT] Task timed out after ${timeout_secs}s on $target ($ip). Inspect log: $run_log" >&2
     else
-        echo "[FAILED] Task failed with exit code $rc on $target ($ip)." >&2
+        echo "[FAILED] Task failed with exit code $rc on $target ($ip). Inspect log: $run_log" >&2
     fi
 
     echo "Remote task was not successful. Host tree left clean (no changes pulled)."
-    echo "[FALLBACK] Executing task locally on Host..."
-    cd "$PROJECT_DIR"
-    agy --mode "$mode" --effort "$effort" -p "$prompt"
-    return $?
+    return $rc
 }
 
 case "${1:-status}" in

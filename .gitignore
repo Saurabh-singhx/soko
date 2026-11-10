@@ -51,3 +51,10 @@ screenshot_p
 
 # Dispatch & Multi-Agent Logs
 logs/
+
+# Audit Reports & Extra Audits
+extra_audits/
+audits
+*audit*.md
+*AUDIT*.md
+

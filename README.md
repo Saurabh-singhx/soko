@@ -149,10 +149,10 @@ Whether you need to beam 100MB+ APKs and media files across devices in seconds w
 - **Native Windows 11 Mica & Taskbar Alignment**: Uses native Windows 11 `backgroundMaterial: 'mica'` with fallback to solid dark `#090A0F` on Windows 10/Linux; automatically detects top-aligned taskbars and docks 4px below.
 - **In-App Auto-Updater**: Native background delta updates powered by `electron-updater` with real-time download progress and 1-click "Restart & Install" controls alongside the GitHub Gist version feed.
 
-### ⚙️ Background Daemon Management & Orchestration
+### ⚙️ Background Daemon Management & Multi-Agent Orchestration
 - **Unified Daemon CLI**: Manage background bridge services easily via `scripts/manage_service.sh` (`install`, `uninstall`, `start`, `stop`, `restart`, `status`, `logs`).
 - **Platform Native Daemon Templates**: Linux systemd user service (`scripts/systemd/soko.service`), Windows scheduled task / startup scripts (`scripts/windows/`), and macOS launchd plist (`scripts/launchd/com.soko.bridge.plist`).
-- **Multi-Agent Orchestration Protocol**: Monorepo orchestration protocol (`AGENTS.md`) and pre-configured dispatcher (`scripts/agent_dispatch.sh`) for dual-worker VM environments with automatic zero-downtime Host fallback.
+- **Multi-Agent KVM Fleet Orchestration**: Distributed development protocol ([`AGENTS.md`](AGENTS.md)) and hardened dispatcher ([`scripts/agent_dispatch.sh`](scripts/agent_dispatch.sh)) distributing monorepo tasks concurrently across dual KVM nodes (`antigravity-vm1` for backend/systems, `antigravity-vm2` for frontend/mobile/QA) with transport-layer domain scoping, canonical schema protection, per-target concurrency locks, and automated dependency auditing. See [docs/features/13-multi-agent-vm-orchestration.md](docs/features/13-multi-agent-vm-orchestration.md).
 
 ---
 
@@ -234,7 +234,7 @@ Ready-to-use binaries are published with every release on [GitHub Releases](http
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-Detailed architectural diagrams, protocols, and threat models can be reviewed in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [DESKTOP_UI_UX_AUDIT.md](DESKTOP_UI_UX_AUDIT.md).
+Detailed architectural diagrams, protocols, and threat models can be reviewed in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [extra_audits/DESKTOP_UI_UX_AUDIT.md](extra_audits/DESKTOP_UI_UX_AUDIT.md).
 
 ---
 
@@ -406,7 +406,7 @@ Explore our comprehensive engineering logs and feature architecture documents:
 | Topic | Document |
 | :--- | :--- |
 | **Global Architecture & Threat Model** | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| **Desktop UI/UX Audit & Clean Architecture** | [DESKTOP_UI_UX_AUDIT.md](DESKTOP_UI_UX_AUDIT.md) |
+| **Desktop UI/UX Audit & Clean Architecture** | [extra_audits/DESKTOP_UI_UX_AUDIT.md](extra_audits/DESKTOP_UI_UX_AUDIT.md) |
 | **Production Readiness & Hardening Roadmap** | [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) |
 | **Test Suites Specification & Guide** | [tests/README.md](tests/README.md) |
 | **Dynamic Island HUD & X11/Wayland Physics** | [docs/features/01-dynamic-island-hud.md](docs/features/01-dynamic-island-hud.md) |
@@ -421,8 +421,9 @@ Explore our comprehensive engineering logs and feature architecture documents:
 | **YouTube Music Offline Desktop Connector** | [docs/features/10-youtube-music-offline-connector.md](docs/features/10-youtube-music-offline-connector.md) |
 | **Universal QR Pairing & Multi-Interface Fallback Engine** | [docs/features/11-universal-qr-pairing-engine.md](docs/features/11-universal-qr-pairing-engine.md) |
 | **Real-Time Mobile Agent Terminal & Transcript Streaming** | [docs/features/12-agent-remote-terminal-streaming.md](docs/features/12-agent-remote-terminal-streaming.md) |
+| **Multi-Agent KVM Fleet Orchestration & Hardened Dispatcher** | [docs/features/13-multi-agent-vm-orchestration.md](docs/features/13-multi-agent-vm-orchestration.md) |
 | **Custom Character Creation Guide & AI Prompt (Mascots & Atmospheric Backgrounds)** | [docs/characters/README.md](docs/characters/README.md) |
-| **Multi-Agent Orchestration Protocol** | [AGENTS.md](AGENTS.md) |
+| **Multi-Agent Orchestration Protocol & Execution Rules** | [AGENTS.md](AGENTS.md) |
 
 ---
 

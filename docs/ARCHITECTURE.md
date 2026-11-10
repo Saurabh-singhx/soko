@@ -117,7 +117,14 @@ soko/
 │       ├── 09-mobile-dynamic-island-fluid-cloud.md
 │       ├── 10-youtube-music-offline-connector.md
 │       ├── 11-universal-qr-pairing-engine.md
-│       └── 12-agent-remote-terminal-streaming.md
+│       ├── 12-agent-remote-terminal-streaming.md
+│       └── 13-multi-agent-vm-orchestration.md
+├── scripts/
+│   ├── agent_dispatch.sh         # Dual-worker KVM multi-agent dispatcher & rsync sync
+│   ├── build_apks.sh             # Android companion APK & keystore build automation
+│   ├── manage_service.sh         # Unified systemd / launchd / Windows service manager
+│   └── soko_bridge.js            # Desktop universal Node.js bridge daemon
+├── AGENTS.md                     # Monorepo multi-agent orchestration protocol & rules
 └── README.md
 ```
 
@@ -233,6 +240,24 @@ To enable effortless zero-configuration pairing across diverse operating environ
    - **Windows**: Executes non-interactive PowerShell `Get-PnpDevice` to discover authenticated Bluetooth radios and paired peripherals without hanging on driver dialogs.
 3. **Connection State Defense**: Invoking manual scan triggers (`POST /api/devices/scan`) while a companion is actively paired preserves the active connection and socket without state clobbering.
 4. **Concurrency Debounce**: Concurrent scan triggers coalesce onto a shared in-flight promise to prevent race conditions or subprocess contention.
+
+### 4.8 Multi-Agent VM Orchestration & KVM Guest Isolation
+
+To accelerate complex feature development across disparate languages (Rust, Dart/Flutter, TypeScript/React) without cognitive contention or compilation bloat, Soko adopts a multi-agent orchestration model:
+1. **Fleet Topology**:
+   - **Host (`192.168.122.1`)**: Acts as Lead Architect, owning contracts (`packages/protocol/schema/`), Tauri IPC definitions, and release merges.
+   - **VM 1 (`192.168.122.54`)**: KVM guest (`antigravity-vm1`) running an isolated Antigravity CLI instance (`--dangerously-skip-permissions`) dedicated to backend logic, crypto, and Rust core systems.
+   - **VM 2 (`192.168.122.174`)**: KVM guest (`antigravity-vm2`) running an isolated Antigravity CLI instance dedicated to frontend UI, Flutter mobile companion, and integration QA suites.
+2. **Dual-Tier Concurrency & Disk Locks**:
+   - Independent lock files (`/tmp/soko_agent_dispatch_vm1.lock` and `vm2.lock`) enable VM 1 and VM 2 to execute tasks simultaneously without serial blocking.
+   - Short-lived host sync lock (`/tmp/soko_host_sync.lock`) coordinates disk reads/writes during brief `rsync` sync periods.
+3. **Transport-Layer Blast Radius Isolation**:
+   - Restricts VM code sync pulls to domain-owned paths (`VM1_OWNED_PATHS` and `VM2_OWNED_PATHS`).
+   - Host canonical schema definitions are protected from being overwritten via `HOST_PROTECTED_EXCLUDES`.
+4. **Guest Lifecycle & Timeout Management**:
+   - Auto-boots offline nodes via `virsh` upon demand.
+   - Enforces execution timeouts directly on the guest kernel (`timeout --kill-after=10s`) and kills lingering `agy` worker processes on non-zero exit codes.
+   - For an exhaustive breakdown of the dispatcher and protocol, refer to [docs/features/13-multi-agent-vm-orchestration.md](features/13-multi-agent-vm-orchestration.md) and [AGENTS.md](../AGENTS.md).
 
 ---
 

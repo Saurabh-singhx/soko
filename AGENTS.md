@@ -37,13 +37,13 @@ Choose the appropriate mode, effort, and timeout budget:
 | Test suite fixes, QA test loops until green | `auto` | `medium` | 15m (`900s`) | VM 2 |
 | Deep architectural review or root-cause security investigation | `plan` | `max` | 45m (`2700s`) | Host |
 
-### 3. Automatic Fallback Policy (Zero-Downtime Guarantee)
+### 3. Automatic Fallback & Failure Policy
 All node invocations use `./scripts/agent_dispatch.sh run`.
-1. **Auto-Boot**: The dispatcher automatically checks VM readiness and boots offline guests via `virsh -c qemu:///system start`.
-2. **Crash & Timeout Handling**: If a remote task fails (non-zero exit) or exceeds the timeout budget:
-   - The dispatcher leaves the Host working tree completely clean (no remote files are pulled).
-   - The dispatcher automatically triggers local execution on the Host.
-   - Host execution preserves developer safety prompts (no `--dangerously-skip-permissions` on Host).
+1. **Auto-Boot & Infrastructure Fallback**: The dispatcher automatically checks VM readiness and boots offline guests via `virsh -c qemu:///system start`. If a guest VM cannot boot or SSH is unreachable after 40s, the dispatcher falls back to local execution on the Host (without `--dangerously-skip-permissions`).
+2. **Task Timeout & Non-Zero Exit Handling**:
+   - Timeouts are enforced inside the guest VM (`timeout --kill-after=10s`), and any lingering `agy` processes are terminated so no zombie workers mutate the guest tree.
+   - The Host working tree is left untouched (no remote files are pulled).
+   - Instead of blindly re-running a timed-out or failing prompt on the Host, the dispatcher writes the full transcript to `logs/runs/<timestamp>_<vm>.log` and returns the non-zero exit code to the Host Orchestrator so the task can be decomposed or repaired.
 
 ### 4. Verification Gates (Per-Domain Acceptance)
 A dispatched task is only considered complete when its domain verification gate passes cleanly:
@@ -51,15 +51,19 @@ A dispatched task is only considered complete when its domain verification gate 
 | Domain | Node | Acceptance Command |
 | :--- | :--- | :--- |
 | **Rust / Tauri Core** | VM 1 | `cargo fmt --check && cargo clippy -- -D warnings && cargo test` (in `apps/desktop/src-tauri`) |
-| **Desktop Frontend** | VM 2 | `npm run build` (in `apps/desktop`) && `npm test` |
+| **Desktop Frontend** | VM 2 | `npm run build` (in `apps/desktop`) && `npm test` (repo root) |
 | **Mobile Companion** | VM 2 | `flutter analyze && flutter test` (in `apps/mobile`) |
 | **Host Integration** | Host | `npm run test:all` |
 
 ### 5. Cross-Domain Contract Integrity & Guardrails
 - **Host Contract Ownership**: The data contracts in `packages/protocol/schema/` and Tauri IPC bridge definitions (`apps/desktop/src-tauri/src` commands) are owned by the Host. Workers must never unilaterally alter IPC signatures or packet JSON schemas. VM 2 works against mock stubs until VM 1 and Host finalize contracts.
+- **Enforced Schema Protection**: `packages/protocol/schema/` is explicitly excluded from `vm1` pull syncs (`HOST_PROTECTED_EXCLUDES`). Even if VM 1 edits schema files locally during a run, those modifications are blocked at the `rsync` layer from overwriting the Host.
+- **Test Directory Ownership**:
+  - Crate-level and Tauri unit/integration tests live inside `packages/*/tests` and `apps/desktop/src-tauri/tests` (**VM 1**).
+  - End-to-end, UI, and cross-application test suites live in root `tests/` (**VM 2**).
 - **No Weakening Tests**: Workers must never delete, skip, or weaken test assertions to pass a gate. Failing tests must be fixed in implementation code or reported to the Host.
 - **No Hand-Rolled Cryptography**: VM 1 must strictly utilize vetted crates and `packages/security`. Never bypass certificate pinning or disable encryption for testing convenience.
-- **Dependency Transparency**: Workers must declare any new dependency added to `package.json`, `Cargo.toml`, or `pubspec.yaml` in their final report.
+- **Dependency Transparency**: Workers must declare any new dependency added to `package.json`, `Cargo.toml`, or `pubspec.yaml` in their final report. The dispatcher also automatically detects and prints manifest diffs upon pull.
 
 ---
 
