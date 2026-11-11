@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'core/theme/glass_theme.dart';
 import 'services/bluetooth/ble_service.dart';
+import 'features/agent_terminal/services/agent_remote_service.dart';
 import 'ui/screens/home_dashboard_screen.dart';
 import 'ui/screens/terminal_remote_screen.dart';
 import 'ui/screens/file_share_screen.dart';
@@ -21,10 +22,12 @@ class SokoMobileApp extends StatefulWidget {
 
 class _SokoMobileAppState extends State<SokoMobileApp> {
   final MobileBleService bleService = MobileBleService();
+  late final AgentRemoteService agentRemoteService = AgentRemoteService(bleService: bleService);
   int _currentIndex = 0;
 
   @override
   void dispose() {
+    agentRemoteService.dispose();
     bleService.dispose();
     super.dispose();
   }
@@ -53,6 +56,7 @@ class _SokoMobileAppState extends State<SokoMobileApp> {
               onOpenPairing: () => setState(() => _currentIndex = 3),
             ),
             TerminalRemoteScreen(
+              service: agentRemoteService,
               onBack: () => setState(() => _currentIndex = 0),
             ),
             FileShareScreen(

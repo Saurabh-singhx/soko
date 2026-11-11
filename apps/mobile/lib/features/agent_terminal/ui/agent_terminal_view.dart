@@ -27,6 +27,7 @@ class _AgentTerminalViewState extends State<AgentTerminalView> {
   AgentSessionSummary? _activeSession;
   List<AgentSessionSummary> _availableSessions = [];
   bool _isWorking = false;
+  bool _isStreaming = false;
 
   @override
   void initState() {
@@ -58,6 +59,34 @@ class _AgentTerminalViewState extends State<AgentTerminalView> {
     s.sessionsStream.listen((sessions) {
       if (mounted) {
         setState(() => _availableSessions = sessions);
+      }
+    });
+
+    s.streamingStream.listen((streaming) {
+      if (mounted) {
+        setState(() => _isStreaming = streaming);
+      }
+    });
+
+    s.agentDoneStream.listen((event) {
+      if (mounted) {
+        final title = event['title'] as String? ?? 'Agent Task Done ✓';
+        final message = (event['message'] ?? event['taskSummary']) as String? ?? 'Agent completed all steps.';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle_rounded, color: Color(0xFF22C55E), size: 18),
+                const SizedBox(width: 8),
+                Expanded(child: Text('$title: $message')),
+              ],
+            ),
+            backgroundColor: const Color(0xFF1E293B),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            duration: const Duration(seconds: 4),
+          ),
+        );
       }
     });
   }
@@ -140,6 +169,9 @@ class _AgentTerminalViewState extends State<AgentTerminalView> {
 
   @override
   void dispose() {
+    if (widget.service?.isStreaming == true) {
+      widget.service?.stopTerminalStream();
+    }
     _promptController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -187,6 +219,24 @@ class _AgentTerminalViewState extends State<AgentTerminalView> {
           ],
         ),
         actions: [
+          IconButton(
+            icon: Icon(
+              _isStreaming ? Icons.cell_tower_rounded : Icons.play_arrow_rounded,
+              color: _isStreaming ? const Color(0xFF22C55E) : Colors.white70,
+              size: 20,
+            ),
+            tooltip: _isStreaming ? 'Terminal Streaming Active (Tap to pause)' : 'Request Terminal Stream',
+            onPressed: () {
+              if (_isStreaming) {
+                widget.service?.stopTerminalStream();
+              } else {
+                final sId = _activeSession?.sessionId ?? widget.service?.currentSessionId;
+                if (sId != null) {
+                  widget.service?.requestTerminalStream(sId);
+                }
+              }
+            },
+          ),
           if (_availableSessions.length > 1)
             PopupMenuButton<String>(
               icon: const Icon(Icons.swap_horiz_rounded, color: Colors.white70),
@@ -223,9 +273,39 @@ class _AgentTerminalViewState extends State<AgentTerminalView> {
                         ),
                       ],
                     ),
-                    Text(
-                      _activeSession?.tokensUsed != null ? '${_activeSession!.tokensUsed} tokens' : 'Live stream',
-                      style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 11, fontFamily: 'monospace'),
+                    GestureDetector(
+                      onTap: () {
+                        if (_isStreaming) {
+                          widget.service?.stopTerminalStream();
+                        } else {
+                          final sId = _activeSession?.sessionId ?? widget.service?.currentSessionId;
+                          if (sId != null) {
+                            widget.service?.requestTerminalStream(sId);
+                          }
+                        }
+                      },
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 6,
+                            height: 6,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: _isStreaming ? const Color(0xFF22C55E) : Colors.white24,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            _isStreaming ? 'Streaming ON' : 'Stream OFF',
+                            style: TextStyle(
+                              color: _isStreaming ? const Color(0xFF22C55E) : Colors.white.withOpacity(0.4),
+                              fontSize: 11,
+                              fontFamily: 'monospace',
+                              fontWeight: _isStreaming ? FontWeight.bold : FontWeight.normal,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
@@ -247,9 +327,30 @@ class _AgentTerminalViewState extends State<AgentTerminalView> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            'Waiting for agent activity or incoming commands...',
+                            _isStreaming
+                                ? 'Streaming live agent activity & execution output...'
+                                : 'Tap "Request Terminal Stream" to begin streaming text.',
                             style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12),
+                            textAlign: TextAlign.center,
                           ),
+                          if (!_isStreaming) ...[
+                            const SizedBox(height: 12),
+                            ElevatedButton.icon(
+                              onPressed: () {
+                                final sId = _activeSession?.sessionId ?? widget.service?.currentSessionId;
+                                if (sId != null) {
+                                  widget.service?.requestTerminalStream(sId);
+                                }
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: GlassTheme.cyanAccent.withOpacity(0.2),
+                                foregroundColor: GlassTheme.cyanAccent,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              ),
+                              icon: const Icon(Icons.play_arrow_rounded, size: 16),
+                              label: const Text('Request Terminal Stream'),
+                            ),
+                          ],
                         ],
                       ),
                     )

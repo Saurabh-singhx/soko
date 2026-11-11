@@ -882,6 +882,52 @@ public class MainActivity extends Activity {
         public void releaseWakeLock() {
             releaseAppWakeLock();
         }
+
+        @JavascriptInterface
+        public void postSystemNotification(final String title, final String message) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                        if (nm == null) return;
+                        String channelId = "soko_agent_channel";
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                            NotificationChannel channel = new NotificationChannel(
+                                channelId, "Agent Task Notifications", NotificationManager.IMPORTANCE_HIGH
+                            );
+                            channel.setDescription("Alerts for completed AI CLI and Antigravity agent tasks.");
+                            nm.createNotificationChannel(channel);
+                        }
+                        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                            flags |= PendingIntent.FLAG_IMMUTABLE;
+                        }
+                        Intent openIntent = new Intent(MainActivity.this, MainActivity.class);
+                        openIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                        PendingIntent pendingIntent = PendingIntent.getActivity(MainActivity.this, 0, openIntent, flags);
+
+                        Notification.Builder builder;
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                            builder = new Notification.Builder(MainActivity.this, channelId);
+                        } else {
+                            builder = new Notification.Builder(MainActivity.this);
+                        }
+                        builder.setSmallIcon(android.R.drawable.stat_notify_chat)
+                            .setContentTitle(title != null ? title : "Agent Done")
+                            .setContentText(message != null ? message : "Agent task completed")
+                            .setContentIntent(pendingIntent)
+                            .setAutoCancel(true);
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                            builder.setVisibility(Notification.VISIBILITY_PUBLIC);
+                        }
+                        nm.notify(9001, builder.build());
+                    } catch (Exception e) {
+                        Log.e("SokoApp", "Error posting system notification: " + e.getMessage());
+                    }
+                }
+            });
+        }
     }
 
     @Override

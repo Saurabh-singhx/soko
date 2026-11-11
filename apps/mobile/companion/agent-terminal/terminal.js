@@ -21,6 +21,11 @@
     isWaiting: false,
     cursor: 0,
     isPreviewMode: false,
+    isStreamingActive: false,
+    previousAgentStatus: null,
+    streamToggleBtn: null,
+    streamDot: null,
+    streamLabel: null,
 
     init() {
       console.log('[Agent Terminal] Initializing remote agent subsystem...');
@@ -143,6 +148,9 @@
 
     bindDOMElements() {
       this.feedScroll = document.getElementById('agentFeedScroll');
+      this.streamToggleBtn = document.getElementById('agentStreamToggleBtn');
+      this.streamDot = document.getElementById('agentStreamDot');
+      this.streamLabel = document.getElementById('agentStreamLabel');
       this.sessionSelect = document.getElementById('agentSessionSelect');
       this.sessionInfoBtn = document.getElementById('agentSessionInfoBtn');
       this.paginationBar = document.getElementById('agentPaginationBar');
@@ -173,6 +181,13 @@
     },
 
     attachEventListeners() {
+      if (this.streamToggleBtn) {
+        this.streamToggleBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.toggleTerminalStream();
+        });
+      }
+
       if (this.sendBtn) {
         this.sendBtn.addEventListener('click', () => this.handleSend());
       }
@@ -277,6 +292,7 @@
      */
     onTabActivated() {
       this.bindDOMElements();
+      this.updateStreamButtonUI();
       if (this.currentSessionId) {
         const active = (this.allSessions && this.allSessions.find((s) => s.sessionId === this.currentSessionId)) ||
                        (this.recentSessions && this.recentSessions.find((s) => s.sessionId === this.currentSessionId));
@@ -298,8 +314,9 @@
       }
       this.fetchSessions();
       if (this.currentSessionId) {
-        if (typeof window.sendPacket === 'function') {
-          window.sendPacket('AGENT_SUBSCRIBE_SESSION', { sessionId: this.currentSessionId });
+        // Stream text deltas only if explicitly requested
+        if (this.isStreamingActive && typeof window.sendPacket === 'function') {
+          window.sendPacket('AGENT_START_TERMINAL_STREAM', { sessionId: this.currentSessionId, stream: true });
         }
         this.syncCurrentSession();
       }
@@ -307,13 +324,169 @@
     },
 
     /**
+     * Called whenever user navigates away from the Terminal tab.
+     * Stops terminal streaming to save battery and network bandwidth.
+     */
+    onTabDeactivated() {
+      if (this.isStreamingActive) {
+        this.stopTerminalStream(true);
+      }
+    },
+
+    /**
      * Called whenever WebSocket connection is established or re-authenticated.
      */
     onWsConnected() {
       this.fetchSessions();
-      if (this.currentSessionId && typeof window.sendPacket === 'function') {
-        window.sendPacket('AGENT_SUBSCRIBE_SESSION', { sessionId: this.currentSessionId });
+      if (this.isStreamingActive && this.currentSessionId && typeof window.sendPacket === 'function') {
+        window.sendPacket('AGENT_START_TERMINAL_STREAM', { sessionId: this.currentSessionId, stream: true });
       }
+    },
+
+    /**
+     * Toggles terminal streaming on or off.
+     */
+    toggleTerminalStream() {
+      if (this.isStreamingActive) {
+        this.stopTerminalStream();
+      } else {
+        this.startTerminalStream();
+      }
+    },
+
+    /**
+     * Requests real-time terminal streaming from host PC.
+     */
+    startTerminalStream() {
+      if (!this.currentSessionId) {
+        if (this.allSessions && this.allSessions[0]) {
+          this.currentSessionId = this.allSessions[0].sessionId;
+        }
+      }
+      if (!this.currentSessionId) {
+        if (typeof window.showToast === 'function') window.showToast('No active agent session available', 'amber');
+        return;
+      }
+
+      this.isStreamingActive = true;
+      this.updateStreamButtonUI();
+
+      if (typeof window.sendPacket === 'function') {
+        window.sendPacket('AGENT_START_TERMINAL_STREAM', { sessionId: this.currentSessionId, stream: true });
+      }
+      this.syncCurrentSession();
+
+      if (typeof window.showToast === 'function') {
+        window.showToast('Terminal stream active • Will notify on completion', 'success');
+      }
+
+      // Prompt for Web Notification permissions if supported
+      if (typeof window.Notification !== 'undefined' && Notification.permission === 'default') {
+        try { Notification.requestPermission(); } catch (e) {}
+      }
+    },
+
+    /**
+     * Stops real-time terminal streaming.
+     */
+    stopTerminalStream(silent = false) {
+      this.isStreamingActive = false;
+      this.updateStreamButtonUI();
+
+      if (this.currentSessionId && typeof window.sendPacket === 'function') {
+        window.sendPacket('AGENT_STOP_TERMINAL_STREAM', { sessionId: this.currentSessionId });
+      }
+
+      if (!silent && typeof window.showToast === 'function') {
+        window.showToast('Terminal streaming paused', 'info');
+      }
+    },
+
+    /**
+     * Updates header stream button visual indicators.
+     */
+    updateStreamButtonUI() {
+      if (!this.streamToggleBtn) this.streamToggleBtn = document.getElementById('agentStreamToggleBtn');
+      if (!this.streamLabel) this.streamLabel = document.getElementById('agentStreamLabel');
+      if (!this.streamDot) this.streamDot = document.getElementById('agentStreamDot');
+
+      if (!this.streamToggleBtn) return;
+
+      if (this.isStreamingActive) {
+        this.streamToggleBtn.classList.add('streaming-active');
+        this.streamToggleBtn.title = 'Terminal Streaming Active (Tap to pause)';
+        if (this.streamLabel) this.streamLabel.textContent = 'Streaming';
+      } else {
+        this.streamToggleBtn.classList.remove('streaming-active');
+        this.streamToggleBtn.title = 'Request Live Terminal Stream';
+        if (this.streamLabel) this.streamLabel.textContent = 'Stream: OFF';
+      }
+    },
+
+    /**
+     * Notifies user that agent has completed its task.
+     */
+    notifyAgentDone(info) {
+      const title = (info && info.title) || 'Agent Task Done ✓';
+      const message = (info && (info.message || info.taskSummary)) || 'Agent completed all steps successfully.';
+
+      // 1. Toast notification
+      if (typeof window.showToast === 'function') {
+        window.showToast(`🎉 ${title} — ${message}`, 'success');
+      }
+
+      // 2. Native Android system notification (APK)
+      if (window.SokoNative && typeof window.SokoNative.postSystemNotification === 'function') {
+        try {
+          window.SokoNative.postSystemNotification(title, message);
+        } catch (e) {
+          console.warn('[Terminal] postSystemNotification error:', e);
+        }
+      }
+
+      // 3. Web Notification API
+      if (typeof window.Notification !== 'undefined' && Notification.permission === 'granted') {
+        try {
+          new Notification(title, {
+            body: message,
+            icon: 'icon.png',
+            badge: 'icon.png',
+          });
+        } catch (e) {}
+      }
+
+      // 4. Haptic vibration
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        try { navigator.vibrate([150, 80, 150]); } catch (e) {}
+      }
+
+      // 5. In-feed completion notice card
+      this.renderCompletionNotice({
+        title,
+        message,
+        timestamp: Date.now(),
+      });
+    },
+
+    /**
+     * Appends completion card inside feed.
+     */
+    renderCompletionNotice(info) {
+      if (!this.feedScroll) return;
+      const lastChild = this.feedScroll.lastElementChild;
+      if (lastChild && lastChild.classList.contains('agent-done-notice-card')) return;
+
+      const card = document.createElement('div');
+      card.className = 'agent-done-notice-card';
+      card.innerHTML = `
+        <div class="agent-done-badge">🎉</div>
+        <div class="agent-done-body">
+          <div class="agent-done-title">${this.escapeHtml(info.title || 'Agent Completed Task')}</div>
+          <div class="agent-done-text">${this.escapeHtml(info.message || 'Execution finished successfully.')}</div>
+        </div>
+      `;
+      this.feedScroll.appendChild(card);
+      this.scrollToBottom();
     },
 
     /**
@@ -530,9 +703,9 @@
         this.renderLoadingState();
       }
 
-      // Subscribe via WebSocket
-      if (typeof window.sendPacket === 'function') {
-        window.sendPacket('AGENT_SUBSCRIBE_SESSION', { sessionId });
+      // Subscribe to stream only if streaming is explicitly active
+      if (this.isStreamingActive && typeof window.sendPacket === 'function') {
+        window.sendPacket('AGENT_START_TERMINAL_STREAM', { sessionId, stream: true });
       }
 
       this.syncCurrentSession();
@@ -584,11 +757,24 @@
         this.updateSessionList(payload.activeSessions);
       }
 
+      const prevStatus = this.previousAgentStatus;
       const isWorking = payload.status === 'working' || payload.status === 'thinking';
       const isWaiting = payload.status === 'waiting';
+      const isCompleted = payload.status === 'completed';
 
       this.isWorking = isWorking;
       this.isWaiting = isWaiting;
+      this.previousAgentStatus = payload.status;
+
+      // When terminal streaming is on, send notifications when agent is done
+      if (this.isStreamingActive && (prevStatus === 'working' || prevStatus === 'thinking' || prevStatus === 'waiting') && isCompleted) {
+        this.notifyAgentDone({
+          sessionId: payload.sessionId || this.currentSessionId,
+          appName: payload.name || 'Google Antigravity',
+          title: `${payload.name || 'Agent'}: Done ✓`,
+          message: payload.message || payload.taskSummary || 'Agent finished task successfully',
+        });
+      }
 
       this.setMascotState(isWorking ? 'working' : isWaiting ? 'waiting' : 'idle');
       this.updatePaginationUI();
@@ -647,7 +833,7 @@
      * Ingests delta chunks directly with 0ms round-trip lag.
      */
     handleTranscriptChunk(chunk) {
-      if (!chunk || chunk.sessionId !== this.currentSessionId) return;
+      if (!chunk || chunk.sessionId !== this.currentSessionId || !this.isStreamingActive) return;
 
       if (chunk.newCursor) {
         this.cursor = chunk.newCursor;
@@ -875,15 +1061,30 @@
 
     renderEmptyState(message) {
       if (!this.feedScroll) return;
-      this.feedScroll.innerHTML = `
-        <div class="feed-empty-state">
-          <div class="empty-icon-wrap">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+      if (!this.isStreamingActive) {
+        this.feedScroll.innerHTML = `
+          <div class="feed-empty-state">
+            <div class="empty-icon-wrap" style="color: var(--term-amber); background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.3);">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+            </div>
+            <div class="empty-title">Terminal Stream Paused</div>
+            <div class="empty-desc">${this.escapeHtml(message || 'Tap below to request real-time terminal streaming. Soko will notify you when the agent finishes.')}</div>
+            <button class="btn-request-stream" onclick="window.AgentTerminal && window.AgentTerminal.toggleTerminalStream()">
+              ▶ Request Terminal Stream
+            </button>
           </div>
-          <div class="empty-title">Ready for Remote Commands</div>
-          <div class="empty-desc">${this.escapeHtml(message)}</div>
-        </div>
-      `;
+        `;
+      } else {
+        this.feedScroll.innerHTML = `
+          <div class="feed-empty-state">
+            <div class="empty-icon-wrap">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+            </div>
+            <div class="empty-title">Ready for Remote Commands</div>
+            <div class="empty-desc">${this.escapeHtml(message)}</div>
+          </div>
+        `;
+      }
     },
 
     renderLoadingState() {

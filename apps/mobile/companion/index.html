@@ -924,6 +924,10 @@
 
     <!-- Terminal Tab Mode: Integrated Header Controls (Mascot eyes reflect agent state; no text clutter) -->
     <div class="header-terminal-controls" id="headerTerminalControls" style="display: none;">
+      <button class="header-stream-btn" id="agentStreamToggleBtn" title="Request Live Terminal Stream" aria-label="Request Live Terminal Stream">
+        <span class="stream-dot" id="agentStreamDot"></span>
+        <span class="stream-btn-label" id="agentStreamLabel">Stream: OFF</span>
+      </button>
       <select class="header-session-select" id="agentSessionSelect" title="Switch conversation">
         <option value="">Conv 1 of 5</option>
       </select>
@@ -1687,6 +1691,11 @@
       const activeEl = document.querySelector('.tab-content.active');
       if (activeEl && activeEl.id && activeEl.id !== 'tab-cli') {
         previousTabId = activeEl.id;
+      }
+      if (activeEl && activeEl.id === 'tab-cli' && tabId !== 'tab-cli') {
+        if (window.AgentTerminal && typeof window.AgentTerminal.onTabDeactivated === 'function') {
+          window.AgentTerminal.onTabDeactivated();
+        }
       }
 
       document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
@@ -2813,6 +2822,10 @@
       } else if (packet.packetType === 'FETCH_AGENT_SESSIONS_RESULT') {
         if (window.AgentTerminal && typeof window.AgentTerminal.updateSessionList === 'function') {
           window.AgentTerminal.updateSessionList(packet.payload?.sessions);
+        }
+      } else if (packet.packetType === 'NOTIFICATION_POST') {
+        if (packet.payload?.isAgentDone && window.AgentTerminal && window.AgentTerminal.isStreamingActive) {
+          window.AgentTerminal.notifyAgentDone(packet.payload);
         }
       }
     }

@@ -84,6 +84,51 @@ try {
 }
 const activeSessionCursors = new Map(); // sessionId -> byteOffset
 const activeSubscribedSessions = new Set(); // Set of sessionIds subscribed by clients
+// Agent Terminal Streaming Subscribers: sessionId -> Set<WebSocket>
+const activeStreamSubscribers = new Map();
+const previousSessionStatuses = new Map(); // sessionId -> status
+
+function addStreamSubscriber(sessionId, socket) {
+  if (!sessionId || !socket) return;
+  activeSubscribedSessions.add(sessionId);
+  if (!activeStreamSubscribers.has(sessionId)) {
+    activeStreamSubscribers.set(sessionId, new Set());
+  }
+  activeStreamSubscribers.get(sessionId).add(socket);
+  if (!socket.streamingSessionIds) {
+    socket.streamingSessionIds = new Set();
+  }
+  socket.streamingSessionIds.add(sessionId);
+}
+
+function removeStreamSubscriber(sessionId, socket) {
+  if (!socket) return;
+  if (sessionId) {
+    const subs = activeStreamSubscribers.get(sessionId);
+    if (subs) {
+      subs.delete(socket);
+      if (subs.size === 0) {
+        activeStreamSubscribers.delete(sessionId);
+        activeSubscribedSessions.delete(sessionId);
+      }
+    }
+    if (socket.streamingSessionIds) {
+      socket.streamingSessionIds.delete(sessionId);
+    }
+  } else if (socket.streamingSessionIds) {
+    for (const sid of Array.from(socket.streamingSessionIds)) {
+      const subs = activeStreamSubscribers.get(sid);
+      if (subs) {
+        subs.delete(socket);
+        if (subs.size === 0) {
+          activeStreamSubscribers.delete(sid);
+          activeSubscribedSessions.delete(sid);
+        }
+      }
+    }
+    socket.streamingSessionIds.clear();
+  }
+}
 
 let appVersion = '1.0.0';
 try {
@@ -2579,9 +2624,62 @@ function checkActiveAgentActivity() {
   };
 }
 
+function checkAndNotifyAgentCompletion(active) {
+  if (!active || !active.activeSessions || active.activeSessions.length === 0) return;
+  for (const s of active.activeSessions) {
+    const sId = s.sessionId;
+    const prevStatus = previousSessionStatuses.get(sId);
+    const isNowCompleted = s.status === 'completed';
+    const wasRunning = prevStatus === 'working' || prevStatus === 'thinking' || prevStatus === 'waiting';
+
+    if (isNowCompleted && wasRunning) {
+      // Agent is done! Send notification if terminal streaming is on
+      const targetSockets = new Set();
+      if (activeStreamSubscribers.has(sId)) {
+        for (const sock of activeStreamSubscribers.get(sId)) {
+          targetSockets.add(sock);
+        }
+      } else if (activeStreamSubscribers.size > 0) {
+        // If terminal streaming is active for any session, notify all streaming clients
+        for (const subs of activeStreamSubscribers.values()) {
+          for (const sock of subs) {
+            targetSockets.add(sock);
+          }
+        }
+      }
+
+      if (targetSockets.size > 0) {
+        const notifPacket = {
+          magic: 'SK',
+          version: 1,
+          packetId: Date.now(),
+          timestamp: Date.now(),
+          packetType: 'NOTIFICATION_POST',
+          payload: {
+            id: `agent-done-${sId}-${Date.now()}`,
+            appName: s.name || s.agent || 'Google Antigravity',
+            title: `${s.name || 'Agent'} Finished Task`,
+            message: s.message || s.taskSummary || 'Agent execution completed successfully',
+            timestamp: Date.now(),
+            isAgentDone: true,
+            sessionId: sId,
+          },
+        };
+        for (const sock of targetSockets) {
+          if (sock.readyState !== 'closed' && sock.isAuthorized) {
+            sendWsPacket(sock, notifPacket);
+          }
+        }
+      }
+    }
+    previousSessionStatuses.set(sId, s.status);
+  }
+}
+
 function broadcastAgentActivity() {
   const current = checkActiveAgentActivity();
   currentAgentActivity = current;
+  checkAndNotifyAgentCompletion(current);
   broadcastPacket({
     magic: 'SK',
     version: 1,
@@ -2602,15 +2700,31 @@ setInterval(() => {
     broadcastAgentActivity();
   }
 
-  // Stream real-time transcript deltas to mobile clients (sub-second streaming)
-  if (agentSessionManager) {
-    const targets = new Set([active.sessionId, ...activeSubscribedSessions].filter(Boolean));
-    for (const sId of targets) {
+  // Check for agent completion: when terminal streaming is on, also send notifications when agent is done
+  checkAndNotifyAgentCompletion(active);
+
+  // Stream real-time transcript deltas to mobile clients ONLY when requested
+  if (agentSessionManager && activeStreamSubscribers.size > 0) {
+    for (const [sId, subscribers] of activeStreamSubscribers.entries()) {
+      if (!subscribers || subscribers.size === 0) continue;
+
+      // Filter out dead or closed sockets
+      for (const sock of Array.from(subscribers)) {
+        if (sock.readyState === 'closed' || sock.destroyed) {
+          subscribers.delete(sock);
+        }
+      }
+      if (subscribers.size === 0) {
+        activeStreamSubscribers.delete(sId);
+        activeSubscribedSessions.delete(sId);
+        continue;
+      }
+
       const curOffset = activeSessionCursors.get(sId) || 0;
       const delta = agentSessionManager.readDelta(sId, curOffset);
       if (delta && delta.events && delta.events.length > 0) {
         activeSessionCursors.set(sId, delta.newCursor);
-        broadcastPacket({
+        const chunkPacket = {
           magic: 'SK',
           version: 1,
           packetId: Date.now(),
@@ -2621,7 +2735,12 @@ setInterval(() => {
             newCursor: delta.newCursor,
             events: delta.events,
           },
-        });
+        };
+        for (const sock of subscribers) {
+          if (sock.readyState !== 'closed' && sock.isAuthorized) {
+            sendWsPacket(sock, chunkPacket);
+          }
+        }
       } else if (delta && delta.newCursor) {
         activeSessionCursors.set(sId, delta.newCursor);
       }
@@ -3369,6 +3488,7 @@ function createWebSocketServer(server) {
     });
 
     socket.on('close', () => {
+      removeStreamSubscriber(null, socket);
       activeClients.delete(socket);
       console.log(`[Bridge WS] Client disconnected. Total active: ${activeClients.size}`);
 
@@ -4201,8 +4321,29 @@ function handleWsFrame(socket, buffer) {
       return;
     }
 
+    // Stop Terminal Stream / Unsubscribe from live transcript deltas
+    if (packet.packetType === 'AGENT_STOP_TERMINAL_STREAM' || packet.packetType === 'AGENT_UNSUBSCRIBE_SESSION') {
+      if (!socket.isAuthorized) return;
+      const sId = packet.payload?.sessionId;
+      removeStreamSubscriber(sId, socket);
+      sendWsPacket(socket, {
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'AGENT_STREAM_STATUS',
+        payload: {
+          sessionId: sId || null,
+          streaming: false,
+        },
+      });
+      return;
+    }
+
     // Fetch Agent Transcript History & Live Stream Subscription
-    if (packet.packetType === 'AGENT_GET_TRANSCRIPT_HISTORY' || packet.packetType === 'AGENT_SUBSCRIBE_SESSION') {
+    if (packet.packetType === 'AGENT_GET_TRANSCRIPT_HISTORY' ||
+        packet.packetType === 'AGENT_SUBSCRIBE_SESSION' ||
+        packet.packetType === 'AGENT_START_TERMINAL_STREAM') {
       if (!socket.isAuthorized) {
         sendWsPacket(socket, {
           magic: 'SK',
@@ -4215,8 +4356,12 @@ function handleWsFrame(socket, buffer) {
         return;
       }
       const sId = packet.payload?.sessionId || currentAgentActivity.sessionId;
-      if (sId) {
-        activeSubscribedSessions.add(sId);
+      const shouldStream = packet.packetType === 'AGENT_START_TERMINAL_STREAM' ||
+                           (packet.packetType === 'AGENT_SUBSCRIBE_SESSION' && packet.payload?.stream !== false) ||
+                           Boolean(packet.payload?.stream);
+
+      if (sId && shouldStream) {
+        addStreamSubscriber(sId, socket);
       }
       if (agentSessionManager && sId) {
         const hist = agentSessionManager.getTranscriptHistory(sId, { maxTurns: packet.payload?.maxTurns || 30 });
@@ -4229,7 +4374,10 @@ function handleWsFrame(socket, buffer) {
           packetId: Date.now(),
           timestamp: Date.now(),
           packetType: 'AGENT_TRANSCRIPT_HISTORY',
-          payload: hist,
+          payload: {
+            ...hist,
+            streaming: shouldStream,
+          },
         });
       }
       return;

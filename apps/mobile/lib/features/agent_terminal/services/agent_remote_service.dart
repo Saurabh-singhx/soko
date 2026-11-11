@@ -11,17 +11,24 @@ class AgentRemoteService {
   final _sessionsController = StreamController<List<AgentSessionSummary>>.broadcast();
   final _turnsController = StreamController<List<AgentTranscriptTurn>>.broadcast();
   final _activeSessionController = StreamController<AgentSessionSummary?>.broadcast();
+  final _streamingController = StreamController<bool>.broadcast();
+  final _agentDoneController = StreamController<Map<String, dynamic>>.broadcast();
 
   Stream<List<AgentSessionSummary>> get sessionsStream => _sessionsController.stream;
   Stream<List<AgentTranscriptTurn>> get turnsStream => _turnsController.stream;
   Stream<AgentSessionSummary?> get activeSessionStream => _activeSessionController.stream;
+  Stream<bool> get streamingStream => _streamingController.stream;
+  Stream<Map<String, dynamic>> get agentDoneStream => _agentDoneController.stream;
 
   String? _currentSessionId;
   List<AgentTranscriptTurn> _turns = [];
   bool _isWorking = false;
+  bool _isStreaming = false;
+  String? _previousStatus;
 
   String? get currentSessionId => _currentSessionId;
   bool get isWorking => _isWorking;
+  bool get isStreaming => _isStreaming;
 
   AgentRemoteService({required this.bleService});
 
@@ -36,6 +43,11 @@ class AgentRemoteService {
         break;
       case PacketType.agentTranscriptChunk:
         _handleTranscriptChunk(payload);
+        break;
+      case PacketType.notificationPost:
+        if (payload['isAgentDone'] == true && _isStreaming) {
+          _agentDoneController.add(payload);
+        }
         break;
       default:
         break;
@@ -53,11 +65,16 @@ class AgentRemoteService {
     final status = payload['status'] as String? ?? 'idle';
     _isWorking = status == 'working' || status == 'thinking';
 
+    // When terminal streaming is on, emit notification when agent is done
+    final wasRunning = _previousStatus == 'working' || _previousStatus == 'thinking' || _previousStatus == 'waiting';
+    if (_isStreaming && wasRunning && status == 'completed') {
+      _agentDoneController.add(payload);
+    }
+    _previousStatus = status;
+
     final sessionId = payload['sessionId'] as String?;
     if (sessionId != null && sessionId.isNotEmpty) {
-      if (_currentSessionId == null) {
-        subscribeToSession(sessionId);
-      }
+      _currentSessionId ??= sessionId;
       final current = activeList.firstWhere(
         (s) => s.sessionId == sessionId,
         orElse: () => AgentSessionSummary(
@@ -83,12 +100,40 @@ class AgentRemoteService {
   }
 
   void _handleTranscriptChunk(Map<String, dynamic> payload) {
+    // Stream terminal texts ONLY when requested
+    if (!_isStreaming) return;
+
     final chunkSessionId = payload['sessionId'] as String?;
     if (chunkSessionId != _currentSessionId) return;
 
-    // Refresh history if new events arrived
+    // Refresh history if new events arrived while streaming
     if (_currentSessionId != null) {
       subscribeToSession(_currentSessionId!);
+    }
+  }
+
+  /// Request live terminal streaming for target session ID
+  Future<void> requestTerminalStream(String sessionId) async {
+    _currentSessionId = sessionId;
+    _isStreaming = true;
+    _streamingController.add(true);
+    debugPrint('[AgentRemoteService] Requesting terminal stream for: $sessionId');
+    await bleService.sendPacket(
+      PacketType.agentTranscriptHistory,
+      {'sessionId': sessionId, 'maxTurns': 30, 'stream': true},
+    );
+  }
+
+  /// Pause/stop live terminal streaming
+  Future<void> stopTerminalStream() async {
+    _isStreaming = false;
+    _streamingController.add(false);
+    debugPrint('[AgentRemoteService] Stopping terminal stream for: $_currentSessionId');
+    if (_currentSessionId != null) {
+      await bleService.sendPacket(
+        PacketType.agentActivityStatus,
+        {'action': 'stop_stream', 'sessionId': _currentSessionId},
+      );
     }
   }
 
@@ -98,7 +143,7 @@ class AgentRemoteService {
     debugPrint('[AgentRemoteService] Subscribing to session: $sessionId');
     await bleService.sendPacket(
       PacketType.agentTranscriptHistory,
-      {'sessionId': sessionId, 'maxTurns': 30},
+      {'sessionId': sessionId, 'maxTurns': 30, 'stream': _isStreaming},
     );
   }
 
@@ -136,5 +181,7 @@ class AgentRemoteService {
     _sessionsController.close();
     _turnsController.close();
     _activeSessionController.close();
+    _streamingController.close();
+    _agentDoneController.close();
   }
 }

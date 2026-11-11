@@ -254,6 +254,76 @@ async function runTests() {
       assert.ok(hasActivity, 'WebSocket client receives AGENT_ACTIVITY_STATUS packet');
       console.log('  ✓ [PASS] WS client receives live AGENT_ACTIVITY_STATUS');
 
+      // Test on-demand streaming: Request stream explicitly
+      sendWs({
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'AGENT_START_TERMINAL_STREAM',
+        payload: { sessionId: testSessionId, stream: true },
+      });
+
+      await new Promise((r) => setTimeout(r, 600));
+
+      const hasStreamStart = receivedPackets.some(
+        (p) => p.packetType === 'AGENT_TRANSCRIPT_HISTORY' && p.payload?.streaming === true
+      );
+      assert.ok(hasStreamStart, 'WebSocket client receives AGENT_TRANSCRIPT_HISTORY with streaming: true');
+      console.log('  ✓ [PASS] Explicit stream request activates terminal streaming');
+
+      // Test stop terminal stream
+      sendWs({
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'AGENT_STOP_TERMINAL_STREAM',
+        payload: { sessionId: testSessionId },
+      });
+
+      await new Promise((r) => setTimeout(r, 400));
+
+      const hasStreamStop = receivedPackets.some(
+        (p) => p.packetType === 'AGENT_STREAM_STATUS' && p.payload?.streaming === false
+      );
+      assert.ok(hasStreamStop, 'WebSocket client receives AGENT_STREAM_STATUS with streaming: false');
+      console.log('  ✓ [PASS] Terminal streaming unsubscription pauses streaming');
+
+      // Test agent completion notification when streaming is active
+      sendWs({
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'AGENT_START_TERMINAL_STREAM',
+        payload: { sessionId: testSessionId, stream: true },
+      });
+
+      await new Promise((r) => setTimeout(r, 300));
+
+      // Simulate completed agent activity while stream is on
+      sendWs({
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'SIMULATE_AGENT_ACTIVITY',
+        payload: {
+          agent: 'antigravity',
+          detail: 'Task completed successfully',
+          durationMs: 400,
+        },
+      });
+
+      await new Promise((r) => setTimeout(r, 900));
+
+      const hasDoneNotification = receivedPackets.some(
+        (p) => p.packetType === 'NOTIFICATION_POST' && p.payload?.isAgentDone === true
+      );
+      assert.ok(hasDoneNotification, 'Stream subscriber receives NOTIFICATION_POST when agent completes task');
+      console.log('  ✓ [PASS] Notifications sent when agent completes while terminal streaming is on');
+
       client.destroy();
     }
 
@@ -263,23 +333,38 @@ async function runTests() {
       const cssPath = path.resolve(__dirname, '../apps/mobile/companion/agent-terminal/terminal.css');
       const jsPath = path.resolve(__dirname, '../apps/mobile/companion/agent-terminal/terminal.js');
       const flutterPath = path.resolve(__dirname, '../apps/mobile/lib/features/agent_terminal/ui/agent_terminal_view.dart');
+      const flutterServicePath = path.resolve(__dirname, '../apps/mobile/lib/features/agent_terminal/services/agent_remote_service.dart');
 
       assert.ok(fs.existsSync(cssPath), 'terminal.css exists');
       assert.ok(fs.existsSync(jsPath), 'terminal.js exists');
       assert.ok(fs.existsSync(flutterPath), 'agent_terminal_view.dart exists');
+      assert.ok(fs.existsSync(flutterServicePath), 'agent_remote_service.dart exists');
 
       const cssContent = fs.readFileSync(cssPath, 'utf8');
       assert.ok(cssContent.includes('.agent-terminal-container'), 'CSS contains main container');
       assert.ok(cssContent.includes('.agent-send-btn'), 'CSS contains send button');
       assert.ok(cssContent.includes('.term-chip'), 'CSS contains quick action chips');
+      assert.ok(cssContent.includes('.header-stream-btn'), 'CSS contains stream toggle button');
+      assert.ok(cssContent.includes('.agent-done-notice-card'), 'CSS contains agent completion card');
 
       const jsContent = fs.readFileSync(jsPath, 'utf8');
       assert.ok(jsContent.includes('AgentTerminal'), 'JS defines AgentTerminal');
       assert.ok(jsContent.includes('sendPrompt'), 'JS implements sendPrompt');
       assert.ok(jsContent.includes('renderFeed'), 'JS implements renderFeed');
+      assert.ok(jsContent.includes('isStreamingActive'), 'JS tracks isStreamingActive');
+      assert.ok(jsContent.includes('toggleTerminalStream'), 'JS implements toggleTerminalStream');
+      assert.ok(jsContent.includes('notifyAgentDone'), 'JS implements notifyAgentDone');
+
+      const flutterContent = fs.readFileSync(flutterPath, 'utf8');
+      assert.ok(flutterContent.includes('requestTerminalStream'), 'Flutter UI has requestTerminalStream');
+      assert.ok(flutterContent.includes('agentDoneStream'), 'Flutter UI listens to agentDoneStream');
+
+      const flutterServiceContent = fs.readFileSync(flutterServicePath, 'utf8');
+      assert.ok(flutterServiceContent.includes('requestTerminalStream'), 'Flutter service has requestTerminalStream');
+      assert.ok(flutterServiceContent.includes('agentDoneStream'), 'Flutter service has agentDoneStream');
 
       console.log('  ✓ [PASS] Companion CSS & JS assets verified');
-      console.log('  ✓ [PASS] Flutter AgentTerminalView widget verified');
+      console.log('  ✓ [PASS] Flutter AgentTerminalView & AgentRemoteService verified');
     }
 
     console.log('\n================================================================');
