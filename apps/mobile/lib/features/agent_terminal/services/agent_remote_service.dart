@@ -30,7 +30,13 @@ class AgentRemoteService {
   bool get isWorking => _isWorking;
   bool get isStreaming => _isStreaming;
 
-  AgentRemoteService({required this.bleService});
+  StreamSubscription<SokoEnvelope>? _bleSubscription;
+
+  AgentRemoteService({required this.bleService}) {
+    _bleSubscription = bleService.inboundStream.listen((envelope) {
+      handleInboundPacket(envelope.packetType, envelope.payload);
+    });
+  }
 
   /// Inbound packet dispatcher
   void handleInboundPacket(PacketType type, Map<String, dynamic> payload) {
@@ -45,7 +51,7 @@ class AgentRemoteService {
         _handleTranscriptChunk(payload);
         break;
       case PacketType.notificationPost:
-        if (payload['isAgentDone'] == true && _isStreaming) {
+        if (payload['isAgentDone'] == true || payload['isTaskDone'] == true) {
           _agentDoneController.add(payload);
         }
         break;
@@ -65,9 +71,9 @@ class AgentRemoteService {
     final status = payload['status'] as String? ?? 'idle';
     _isWorking = status == 'working' || status == 'thinking';
 
-    // When terminal streaming is on, emit notification when agent is done
+    // When agent completes, emit notification to mobile companion
     final wasRunning = _previousStatus == 'working' || _previousStatus == 'thinking' || _previousStatus == 'waiting';
-    if (_isStreaming && wasRunning && status == 'completed') {
+    if (wasRunning && status == 'completed') {
       _agentDoneController.add(payload);
     }
     _previousStatus = status;
@@ -104,11 +110,118 @@ class AgentRemoteService {
     if (!_isStreaming) return;
 
     final chunkSessionId = payload['sessionId'] as String?;
-    if (chunkSessionId != _currentSessionId) return;
+    if (chunkSessionId != null && _currentSessionId != null && chunkSessionId != _currentSessionId) return;
+    if (_currentSessionId == null && chunkSessionId != null && chunkSessionId.isNotEmpty) {
+      _currentSessionId = chunkSessionId;
+    }
 
-    // Refresh history if new events arrived while streaming
-    if (_currentSessionId != null) {
-      subscribeToSession(_currentSessionId!);
+    final rawEvents = payload['events'] as List<dynamic>?;
+    if (rawEvents == null || rawEvents.isEmpty) {
+      // Refresh history if turns list is empty
+      if (_turns.isEmpty && _currentSessionId != null) {
+        subscribeToSession(_currentSessionId!);
+      }
+      return;
+    }
+
+    bool updated = false;
+    final List<AgentTranscriptTurn> turnList = List.from(_turns);
+
+    for (final rawEv in rawEvents) {
+      if (rawEv is! Map<String, dynamic>) continue;
+      final type = rawEv['type'] as String? ?? '';
+
+      if (type == 'USER_INPUT') {
+        final content = (rawEv['content'] as String?)?.trim() ?? '';
+        if (content.isNotEmpty) {
+          final stepIdx = rawEv['step_index'] as int? ?? turnList.length + 1;
+          final turn = AgentTranscriptTurn(
+            id: 'turn-$stepIdx',
+            stepIndex: stepIdx,
+            timestamp: DateTime.now().millisecondsSinceEpoch,
+            userInput: content,
+            thinking: const [],
+            toolCalls: const [],
+            responses: const [],
+            status: 'working',
+          );
+          turnList.add(turn);
+          updated = true;
+        }
+      } else {
+        if (turnList.isEmpty) {
+          turnList.add(AgentTranscriptTurn(
+            id: 'turn-${DateTime.now().millisecondsSinceEpoch}',
+            stepIndex: 1,
+            timestamp: DateTime.now().millisecondsSinceEpoch,
+            userInput: 'Task in progress',
+            thinking: const [],
+            toolCalls: const [],
+            responses: const [],
+            status: 'working',
+          ));
+          updated = true;
+        }
+
+        final lastTurn = turnList.last;
+        final thinking = List<String>.from(lastTurn.thinking);
+        final toolCalls = List<AgentToolCallItem>.from(lastTurn.toolCalls);
+        final responses = List<String>.from(lastTurn.responses);
+        String turnStatus = lastTurn.status;
+
+        // Process thinking
+        final rawThinking = rawEv['thinking']?.toString().trim();
+        if (rawThinking != null && rawThinking.isNotEmpty && !thinking.contains(rawThinking)) {
+          thinking.add(rawThinking);
+          updated = true;
+        }
+
+        // Process tool_calls
+        final rawTools = rawEv['tool_calls'] as List<dynamic>?;
+        if (rawTools != null && rawTools.isNotEmpty) {
+          for (final rawTool in rawTools) {
+            if (rawTool is Map<String, dynamic>) {
+              final toolItem = AgentToolCallItem.fromJson(rawTool);
+              if (!toolCalls.any((t) => t.summary == toolItem.summary)) {
+                toolCalls.add(toolItem);
+                updated = true;
+              }
+            }
+          }
+        }
+
+        // Process responses
+        final rawContent = rawEv['content']?.toString().trim();
+        if (rawContent != null &&
+            rawContent.isNotEmpty &&
+            (type == 'PLANNER_RESPONSE' || type == 'MODEL' || type == 'ASSISTANT') &&
+            type != 'GENERIC' &&
+            !rawContent.startsWith('<') &&
+            !rawContent.contains('vertexaisearch.cloud.google.com') &&
+            !rawContent.contains('grounding-api-redirect') &&
+            !rawContent.startsWith('Created At:') &&
+            !responses.contains(rawContent)) {
+          responses.add(rawContent);
+          updated = true;
+        }
+
+        if (rawEv['status'] == 'DONE') {
+          turnStatus = 'completed';
+          updated = true;
+        }
+
+        turnList[turnList.length - 1] = lastTurn.copyWith(
+          thinking: thinking,
+          toolCalls: toolCalls,
+          responses: responses,
+          status: turnStatus,
+        );
+      }
+    }
+
+    if (updated) {
+      _turns = turnList;
+      _turnsController.add(List.unmodifiable(_turns));
     }
   }
 
@@ -178,6 +291,7 @@ class AgentRemoteService {
   }
 
   void dispose() {
+    _bleSubscription?.cancel();
     _sessionsController.close();
     _turnsController.close();
     _activeSessionController.close();

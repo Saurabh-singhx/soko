@@ -2824,7 +2824,7 @@
           window.AgentTerminal.updateSessionList(packet.payload?.sessions);
         }
       } else if (packet.packetType === 'NOTIFICATION_POST') {
-        if (packet.payload?.isAgentDone && window.AgentTerminal && window.AgentTerminal.isStreamingActive) {
+        if ((packet.payload?.isAgentDone || packet.payload?.isTaskDone) && window.AgentTerminal && typeof window.AgentTerminal.notifyAgentDone === 'function') {
           window.AgentTerminal.notifyAgentDone(packet.payload);
         }
       }

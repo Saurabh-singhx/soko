@@ -47,6 +47,13 @@ class MobileBleService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Dispatches an incoming envelope to all inbound listeners.
+  void handleIncomingEnvelope(SokoEnvelope envelope) {
+    if (!_inboundController.isClosed) {
+      _inboundController.add(envelope);
+    }
+  }
+
   /// Sends an application packet envelope over the BLE connection.
   Future<void> sendPacket(PacketType type, Map<String, dynamic> payload) async {
     if (_status != MobileBleStatus.connected) {

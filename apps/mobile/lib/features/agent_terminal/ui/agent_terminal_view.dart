@@ -34,6 +34,14 @@ class _AgentTerminalViewState extends State<AgentTerminalView> {
     super.initState();
     _initListeners();
     _seedMockStateIfIsolated();
+    final s = widget.service;
+    if (s != null) {
+      s.fetchSessions();
+      final sId = s.currentSessionId;
+      if (sId != null && sId.isNotEmpty && !s.isStreaming) {
+        s.requestTerminalStream(sId);
+      }
+    }
   }
 
   void _initListeners() {
@@ -53,6 +61,9 @@ class _AgentTerminalViewState extends State<AgentTerminalView> {
           _activeSession = session;
           _isWorking = session?.status == 'working' || session?.status == 'thinking';
         });
+        if (session != null && !s.isStreaming && _turns.isEmpty) {
+          s.requestTerminalStream(session.sessionId);
+        }
       }
     });
 

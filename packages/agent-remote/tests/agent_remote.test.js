@@ -176,7 +176,49 @@ console.log('[Suite 5/5] Transcript Parsing & Delta Reading');
   assert.strictEqual(delta.events.length, 1, 'Reads newly appended delta line');
   assert.strictEqual(delta.events[0].content, 'Commit changes with message "Refactor"');
   assert.ok(delta.newCursor > initialCursor, 'Cursor advanced correctly');
-  console.log('  ✓ [PASS] Parses turns, thinking, tool calls, and streams real-time delta logs');
+
+  // Edge Case: Mid-write partial JSON line flush
+  const completeLine = JSON.stringify({
+    step_index: 5,
+    type: 'PLANNER_RESPONSE',
+    content: 'All operations finished cleanly.',
+  }) + '\n';
+  const half1 = completeLine.slice(0, 30);
+  const half2 = completeLine.slice(30);
+
+  // Write first half without newline
+  fs.appendFileSync(transcriptFile, half1);
+  const partialRead = manager.readDelta(testSessionId, delta.newCursor);
+  assert.strictEqual(partialRead.events.length, 0, 'Does not emit incomplete JSON events');
+  assert.strictEqual(partialRead.newCursor, delta.newCursor, 'Cursor does not advance over incomplete line');
+
+  // Write second half with newline
+  fs.appendFileSync(transcriptFile, half2);
+  const completedRead = manager.readDelta(testSessionId, partialRead.newCursor);
+  assert.strictEqual(completedRead.events.length, 1, 'Emits event once complete line arrives');
+  assert.strictEqual(completedRead.events[0].content, 'All operations finished cleanly.');
+  assert.ok(completedRead.newCursor > delta.newCursor, 'Cursor advances after newline is flushed');
+
+  console.log('  ✓ [PASS] Parses turns, thinking, tool calls, and streams real-time delta logs safely');
+}
+
+// 6. Custom Environment Variable Brain Resolution & Tool Summaries
+console.log('[Suite 6/6] Custom Environment Dirs & Session Completion Resolution');
+{
+  process.env.SOKO_AGENT_BRAIN_DIR = mockBrainDir;
+  process.env.SOKO_AGENT_PRESENCE_DIR = mockPresenceDir;
+
+  const defaultManager = new AgentSessionManager();
+  assert.strictEqual(defaultManager.brainDirs.includes(mockBrainDir), true, 'Honors SOKO_AGENT_BRAIN_DIR');
+  assert.strictEqual(defaultManager.presenceDirs.includes(mockPresenceDir), true, 'Honors SOKO_AGENT_PRESENCE_DIR');
+
+  const history = defaultManager.getTranscriptHistory(testSessionId);
+  assert.strictEqual(history.success, true);
+  assert.strictEqual(history.isWaiting, false, 'Turn ending with PLANNER_RESPONSE is not waiting');
+
+  delete process.env.SOKO_AGENT_BRAIN_DIR;
+  delete process.env.SOKO_AGENT_PRESENCE_DIR;
+  console.log('  ✓ [PASS] Honors SOKO_AGENT_BRAIN_DIR and resolves session completion state accurately');
 }
 
 // Cleanup mock files
@@ -185,5 +227,5 @@ try {
 } catch {}
 
 console.log('\n================================================================');
-console.log(' RESULTS: 5 / 5 suites passed (100%)');
+console.log(' RESULTS: 6 / 6 suites passed (100%)');
 console.log('================================================================\n');

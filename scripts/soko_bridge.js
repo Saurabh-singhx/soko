@@ -1898,6 +1898,14 @@ function resolveAntigravityWorkspace(tPath, sessionId, parsedItems) {
 function parseAntigravitySession(tPath, stat, now, passedSessionId) {
   const cached = transcriptParseCache.get(tPath);
   if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    const ageMs = now - stat.mtimeMs;
+    if (cached.data && !cached.data.isDone && ageMs > 8000 && !cached.data.isWaiting) {
+      return {
+        ...cached.data,
+        isDone: true,
+        detail: cached.data.taskSummary ? `Finished: ${cached.data.taskSummary}` : 'Task completed successfully',
+      };
+    }
     return cached.data;
   }
 
@@ -1955,49 +1963,42 @@ function parseAntigravitySession(tPath, stat, now, passedSessionId) {
 
       if (last.type !== 'GENERIC' && (!last.tool_calls || last.tool_calls.length === 0)) {
         const scanStart = lastUserIdx >= 0 ? lastUserIdx : 0;
-        for (let i = parsed.length - 1; i >= scanStart; i--) {
+        let unresolvedBgTaskId = null;
+        let unresolvedSchedule = false;
+
+        for (let i = scanStart; i < parsed.length; i++) {
           const item = parsed[i];
-          if (item.status === 'RUNNING') {
-            let taskResolved = false;
-            for (let j = i + 1; j < parsed.length; j++) {
-              if (parsed[j].type === 'SYSTEM_MESSAGE' || (parsed[j].tool_calls && parsed[j].tool_calls.length > 0)) {
-                taskResolved = true;
-                break;
-              }
-            }
-            if (!taskResolved) {
-              isWaiting = true;
-              if (item.content && typeof item.content === 'string') {
-                const match = item.content.match(/Task Description:\s*([^,\n]+)/i);
-                if (match) {
-                  waitingDetail = match[1].trim();
-                } else if (item.content.includes('background task')) {
-                  waitingDetail = taskSummary ? `Running: ${taskSummary}` : 'Background task running';
-                }
-              }
-              break;
-            }
+          const str = item.content ? String(item.content) : '';
+
+          // Track launched background tasks
+          const bgMatch = str.match(/background task with task id:\s*([^\s\n\r"']+)/i);
+          if (bgMatch) {
+            unresolvedBgTaskId = bgMatch[1].replace(/["']/g, '');
           }
+
+          // Check if background task finished
+          if (unresolvedBgTaskId && (str.includes(unresolvedBgTaskId) && /finish(ed)?|result:|completed/i.test(str))) {
+            unresolvedBgTaskId = null;
+          }
+
+          // Track scheduled timers
           if (item.tool_calls && Array.isArray(item.tool_calls)) {
             for (const tc of item.tool_calls) {
               if (tc.name === 'schedule') {
-                let timerFired = false;
-                for (let j = i + 1; j < parsed.length; j++) {
-                  if (parsed[j].type === 'SYSTEM_MESSAGE' || (parsed[j].content && parsed[j].content.includes('task-'))) {
-                    timerFired = true;
-                    break;
-                  }
-                }
-                if (!timerFired) {
-                  isWaiting = true;
-                  const p = tc.args?.Prompt ? String(tc.args.Prompt).replace(/^\"|\"$/g, '') : '';
-                  waitingDetail = p ? `Waiting: ${p.slice(0, 36)}` : 'Waiting for scheduled task';
-                  break;
-                }
+                unresolvedSchedule = true;
               }
             }
           }
-          if (isWaiting) break;
+          if (unresolvedSchedule && (item.type === 'SYSTEM_MESSAGE' || str.includes('task-') || /timer (fired|condition)|cron trigger/i.test(str))) {
+            unresolvedSchedule = false;
+          }
+        }
+
+        if (unresolvedBgTaskId || unresolvedSchedule) {
+          isWaiting = true;
+          waitingDetail = unresolvedBgTaskId
+            ? (taskSummary ? `Running: ${taskSummary}` : `Background task (${unresolvedBgTaskId.slice(-8)})`)
+            : 'Waiting for scheduled task';
         }
       }
 
@@ -2010,10 +2011,13 @@ function parseAntigravitySession(tPath, stat, now, passedSessionId) {
         isDone = false;
       } else if (last.type === 'GENERIC') {
         let prevToolAction = '';
+        let lastToolName = '';
         for (let i = parsed.length - 2; i >= 0; i--) {
           const item = parsed[i];
           if (item.tool_calls && Array.isArray(item.tool_calls) && item.tool_calls.length > 0) {
-            prevToolAction = formatToolCallAction(item.tool_calls[item.tool_calls.length - 1]);
+            const call = item.tool_calls[item.tool_calls.length - 1];
+            prevToolAction = formatToolCallAction(call);
+            lastToolName = call.name || '';
             if (prevToolAction) break;
           }
         }
@@ -2024,8 +2028,17 @@ function parseAntigravitySession(tPath, stat, now, passedSessionId) {
         } else {
           detail = taskSummary ? `Working on: ${taskSummary}` : 'Reasoning next step';
         }
-        isDone = false;
-      } else if (last.type === 'PLANNER_RESPONSE') {
+
+        // If the last executed action was send_message (completion report sent to parent/user)
+        // or if file write has stopped (> 8s quiet without active tool execution):
+        const ageMs = now - stat.mtimeMs;
+        if (lastToolName === 'send_message' || ageMs > 8000) {
+          isDone = true;
+          detail = taskSummary ? `Finished: ${taskSummary}` : 'Task completed successfully';
+        } else {
+          isDone = false;
+        }
+      } else if (last.type === 'PLANNER_RESPONSE' || last.type === 'MODEL' || last.type === 'ASSISTANT') {
         isDone = true;
         let summary = '';
         if (last.content && typeof last.content === 'string') {
@@ -2287,13 +2300,13 @@ function checkActiveAgentActivity() {
                 workspaceName: parsed.workspaceName,
                 timestamp: stat.mtimeMs,
                 mtimeMs: stat.mtimeMs,
-                expiresAt: stat.mtimeMs + AGENT_COMPLETION_RETENTION_MS,
+                expiresAt: now + AGENT_COMPLETION_RETENTION_MS,
               });
             } else {
               agentSessionRegistry.delete(regKey);
             }
-          } else if (ageMs <= 60000) {
-            // Actively working
+          } else if (ageMs <= 8000) {
+            // Actively working (transcript modified within last 8 seconds)
             agentSessionRegistry.set(regKey, {
               sessionId,
               agent: 'antigravity',
@@ -2308,7 +2321,7 @@ function checkActiveAgentActivity() {
               timestamp: stat.mtimeMs,
               mtimeMs: stat.mtimeMs,
             });
-          } else if (existing && existing.status === 'working' && (now - existing.timestamp) <= 60000) {
+          } else if (existing && (existing.status === 'working' || existing.status === 'thinking' || existing.status === 'waiting') && ageMs <= AGENT_COMPLETION_RETENTION_MS + 8000) {
             // Transition from active working to completed when file write stops
             agentSessionRegistry.set(regKey, {
               sessionId,
@@ -2423,7 +2436,7 @@ function checkActiveAgentActivity() {
                   } else {
                     agentSessionRegistry.delete(regKey);
                   }
-                } else if (ageMs <= 60000) {
+                } else if (ageMs <= 8000) {
                   agentSessionRegistry.set(regKey, {
                     sessionId,
                     agent: 'codex',
@@ -2437,6 +2450,22 @@ function checkActiveAgentActivity() {
                     workspaceName,
                     timestamp: s.mtimeMs,
                     mtimeMs: s.mtimeMs,
+                  });
+                } else if (existing && (existing.status === 'working' || existing.status === 'thinking' || existing.status === 'waiting') && ageMs <= AGENT_COMPLETION_RETENTION_MS + 8000) {
+                  agentSessionRegistry.set(regKey, {
+                    sessionId,
+                    agent: 'codex',
+                    name: 'OpenAI Codex',
+                    status: 'completed',
+                    detail: taskSummary ? `Done: ${taskSummary}` : 'OpenAI Codex: Task completed',
+                    message: taskSummary || 'OpenAI Codex: Task completed',
+                    taskSummary,
+                    tokensUsed: codexTokens,
+                    workspace: cwd,
+                    workspaceName,
+                    timestamp: now,
+                    mtimeMs: s.mtimeMs,
+                    expiresAt: now + AGENT_COMPLETION_RETENTION_MS,
                   });
                 }
               } catch {}
@@ -2511,7 +2540,7 @@ function checkActiveAgentActivity() {
                   } else {
                     agentSessionRegistry.delete(regKey);
                   }
-                } else if (ageMs <= 60000) {
+                } else if (ageMs <= 8000) {
                   agentSessionRegistry.set(regKey, {
                     sessionId,
                     agent: 'claude',
@@ -2525,6 +2554,22 @@ function checkActiveAgentActivity() {
                     workspaceName: claudeWsName,
                     timestamp: s.mtimeMs,
                     mtimeMs: s.mtimeMs,
+                  });
+                } else if (existing && (existing.status === 'working' || existing.status === 'thinking' || existing.status === 'waiting') && ageMs <= AGENT_COMPLETION_RETENTION_MS + 8000) {
+                  agentSessionRegistry.set(regKey, {
+                    sessionId,
+                    agent: 'claude',
+                    name: 'Anthropic Claude',
+                    status: 'completed',
+                    detail: summary ? `Done: ${summary}` : 'Anthropic Claude: Task completed',
+                    message: summary,
+                    taskSummary: summary,
+                    tokensUsed: claudeTokens,
+                    workspace: claudeCwd,
+                    workspaceName: claudeWsName,
+                    timestamp: now,
+                    mtimeMs: s.mtimeMs,
+                    expiresAt: now + AGENT_COMPLETION_RETENTION_MS,
                   });
                 }
               } catch {}
@@ -2633,44 +2678,49 @@ function checkAndNotifyAgentCompletion(active) {
     const wasRunning = prevStatus === 'working' || prevStatus === 'thinking' || prevStatus === 'waiting';
 
     if (isNowCompleted && wasRunning) {
-      // Agent is done! Send notification if terminal streaming is on
-      const targetSockets = new Set();
+      const summaryMsg = s.message || s.taskSummary || 'Agent execution completed successfully';
+      const notifPacket = {
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'NOTIFICATION_POST',
+        payload: {
+          id: `agent-done-${sId}-${Date.now()}`,
+          appName: s.name || s.agent || 'Google Antigravity',
+          packageName: 'com.soko.agent',
+          title: `${s.name || 'Agent'} Finished Task`,
+          body: summaryMsg,
+          message: summaryMsg,
+          priority: 'high',
+          timestamp: Date.now(),
+          isAgentDone: true,
+          isTaskDone: true,
+          sessionId: sId,
+        },
+      };
+
+      // Broadcast to ALL connected authorized clients (phone companion, desktop HUD)
+      broadcastPacket(notifPacket);
+
+      // In addition, ensure all stream subscribers receive it directly
       if (activeStreamSubscribers.has(sId)) {
         for (const sock of activeStreamSubscribers.get(sId)) {
-          targetSockets.add(sock);
-        }
-      } else if (activeStreamSubscribers.size > 0) {
-        // If terminal streaming is active for any session, notify all streaming clients
-        for (const subs of activeStreamSubscribers.values()) {
-          for (const sock of subs) {
-            targetSockets.add(sock);
-          }
-        }
-      }
-
-      if (targetSockets.size > 0) {
-        const notifPacket = {
-          magic: 'SK',
-          version: 1,
-          packetId: Date.now(),
-          timestamp: Date.now(),
-          packetType: 'NOTIFICATION_POST',
-          payload: {
-            id: `agent-done-${sId}-${Date.now()}`,
-            appName: s.name || s.agent || 'Google Antigravity',
-            title: `${s.name || 'Agent'} Finished Task`,
-            message: s.message || s.taskSummary || 'Agent execution completed successfully',
-            timestamp: Date.now(),
-            isAgentDone: true,
-            sessionId: sId,
-          },
-        };
-        for (const sock of targetSockets) {
           if (sock.readyState !== 'closed' && sock.isAuthorized) {
             sendWsPacket(sock, notifPacket);
           }
         }
+      } else if (activeStreamSubscribers.size > 0) {
+        for (const subs of activeStreamSubscribers.values()) {
+          for (const sock of subs) {
+            if (sock.readyState !== 'closed' && sock.isAuthorized) {
+              sendWsPacket(sock, notifPacket);
+            }
+          }
+        }
       }
+
+      console.log(`[Bridge Agent] Notification broadcast: Task finished for session ${sId}`);
     }
     previousSessionStatuses.set(sId, s.status);
   }
@@ -2679,6 +2729,8 @@ function checkAndNotifyAgentCompletion(active) {
 function broadcastAgentActivity() {
   const current = checkActiveAgentActivity();
   currentAgentActivity = current;
+  const sessionIds = (current.activeSessions || []).map((s) => `${s.sessionId}:${s.status}:${s.detail}`).join('|');
+  lastAgentStateKey = `${current.agent}-${current.status}-${current.detail}-${current.tokensUsed}-${current.message}-${current.activeCount}-${sessionIds}`;
   checkAndNotifyAgentCompletion(current);
   broadcastPacket({
     magic: 'SK',
@@ -3459,6 +3511,17 @@ function createWebSocketServer(server) {
         certFingerprint: tlsEngine.getFingerprint(),
         tlsEnabled: true,
       },
+    });
+
+    // Send immediate initial AGENT_ACTIVITY_STATUS so client receives active session state without delay
+    const initialActivity = currentAgentActivity || checkActiveAgentActivity();
+    sendWsPacket(socket, {
+      magic: 'SK',
+      version: 1,
+      packetId: Date.now(),
+      timestamp: Date.now(),
+      packetType: 'AGENT_ACTIVITY_STATUS',
+      payload: initialActivity,
     });
 
     // Notify other clients (e.g. desktop) about active client count & discovered devices
@@ -4322,7 +4385,9 @@ function handleWsFrame(socket, buffer) {
     }
 
     // Stop Terminal Stream / Unsubscribe from live transcript deltas
-    if (packet.packetType === 'AGENT_STOP_TERMINAL_STREAM' || packet.packetType === 'AGENT_UNSUBSCRIBE_SESSION') {
+    if (packet.packetType === 'AGENT_STOP_TERMINAL_STREAM' ||
+        packet.packetType === 'AGENT_UNSUBSCRIBE_SESSION' ||
+        (packet.packetType === 'AGENT_ACTIVITY_STATUS' && packet.payload?.action === 'stop_stream')) {
       if (!socket.isAuthorized) return;
       const sId = packet.payload?.sessionId;
       removeStreamSubscriber(sId, socket);
@@ -4343,7 +4408,8 @@ function handleWsFrame(socket, buffer) {
     // Fetch Agent Transcript History & Live Stream Subscription
     if (packet.packetType === 'AGENT_GET_TRANSCRIPT_HISTORY' ||
         packet.packetType === 'AGENT_SUBSCRIBE_SESSION' ||
-        packet.packetType === 'AGENT_START_TERMINAL_STREAM') {
+        packet.packetType === 'AGENT_START_TERMINAL_STREAM' ||
+        packet.packetType === 'AGENT_TRANSCRIPT_HISTORY') {
       if (!socket.isAuthorized) {
         sendWsPacket(socket, {
           magic: 'SK',
@@ -4355,9 +4421,17 @@ function handleWsFrame(socket, buffer) {
         });
         return;
       }
-      const sId = packet.payload?.sessionId || currentAgentActivity.sessionId;
+      let sId = packet.payload?.sessionId || currentAgentActivity.sessionId;
+      if (!sId && agentSessionManager) {
+        const discovered = agentSessionManager.discoverSessions();
+        if (discovered && discovered.length > 0) {
+          sId = discovered[0].sessionId;
+        }
+      }
+
       const shouldStream = packet.packetType === 'AGENT_START_TERMINAL_STREAM' ||
                            (packet.packetType === 'AGENT_SUBSCRIBE_SESSION' && packet.payload?.stream !== false) ||
+                           (packet.packetType === 'AGENT_TRANSCRIPT_HISTORY' && packet.payload?.stream !== false) ||
                            Boolean(packet.payload?.stream);
 
       if (sId && shouldStream) {
@@ -4376,6 +4450,7 @@ function handleWsFrame(socket, buffer) {
           packetType: 'AGENT_TRANSCRIPT_HISTORY',
           payload: {
             ...hist,
+            sessionId: sId,
             streaming: shouldStream,
           },
         });
@@ -4762,6 +4837,27 @@ function executeWhitelistedCli(command, onFinished = null) {
         timestamp: Date.now(),
         packetType: 'CLI_OUTPUT_STREAM',
         payload: finishPayload,
+      });
+
+      // Broadcast task completion notification
+      broadcastPacket({
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'NOTIFICATION_POST',
+        payload: {
+          id: `cli-done-${command}-${Date.now()}`,
+          appName: 'Soko CLI',
+          packageName: 'com.soko.cli',
+          title: `${whitelisted.title || command}: ${isFailed ? 'Failed' : 'Completed'}`,
+          body: firstLine || (isFailed ? 'Command execution failed' : 'Command completed successfully'),
+          message: firstLine || (isFailed ? 'Command execution failed' : 'Command completed successfully'),
+          priority: isFailed ? 'high' : 'normal',
+          timestamp: Date.now(),
+          isTaskDone: true,
+          commandId: `cmd-${command}`,
+        },
       });
 
       if (onFinished) {

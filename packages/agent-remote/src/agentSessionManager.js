@@ -122,7 +122,13 @@ class AgentSessionManager {
 
   _resolveDefaultBrainDirs() {
     const home = os.homedir();
+    const envDirs = (process.env.SOKO_AGENT_BRAIN_DIRS || process.env.SOKO_AGENT_BRAIN_DIR || '')
+      .split(path.delimiter)
+      .map((d) => d.trim())
+      .filter(Boolean);
+
     return [
+      ...envDirs,
       path.join(home, '.gemini/antigravity-cli/brain'),
       path.join(home, '.gemini/antigravity/brain'),
       path.join(home, '.gemini/antigravity-ide/brain'),
@@ -131,7 +137,13 @@ class AgentSessionManager {
 
   _resolveDefaultPresenceDirs() {
     const home = os.homedir();
+    const envDirs = (process.env.SOKO_AGENT_PRESENCE_DIRS || process.env.SOKO_AGENT_PRESENCE_DIR || '')
+      .split(path.delimiter)
+      .map((d) => d.trim())
+      .filter(Boolean);
+
     return [
+      ...envDirs,
       path.join(home, '.gemini/antigravity-cli/presence'),
       path.join(home, '.gemini/antigravity/presence'),
       path.join(home, '.gemini/antigravity-ide/presence'),
@@ -403,8 +415,8 @@ class AgentSessionManager {
       if (lastLine) {
         try {
           const lastObj = JSON.parse(lastLine);
-          if (lastObj.type === 'PLANNER_RESPONSE' && (!lastObj.tool_calls || lastObj.tool_calls.length === 0)) {
-            isWaiting = true;
+          if ((lastObj.type === 'PLANNER_RESPONSE' || lastObj.type === 'MODEL' || lastObj.type === 'ASSISTANT') && (!lastObj.tool_calls || lastObj.tool_calls.length === 0)) {
+            isWaiting = false;
             isWorking = false;
           } else if (lastObj.status === 'RUNNING' || (lastObj.tool_calls && lastObj.tool_calls.length > 0)) {
             isWorking = true;
@@ -431,6 +443,8 @@ class AgentSessionManager {
 
   /**
    * Reads newly appended lines since the last cursor byte offset.
+   * Handles concurrent mid-write flushes safely: only advances cursor
+   * up to the last complete newline (\n) so partial JSON lines are never corrupted.
    */
   readDelta(sessionId, lastByteOffset = 0) {
     const paths = this.resolveSessionPaths(sessionId);
@@ -438,7 +452,10 @@ class AgentSessionManager {
 
     try {
       const stat = fs.statSync(paths.transcriptPath);
-      if (stat.size <= lastByteOffset) {
+      // If file was truncated or recreated
+      const safeOffset = (lastByteOffset > stat.size) ? 0 : lastByteOffset;
+
+      if (stat.size <= safeOffset) {
         return {
           sessionId,
           newCursor: stat.size,
@@ -447,13 +464,28 @@ class AgentSessionManager {
         };
       }
 
-      const bytesToRead = stat.size - lastByteOffset;
+      const bytesToRead = stat.size - safeOffset;
       const buffer = Buffer.alloc(bytesToRead);
       const fd = fs.openSync(paths.transcriptPath, 'r');
-      fs.readSync(fd, buffer, 0, bytesToRead, lastByteOffset);
+      fs.readSync(fd, buffer, 0, bytesToRead, safeOffset);
       fs.closeSync(fd);
 
-      const raw = buffer.toString('utf8');
+      // Find the last complete newline byte (0x0A) in the buffer.
+      // If the buffer does not end with a newline, the trailing slice is an incomplete
+      // JSON line currently being flushed by the writer. We must NOT consume it yet.
+      const lastNewlineIdx = buffer.lastIndexOf(0x0A);
+      if (lastNewlineIdx === -1) {
+        // No complete newline in this read window. Do not advance cursor; wait for completion.
+        return {
+          sessionId,
+          newCursor: safeOffset,
+          mtimeMs: stat.mtimeMs,
+          events: [],
+        };
+      }
+
+      const bytesConsumed = lastNewlineIdx + 1;
+      const raw = buffer.subarray(0, bytesConsumed).toString('utf8');
       const lines = raw.split('\n');
       const events = [];
 
@@ -468,13 +500,13 @@ class AgentSessionManager {
           }
           events.push(parsed);
         } catch {
-          // Incomplete line write in progress, skip partial
+          // Skip unparseable lines safely
         }
       }
 
       return {
         sessionId,
-        newCursor: stat.size,
+        newCursor: safeOffset + bytesConsumed,
         mtimeMs: stat.mtimeMs,
         events,
       };

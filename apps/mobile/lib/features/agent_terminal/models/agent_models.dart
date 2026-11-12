@@ -44,10 +44,42 @@ class AgentToolCallItem {
   });
 
   factory AgentToolCallItem.fromJson(Map<String, dynamic> json) {
+    final name = json['name'] as String? ?? 'tool';
+    final args = (json['args'] as Map<String, dynamic>?) ?? {};
+    String summary = json['summary'] as String? ?? '';
+
+    if (summary.isEmpty) {
+      if (name == 'run_command' || name == 'execute_command') {
+        final cmd = (args['CommandLine'] ?? args['command'] ?? '').toString().trim();
+        summary = cmd.isNotEmpty ? '\$ $cmd' : 'Run command';
+      } else if (name == 'edit_file' || name == 'edit_file_replace') {
+        final p = (args['Path'] ?? args['path'] ?? '').toString().trim();
+        final base = p.split(RegExp(r'[\\/]')).last;
+        summary = base.isNotEmpty ? 'Edit $base' : 'Editing file';
+      } else if (name == 'write_file' || name == 'write_to_file') {
+        final p = (args['Path'] ?? args['path'] ?? '').toString().trim();
+        final base = p.split(RegExp(r'[\\/]')).last;
+        summary = base.isNotEmpty ? 'Create $base' : 'Creating file';
+      } else if (name == 'read_file') {
+        final p = (args['Path'] ?? args['path'] ?? '').toString().trim();
+        final base = p.split(RegExp(r'[\\/]')).last;
+        summary = base.isNotEmpty ? 'Read $base' : 'Reading file';
+      } else if (name == 'search_web') {
+        final q = (args['query'] ?? '').toString().trim();
+        summary = q.isNotEmpty ? 'Search: "$q"' : 'Searching web';
+      } else if (name == 'ask_question') {
+        summary = 'Clarifying requirements with user';
+      } else if (name == 'send_message') {
+        summary = 'Sending final report to caller';
+      } else {
+        summary = 'Execute $name';
+      }
+    }
+
     return AgentToolCallItem(
-      name: json['name'] as String? ?? 'tool',
-      summary: json['summary'] as String? ?? '',
-      args: (json['args'] as Map<String, dynamic>?) ?? {},
+      name: name,
+      summary: summary,
+      args: args,
     );
   }
 }
@@ -72,6 +104,28 @@ class AgentTranscriptTurn {
     this.responses = const [],
     this.status = 'completed',
   });
+
+  AgentTranscriptTurn copyWith({
+    String? id,
+    int? stepIndex,
+    int? timestamp,
+    String? userInput,
+    List<String>? thinking,
+    List<AgentToolCallItem>? toolCalls,
+    List<String>? responses,
+    String? status,
+  }) {
+    return AgentTranscriptTurn(
+      id: id ?? this.id,
+      stepIndex: stepIndex ?? this.stepIndex,
+      timestamp: timestamp ?? this.timestamp,
+      userInput: userInput ?? this.userInput,
+      thinking: thinking ?? this.thinking,
+      toolCalls: toolCalls ?? this.toolCalls,
+      responses: responses ?? this.responses,
+      status: status ?? this.status,
+    );
+  }
 
   factory AgentTranscriptTurn.fromJson(Map<String, dynamic> json) {
     final toolList = (json['toolCalls'] as List<dynamic>?)

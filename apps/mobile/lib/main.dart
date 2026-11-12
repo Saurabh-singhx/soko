@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'core/theme/glass_theme.dart';
 import 'services/bluetooth/ble_service.dart';
@@ -23,10 +24,37 @@ class SokoMobileApp extends StatefulWidget {
 class _SokoMobileAppState extends State<SokoMobileApp> {
   final MobileBleService bleService = MobileBleService();
   late final AgentRemoteService agentRemoteService = AgentRemoteService(bleService: bleService);
+  final GlobalKey<ScaffoldMessengerState> _messengerKey = GlobalKey<ScaffoldMessengerState>();
+  StreamSubscription<Map<String, dynamic>>? _doneSub;
   int _currentIndex = 0;
 
   @override
+  void initState() {
+    super.initState();
+    _doneSub = agentRemoteService.agentDoneStream.listen((event) {
+      final title = event['title'] as String? ?? 'Agent Task Done ✓';
+      final message = (event['message'] ?? event['body'] ?? event['taskSummary']) as String? ?? 'Agent completed all steps.';
+      _messengerKey.currentState?.showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle_rounded, color: Color(0xFF22C55E), size: 18),
+              const SizedBox(width: 8),
+              Expanded(child: Text('$title: $message')),
+            ],
+          ),
+          backgroundColor: const Color(0xFF1E293B),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    });
+  }
+
+  @override
   void dispose() {
+    _doneSub?.cancel();
     agentRemoteService.dispose();
     bleService.dispose();
     super.dispose();
@@ -35,6 +63,7 @@ class _SokoMobileAppState extends State<SokoMobileApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      scaffoldMessengerKey: _messengerKey,
       title: 'Soko Companion',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(

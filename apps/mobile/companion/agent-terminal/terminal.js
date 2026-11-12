@@ -287,6 +287,10 @@
       }
     },
 
+    userManuallyPaused: false,
+    lastNotifiedSessionId: null,
+    lastNotifiedTimestamp: 0,
+
     /**
      * Called whenever user switches to the Terminal tab.
      */
@@ -313,11 +317,11 @@
         return;
       }
       this.fetchSessions();
-      if (this.currentSessionId) {
-        // Stream text deltas only if explicitly requested
-        if (this.isStreamingActive && typeof window.sendPacket === 'function') {
-          window.sendPacket('AGENT_START_TERMINAL_STREAM', { sessionId: this.currentSessionId, stream: true });
-        }
+      // Auto-start or resume streaming if user hasn't explicitly clicked to pause
+      if (!this.userManuallyPaused && !this.isStreamingActive) {
+        this.startTerminalStream();
+      } else if (this.isStreamingActive && this.currentSessionId && typeof window.sendPacket === 'function') {
+        window.sendPacket('AGENT_START_TERMINAL_STREAM', { sessionId: this.currentSessionId, stream: true });
         this.syncCurrentSession();
       }
       setTimeout(() => this.scrollToBottom(), 100);
@@ -325,12 +329,10 @@
 
     /**
      * Called whenever user navigates away from the Terminal tab.
-     * Stops terminal streaming to save battery and network bandwidth.
+     * Keep stream active so background deltas and completion alerts persist.
      */
     onTabDeactivated() {
-      if (this.isStreamingActive) {
-        this.stopTerminalStream(true);
-      }
+      // Intentionally keep background streaming subscription active
     },
 
     /**
@@ -338,7 +340,9 @@
      */
     onWsConnected() {
       this.fetchSessions();
-      if (this.isStreamingActive && this.currentSessionId && typeof window.sendPacket === 'function') {
+      if (!this.userManuallyPaused && !this.isStreamingActive) {
+        this.startTerminalStream();
+      } else if (this.isStreamingActive && this.currentSessionId && typeof window.sendPacket === 'function') {
         window.sendPacket('AGENT_START_TERMINAL_STREAM', { sessionId: this.currentSessionId, stream: true });
       }
     },
@@ -348,8 +352,10 @@
      */
     toggleTerminalStream() {
       if (this.isStreamingActive) {
+        this.userManuallyPaused = true;
         this.stopTerminalStream();
       } else {
+        this.userManuallyPaused = false;
         this.startTerminalStream();
       }
     },
@@ -364,7 +370,7 @@
         }
       }
       if (!this.currentSessionId) {
-        if (typeof window.showToast === 'function') window.showToast('No active agent session available', 'amber');
+        if (typeof window.showToast === 'function') window.showToast('Connecting to agent session...', 'info');
         return;
       }
 
@@ -427,8 +433,17 @@
      * Notifies user that agent has completed its task.
      */
     notifyAgentDone(info) {
+      const sessionId = (info && info.sessionId) || this.currentSessionId || 'default';
+      const now = Date.now();
+      // Deduplicate rapid completion alerts for the same session within 4 seconds
+      if (this.lastNotifiedSessionId === sessionId && (now - this.lastNotifiedTimestamp) < 4000) {
+        return;
+      }
+      this.lastNotifiedSessionId = sessionId;
+      this.lastNotifiedTimestamp = now;
+
       const title = (info && info.title) || 'Agent Task Done ✓';
-      const message = (info && (info.message || info.taskSummary)) || 'Agent completed all steps successfully.';
+      const message = (info && (info.message || info.body || info.taskSummary)) || 'Agent completed all steps successfully.';
 
       // 1. Toast notification
       if (typeof window.showToast === 'function') {
@@ -445,14 +460,28 @@
       }
 
       // 3. Web Notification API
-      if (typeof window.Notification !== 'undefined' && Notification.permission === 'granted') {
-        try {
-          new Notification(title, {
-            body: message,
-            icon: 'icon.png',
-            badge: 'icon.png',
-          });
-        } catch (e) {}
+      if (typeof window.Notification !== 'undefined') {
+        if (Notification.permission === 'granted') {
+          try {
+            new Notification(title, {
+              body: message,
+              icon: 'icon.png',
+              badge: 'icon.png',
+            });
+          } catch (e) {}
+        } else if (Notification.permission === 'default') {
+          try {
+            Notification.requestPermission().then((perm) => {
+              if (perm === 'granted') {
+                new Notification(title, {
+                  body: message,
+                  icon: 'icon.png',
+                  badge: 'icon.png',
+                });
+              }
+            });
+          } catch (e) {}
+        }
       }
 
       // 4. Haptic vibration
@@ -718,7 +747,7 @@
       if (!this.currentSessionId || this.isPreviewMode) return;
 
       if (typeof window.sendPacket === 'function') {
-        window.sendPacket('AGENT_GET_TRANSCRIPT_HISTORY', { sessionId: this.currentSessionId });
+        window.sendPacket('AGENT_GET_TRANSCRIPT_HISTORY', { sessionId: this.currentSessionId, stream: Boolean(this.isStreamingActive) });
       } else if (typeof window.postHttp === 'function') {
         window.postHttp(`/api/agent/transcript?sessionId=${encodeURIComponent(this.currentSessionId)}&cursor=${this.cursor}`, {
           sessionId: this.currentSessionId,
@@ -766,8 +795,9 @@
       this.isWaiting = isWaiting;
       this.previousAgentStatus = payload.status;
 
-      // When terminal streaming is on, send notifications when agent is done
-      if (this.isStreamingActive && (prevStatus === 'working' || prevStatus === 'thinking' || prevStatus === 'waiting') && isCompleted) {
+      // Send notifications when agent is done
+      const wasRunning = prevStatus === 'working' || prevStatus === 'thinking' || prevStatus === 'waiting';
+      if (wasRunning && isCompleted) {
         this.notifyAgentDone({
           sessionId: payload.sessionId || this.currentSessionId,
           appName: payload.name || 'Google Antigravity',
@@ -829,11 +859,52 @@
     },
 
     /**
+     * Formats tool call object into clean human-readable action label.
+     */
+    formatToolCallSummary(tc) {
+      if (!tc) return 'Executing action';
+      const name = tc.name || 'tool';
+      const args = tc.args || {};
+      let summary = args.toolSummary || args.toolAction || '';
+      if (!summary) {
+        if (name === 'run_command') {
+          const cmd = String(args.CommandLine || args.command || '').trim();
+          summary = cmd ? `$ ${cmd.slice(0, 60)}` : 'Running shell command';
+        } else if (name === 'read_file' || name === 'view_file') {
+          const p = String(args.Path || args.path || '').trim();
+          const base = p.split(/[\\/]/).pop();
+          summary = base ? `Read ${base}` : 'Reading file';
+        } else if (name === 'edit_file' || name === 'replace_file_content') {
+          const p = String(args.Path || args.path || '').trim();
+          const base = p.split(/[\\/]/).pop();
+          summary = base ? `Edit ${base}` : 'Editing file';
+        } else if (name === 'write_file' || name === 'write_to_file') {
+          const p = String(args.Path || args.path || '').trim();
+          const base = p.split(/[\\/]/).pop();
+          summary = base ? `Create ${base}` : 'Creating file';
+        } else if (name === 'search_web') {
+          summary = args.query ? `Search: "${String(args.query).slice(0, 40)}"` : 'Searching web';
+        } else if (name === 'ask_question') {
+          summary = 'Clarifying requirements with user';
+        } else {
+          summary = `Execute ${name}`;
+        }
+      }
+      return summary;
+    },
+
+    /**
      * Appends live stream events emitted by the agent in real time.
      * Ingests delta chunks directly with 0ms round-trip lag.
      */
     handleTranscriptChunk(chunk) {
-      if (!chunk || chunk.sessionId !== this.currentSessionId || !this.isStreamingActive) return;
+      if (!chunk || !this.isStreamingActive) return;
+      if (chunk.sessionId && !this.currentSessionId) {
+        this.currentSessionId = chunk.sessionId;
+      }
+      if (chunk.sessionId && this.currentSessionId && chunk.sessionId !== this.currentSessionId) {
+        return;
+      }
 
       if (chunk.newCursor) {
         this.cursor = chunk.newCursor;
@@ -859,7 +930,22 @@
               });
               feedNeedsUpdate = true;
             }
-          } else if (this.turns.length > 0) {
+          } else {
+            // Ensure we have an active turn to attach to so events are never dropped
+            if (this.turns.length === 0) {
+              this.turns.push({
+                id: `turn-${ev.step_index || Date.now()}`,
+                stepIndex: ev.step_index || 0,
+                timestamp: ev.created_at ? new Date(ev.created_at).getTime() : Date.now(),
+                userInput: 'Task in progress',
+                thinking: [],
+                toolCalls: [],
+                responses: [],
+                status: 'working',
+              });
+              feedNeedsUpdate = true;
+            }
+
             const currentTurn = this.turns[this.turns.length - 1];
 
             if (ev.thinking) {
@@ -872,7 +958,7 @@
 
             if (ev.tool_calls && Array.isArray(ev.tool_calls)) {
               for (const tc of ev.tool_calls) {
-                const summary = tc.args?.CommandLine || tc.args?.Path || tc.args?.toolSummary || tc.name || '';
+                const summary = this.formatToolCallSummary(tc);
                 const existing = currentTurn.toolCalls.some((t) => t.summary === summary);
                 if (!existing) {
                   currentTurn.toolCalls.push({
@@ -886,7 +972,7 @@
 
             if (
               ev.content &&
-              (type === 'PLANNER_RESPONSE' || type === 'MODEL') &&
+              (type === 'PLANNER_RESPONSE' || type === 'MODEL' || type === 'ASSISTANT') &&
               type !== 'GENERIC' &&
               ev.type !== 'GENERIC'
             ) {

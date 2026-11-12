@@ -187,6 +187,8 @@ async function runTests() {
       ...process.env,
       PORT: String(TEST_PORT),
       NODE_ENV: 'test',
+      SOKO_AGENT_BRAIN_DIR: mockBrain,
+      SOKO_AGENT_PRESENCE_DIR: mockPresence,
     },
     stdio: 'ignore',
   });
@@ -324,6 +326,90 @@ async function runTests() {
       assert.ok(hasDoneNotification, 'Stream subscriber receives NOTIFICATION_POST when agent completes task');
       console.log('  ✓ [PASS] Notifications sent when agent completes while terminal streaming is on');
 
+      // Test notification delivery to non-streaming clients
+      const nonStreamingPackets = [];
+      const nonStreamingClient = await createTestWsClient((pkt) => {
+        nonStreamingPackets.push(pkt);
+      });
+
+      sendWs({
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'SIMULATE_AGENT_ACTIVITY',
+        payload: {
+          agent: 'antigravity',
+          detail: 'Non-streaming completion verification',
+          durationMs: 300,
+        },
+      });
+
+      await new Promise((r) => setTimeout(r, 800));
+
+      const hasBroadcastNotification = nonStreamingPackets.some(
+        (p) => p.packetType === 'NOTIFICATION_POST' && p.payload?.isAgentDone === true
+      );
+      assert.ok(hasBroadcastNotification, 'Non-streaming client also receives NOTIFICATION_POST when agent completes task');
+      console.log('  ✓ [PASS] Notifications broadcast to all connected clients on task completion');
+
+      // Test stream activation via AGENT_TRANSCRIPT_HISTORY packet (Flutter mode)
+      sendWs({
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'AGENT_TRANSCRIPT_HISTORY',
+        payload: { sessionId: testSessionId, maxTurns: 30, stream: true },
+      });
+
+      await new Promise((r) => setTimeout(r, 400));
+      const hasFlutterStreamResponse = receivedPackets.some(
+        (p) => p.packetType === 'AGENT_TRANSCRIPT_HISTORY' && p.payload?.streaming === true
+      );
+      assert.ok(hasFlutterStreamResponse, 'AGENT_TRANSCRIPT_HISTORY activates live streaming for Flutter');
+      console.log('  ✓ [PASS] Flutter AGENT_TRANSCRIPT_HISTORY streaming subscription verified');
+
+      // Test live transcript delta streaming
+      const streamChunks = [];
+      const streamClient = await createTestWsClient((pkt) => {
+        if (pkt.packetType === 'AGENT_TRANSCRIPT_CHUNK') {
+          streamChunks.push(pkt);
+        }
+      });
+
+      streamClient.sendWs({
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'AGENT_START_TERMINAL_STREAM',
+        payload: { sessionId: testSessionId, stream: true },
+      });
+
+      await new Promise((r) => setTimeout(r, 400));
+
+      // Append new event to transcript file
+      const liveTurn = JSON.stringify({
+        step_index: 3,
+        type: 'PLANNER_RESPONSE',
+        thinking: 'Testing live delta streaming to mobile...',
+        tool_calls: [{ name: 'run_command', args: { CommandLine: 'echo "LIVE_DELTA_OK"' } }],
+        content: 'Streaming live delta to mobile terminal.',
+      }) + '\n';
+      fs.appendFileSync(transcriptPath, liveTurn);
+
+      // Wait for the bridge delta poller (400ms interval)
+      await new Promise((r) => setTimeout(r, 1000));
+
+      const hasChunk = streamChunks.some(
+        (p) => p.payload?.sessionId === testSessionId && Array.isArray(p.payload?.events) && p.payload.events.length > 0
+      );
+      assert.ok(hasChunk, 'Stream subscriber receives real-time AGENT_TRANSCRIPT_CHUNK when transcript appends');
+      console.log('  ✓ [PASS] Live AGENT_TRANSCRIPT_CHUNK deltas streamed to mobile subscribers');
+
+      streamClient.client.destroy();
+      nonStreamingClient.client.destroy();
       client.destroy();
     }
 
@@ -334,11 +420,17 @@ async function runTests() {
       const jsPath = path.resolve(__dirname, '../apps/mobile/companion/agent-terminal/terminal.js');
       const flutterPath = path.resolve(__dirname, '../apps/mobile/lib/features/agent_terminal/ui/agent_terminal_view.dart');
       const flutterServicePath = path.resolve(__dirname, '../apps/mobile/lib/features/agent_terminal/services/agent_remote_service.dart');
+      const flutterBlePath = path.resolve(__dirname, '../apps/mobile/lib/services/bluetooth/ble_service.dart');
+      const flutterModelsPath = path.resolve(__dirname, '../apps/mobile/lib/features/agent_terminal/models/agent_models.dart');
+      const flutterMainPath = path.resolve(__dirname, '../apps/mobile/lib/main.dart');
 
       assert.ok(fs.existsSync(cssPath), 'terminal.css exists');
       assert.ok(fs.existsSync(jsPath), 'terminal.js exists');
       assert.ok(fs.existsSync(flutterPath), 'agent_terminal_view.dart exists');
       assert.ok(fs.existsSync(flutterServicePath), 'agent_remote_service.dart exists');
+      assert.ok(fs.existsSync(flutterBlePath), 'ble_service.dart exists');
+      assert.ok(fs.existsSync(flutterModelsPath), 'agent_models.dart exists');
+      assert.ok(fs.existsSync(flutterMainPath), 'main.dart exists');
 
       const cssContent = fs.readFileSync(cssPath, 'utf8');
       assert.ok(cssContent.includes('.agent-terminal-container'), 'CSS contains main container');
@@ -362,9 +454,22 @@ async function runTests() {
       const flutterServiceContent = fs.readFileSync(flutterServicePath, 'utf8');
       assert.ok(flutterServiceContent.includes('requestTerminalStream'), 'Flutter service has requestTerminalStream');
       assert.ok(flutterServiceContent.includes('agentDoneStream'), 'Flutter service has agentDoneStream');
+      assert.ok(flutterServiceContent.includes('inboundStream.listen'), 'Flutter service listens to BLE inbound stream');
+      assert.ok(flutterServiceContent.includes('_handleTranscriptChunk'), 'Flutter service implements _handleTranscriptChunk');
+
+      const flutterBleContent = fs.readFileSync(flutterBlePath, 'utf8');
+      assert.ok(flutterBleContent.includes('handleIncomingEnvelope'), 'BLE service implements handleIncomingEnvelope');
+
+      const flutterModelsContent = fs.readFileSync(flutterModelsPath, 'utf8');
+      assert.ok(flutterModelsContent.includes('copyWith'), 'Agent models implement copyWith for turns');
+
+      const flutterMainContent = fs.readFileSync(flutterMainPath, 'utf8');
+      assert.ok(flutterMainContent.includes('scaffoldMessengerKey'), 'Main app wires global scaffoldMessengerKey');
+      assert.ok(flutterMainContent.includes('agentDoneStream.listen'), 'Main app listens globally to agentDoneStream');
 
       console.log('  ✓ [PASS] Companion CSS & JS assets verified');
       console.log('  ✓ [PASS] Flutter AgentTerminalView & AgentRemoteService verified');
+      console.log('  ✓ [PASS] BLE transport & Global completion notification wiring verified');
     }
 
     console.log('\n================================================================');
