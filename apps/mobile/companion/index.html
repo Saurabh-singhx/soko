@@ -2824,7 +2824,7 @@
           window.AgentTerminal.updateSessionList(packet.payload?.sessions);
         }
       } else if (packet.packetType === 'NOTIFICATION_POST') {
-        if ((packet.payload?.isAgentDone || packet.payload?.isTaskDone) && window.AgentTerminal && typeof window.AgentTerminal.notifyAgentDone === 'function') {
+        if ((packet.payload?.isAgentDone || packet.payload?.isTaskDone) && !packet.payload?.isSubagent && window.AgentTerminal && typeof window.AgentTerminal.notifyAgentDone === 'function') {
           window.AgentTerminal.notifyAgentDone(packet.payload);
         }
       }
@@ -2875,7 +2875,7 @@
       right.style.background = eyeColor;
       right.style.boxShadow = `0 0 8px ${shadowColor}`;
 
-      if (activity.status === 'completed') {
+      if (activity.status === 'completed' && !activity.isSubagent) {
         left.style.height = '4px';
         right.style.height = '4px';
         currentAgentEyeTimer = setTimeout(() => {

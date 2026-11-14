@@ -221,11 +221,99 @@ console.log('[Suite 6/6] Custom Environment Dirs & Session Completion Resolution
   console.log('  ✓ [PASS] Honors SOKO_AGENT_BRAIN_DIR and resolves session completion state accurately');
 }
 
+// 7. Subagent Detection & Parent Session Linkage
+console.log('[Suite 7/7] Subagent Detection & Parent Session Linkage');
+{
+  const mainSessionId = 'main-agent-session-001';
+  const subSessionId = 'sub-agent-session-002';
+
+  const mainDir = path.join(mockBrainDir, mainSessionId, '.system_generated/logs');
+  const subDir = path.join(mockBrainDir, subSessionId, '.system_generated/logs');
+  fs.mkdirSync(mainDir, { recursive: true });
+  fs.mkdirSync(subDir, { recursive: true });
+
+  // Main agent transcript: starts with USER_EXPLICIT and <USER_REQUEST>
+  const mainTranscript = path.join(mainDir, 'transcript.jsonl');
+  const mainContent = [
+    JSON.stringify({
+      step_index: 0,
+      source: 'USER_EXPLICIT',
+      type: 'USER_INPUT',
+      content: '<USER_REQUEST>\nRefactor the authentication module\n</USER_REQUEST>',
+    }),
+    JSON.stringify({
+      step_index: 1,
+      source: 'MODEL',
+      type: 'PLANNER_RESPONSE',
+      content: 'I will analyze the authentication module and delegate subtasks.',
+    }),
+  ].join('\n') + '\n';
+  fs.writeFileSync(mainTranscript, mainContent);
+
+  // Subagent transcript: starts with SYSTEM and <SYSTEM_MESSAGE> not actually sent by the user, with sender
+  const subTranscript = path.join(subDir, 'transcript.jsonl');
+  const subContent = [
+    JSON.stringify({
+      step_index: 0,
+      source: 'SYSTEM',
+      type: 'SYSTEM_MESSAGE',
+      content: 'The following is a <SYSTEM_MESSAGE> not actually sent by the user. It is provided by the system as important information to pay attention to.\n\n<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-14T16:08:16Z sender=main-agent-session-001 priority=MESSAGE_PRIORITY_HIGH content=Analyze crypto algorithms\n</SYSTEM_MESSAGE>',
+    }),
+    JSON.stringify({
+      step_index: 1,
+      source: 'MODEL',
+      type: 'PLANNER_RESPONSE',
+      content: 'Completed cryptographic audit.',
+    }),
+  ].join('\n') + '\n';
+  fs.writeFileSync(subTranscript, subContent);
+
+  const manager = new AgentSessionManager({
+    brainDirs: [mockBrainDir],
+    presenceDirs: [mockPresenceDir],
+  });
+
+  // Verify _peekSessionMetadata
+  const mainStat = fs.statSync(mainTranscript);
+  const mainMeta = manager._peekSessionMetadata(mainTranscript, mainStat);
+  assert.strictEqual(mainMeta.isSubagent, false, 'Main agent is not marked as subagent');
+  assert.strictEqual(mainMeta.parentSessionId, null, 'Main agent has null parentSessionId');
+
+  const subStat = fs.statSync(subTranscript);
+  const subMeta = manager._peekSessionMetadata(subTranscript, subStat);
+  assert.strictEqual(subMeta.isSubagent, true, 'Subagent correctly detected as isSubagent: true');
+  assert.strictEqual(subMeta.parentSessionId, mainSessionId, 'Subagent parentSessionId matches sender');
+
+  // Verify discoverSessions includes isSubagent & parentSessionId
+  const discovered = manager.discoverSessions();
+  const discMain = discovered.find((s) => s.sessionId === mainSessionId);
+  const discSub = discovered.find((s) => s.sessionId === subSessionId);
+
+  assert.ok(discMain, 'Main session discovered');
+  assert.strictEqual(discMain.isSubagent, false, 'Discovered main session has isSubagent: false');
+  assert.strictEqual(discMain.parentSessionId, null);
+
+  assert.ok(discSub, 'Subagent session discovered');
+  assert.strictEqual(discSub.isSubagent, true, 'Discovered subagent session has isSubagent: true');
+  assert.strictEqual(discSub.parentSessionId, mainSessionId, 'Discovered subagent session links parentSessionId');
+
+  // Verify getTranscriptHistory includes isSubagent & parentSessionId
+  const mainHistory = manager.getTranscriptHistory(mainSessionId);
+  assert.strictEqual(mainHistory.isSubagent, false);
+  assert.strictEqual(mainHistory.parentSessionId, null);
+
+  const subHistory = manager.getTranscriptHistory(subSessionId);
+  assert.strictEqual(subHistory.isSubagent, true);
+  assert.strictEqual(subHistory.parentSessionId, mainSessionId);
+
+  console.log('  ✓ [PASS] Correctly identifies main vs subagents and links parent session ID');
+}
+
 // Cleanup mock files
 try {
   fs.rmSync(tempDir, { recursive: true, force: true });
 } catch {}
 
 console.log('\n================================================================');
-console.log(' RESULTS: 6 / 6 suites passed (100%)');
+console.log(' RESULTS: 7 / 7 suites passed (100%)');
 console.log('================================================================\n');

@@ -1916,6 +1916,8 @@ function parseAntigravitySession(tPath, stat, now, passedSessionId) {
   let turnTokens = 0;
   let taskSummary = '';
   let workspace = '';
+  let isSubagent = false;
+  let parentSessionId = null;
   let parsed = [];
 
   try {
@@ -1924,6 +1926,58 @@ function parseAntigravitySession(tPath, stat, now, passedSessionId) {
     const fd = fs.openSync(tPath, 'r');
     fs.readSync(fd, buffer, 0, bufferSize, Math.max(0, stat.size - bufferSize));
     fs.closeSync(fd);
+
+    // Extract head lines for subagent detection, parent session linkage, and workspace
+    let headText = '';
+    if (stat.size <= bufferSize) {
+      headText = buffer.toString('utf8');
+    } else {
+      try {
+        const headBuf = Buffer.alloc(Math.min(stat.size, 16384));
+        const hFd = fs.openSync(tPath, 'r');
+        fs.readSync(hFd, headBuf, 0, headBuf.length, 0);
+        fs.closeSync(hFd);
+        headText = headBuf.toString('utf8');
+      } catch {}
+    }
+
+    const headLines = headText.trim().split('\n');
+    for (let i = 0; i < Math.min(headLines.length, 5); i++) {
+      if (!headLines[i].trim()) continue;
+      try {
+        const item = JSON.parse(headLines[i]);
+        const src = item.source ? String(item.source) : '';
+        const content = item.content ? String(item.content) : '';
+
+        if (i === 0 || !isSubagent) {
+          if (
+            src.startsWith('SYSTEM') ||
+            content.includes('sender=') ||
+            content.includes('not actually sent by the user')
+          ) {
+            isSubagent = true;
+          } else if (
+            src === 'USER_EXPLICIT' ||
+            content.includes('<USER_REQUEST>') ||
+            item.type === 'USER_INPUT'
+          ) {
+            isSubagent = false;
+          }
+        }
+
+        if (!parentSessionId) {
+          if (item.parent_session_id || item.parentSessionId) {
+            parentSessionId = item.parent_session_id || item.parentSessionId;
+          } else if (content.includes('sender=')) {
+            const sMatch = content.match(/sender=([a-zA-Z0-9_-]{8,})/i) ||
+                          content.match(/parent[_-]?session[_-]?id[:=]\s*["']?([a-zA-Z0-9_-]{8,})/i);
+            if (sMatch && sMatch[1]) {
+              parentSessionId = sMatch[1];
+            }
+          }
+        }
+      } catch {}
+    }
 
     const lines = buffer.toString('utf8').trim().split('\n');
     parsed = [];
@@ -1981,15 +2035,26 @@ function parseAntigravitySession(tPath, stat, now, passedSessionId) {
             unresolvedBgTaskId = null;
           }
 
-          // Track scheduled timers
+          // Track scheduled timers, subagent delegations, and swarm waits
           if (item.tool_calls && Array.isArray(item.tool_calls)) {
             for (const tc of item.tool_calls) {
-              if (tc.name === 'schedule') {
+              if (
+                tc.name === 'schedule' ||
+                tc.name === 'swarm_wait' ||
+                tc.name === 'invoke_subagent' ||
+                tc.name === 'swarm' ||
+                tc.name === 'ask_question'
+              ) {
                 unresolvedSchedule = true;
               }
             }
           }
-          if (unresolvedSchedule && (item.type === 'SYSTEM_MESSAGE' || str.includes('task-') || /timer (fired|condition)|cron trigger/i.test(str))) {
+          if (
+            unresolvedSchedule &&
+            (item.type === 'SYSTEM_MESSAGE' ||
+              str.includes('task-') ||
+              /timer (fired|condition)|cron trigger|subagent finished|swarmed/i.test(str))
+          ) {
             unresolvedSchedule = false;
           }
         }
@@ -2114,6 +2179,8 @@ function parseAntigravitySession(tPath, stat, now, passedSessionId) {
     taskSummary,
     workspace,
     workspaceName,
+    isSubagent: Boolean(isSubagent),
+    parentSessionId: parentSessionId || null,
     mtimeMs: stat.mtimeMs,
   };
 
@@ -2166,6 +2233,8 @@ function simulateAgent(agentId, detail, durationMs = 6000) {
     tokensUsed: tokenCount,
     workspace: '/home/saurabh/coding/soko',
     workspaceName: 'soko',
+    isSubagent: false,
+    parentSessionId: null,
     activeCount: 1,
     activeSessions: [{
       sessionId: 'simulated-' + agentId,
@@ -2178,6 +2247,8 @@ function simulateAgent(agentId, detail, durationMs = 6000) {
       tokensUsed: tokenCount,
       workspace: '/home/saurabh/coding/soko',
       workspaceName: 'soko',
+      isSubagent: false,
+      parentSessionId: null,
       timestamp: Date.now(),
     }],
     timestamp: Date.now(),
@@ -2197,6 +2268,8 @@ function simulateAgent(agentId, detail, durationMs = 6000) {
       tokensUsed: tokenCount,
       workspace: '/home/saurabh/coding/soko',
       workspaceName: 'soko',
+      isSubagent: false,
+      parentSessionId: null,
       activeCount: 0,
       activeSessions: [{
         sessionId: 'simulated-' + agentId,
@@ -2209,6 +2282,8 @@ function simulateAgent(agentId, detail, durationMs = 6000) {
         tokensUsed: tokenCount,
         workspace: '/home/saurabh/coding/soko',
         workspaceName: 'soko',
+        isSubagent: false,
+        parentSessionId: null,
         timestamp: Date.now(),
       }],
       timestamp: Date.now(),
@@ -2264,7 +2339,31 @@ function checkActiveAgentActivity() {
           const parsed = parseAntigravitySession(tPath, stat, now, sessionId);
           const existing = agentSessionRegistry.get(regKey);
 
-          if (parsed.isWaiting) {
+          // Check if this is a main agent that currently has active child subagents
+          const hasActiveChildSubagent = !parsed.isSubagent && Array.from(agentSessionRegistry.values()).some(
+            (s) => s.isSubagent && (s.parentSessionId === sessionId || s.parentSessionId === regKey) &&
+                  (s.status === 'working' || s.status === 'thinking' || s.status === 'waiting')
+          );
+
+          if (hasActiveChildSubagent) {
+            // Main agent coordinating running child subagents stays in waiting state
+            agentSessionRegistry.set(regKey, {
+              sessionId,
+              agent: 'antigravity',
+              name: 'Google Antigravity',
+              status: 'waiting',
+              detail: parsed.taskSummary ? `Coordinating: ${parsed.taskSummary}` : 'Waiting for subagents',
+              message: parsed.taskSummary || 'Waiting for subagents',
+              taskSummary: parsed.taskSummary,
+              tokensUsed: parsed.turnTokens || 1400,
+              workspace: parsed.workspace,
+              workspaceName: parsed.workspaceName,
+              isSubagent: false,
+              parentSessionId: null,
+              timestamp: stat.mtimeMs,
+              mtimeMs: stat.mtimeMs,
+            });
+          } else if (parsed.isWaiting) {
             // Waiting session (active up to 5 minutes without transcript writes)
             if (ageMs <= 300000) {
               agentSessionRegistry.set(regKey, {
@@ -2278,6 +2377,8 @@ function checkActiveAgentActivity() {
                 tokensUsed: parsed.turnTokens || 1400,
                 workspace: parsed.workspace,
                 workspaceName: parsed.workspaceName,
+                isSubagent: Boolean(parsed.isSubagent),
+                parentSessionId: parsed.parentSessionId || null,
                 timestamp: stat.mtimeMs,
                 mtimeMs: stat.mtimeMs,
               });
@@ -2298,6 +2399,8 @@ function checkActiveAgentActivity() {
                 tokensUsed: parsed.turnTokens || 1650,
                 workspace: parsed.workspace,
                 workspaceName: parsed.workspaceName,
+                isSubagent: Boolean(parsed.isSubagent),
+                parentSessionId: parsed.parentSessionId || null,
                 timestamp: stat.mtimeMs,
                 mtimeMs: stat.mtimeMs,
                 expiresAt: now + AGENT_COMPLETION_RETENTION_MS,
@@ -2318,6 +2421,8 @@ function checkActiveAgentActivity() {
               tokensUsed: parsed.turnTokens || 1200,
               workspace: parsed.workspace,
               workspaceName: parsed.workspaceName,
+              isSubagent: Boolean(parsed.isSubagent),
+              parentSessionId: parsed.parentSessionId || null,
               timestamp: stat.mtimeMs,
               mtimeMs: stat.mtimeMs,
             });
@@ -2334,6 +2439,8 @@ function checkActiveAgentActivity() {
               tokensUsed: existing.tokensUsed || 1400,
               workspace: existing.workspace,
               workspaceName: existing.workspaceName,
+              isSubagent: Boolean(existing.isSubagent),
+              parentSessionId: existing.parentSessionId || null,
               timestamp: now,
               mtimeMs: stat.mtimeMs,
               expiresAt: now + AGENT_COMPLETION_RETENTION_MS,
@@ -2429,6 +2536,8 @@ function checkActiveAgentActivity() {
                       tokensUsed: codexTokens,
                       workspace: cwd,
                       workspaceName,
+                      isSubagent: false,
+                      parentSessionId: null,
                       timestamp: s.mtimeMs,
                       mtimeMs: s.mtimeMs,
                       expiresAt: s.mtimeMs + AGENT_COMPLETION_RETENTION_MS,
@@ -2448,6 +2557,8 @@ function checkActiveAgentActivity() {
                     tokensUsed: codexTokens,
                     workspace: cwd,
                     workspaceName,
+                    isSubagent: false,
+                    parentSessionId: null,
                     timestamp: s.mtimeMs,
                     mtimeMs: s.mtimeMs,
                   });
@@ -2463,6 +2574,8 @@ function checkActiveAgentActivity() {
                     tokensUsed: codexTokens,
                     workspace: cwd,
                     workspaceName,
+                    isSubagent: false,
+                    parentSessionId: null,
                     timestamp: now,
                     mtimeMs: s.mtimeMs,
                     expiresAt: now + AGENT_COMPLETION_RETENTION_MS,
@@ -2533,6 +2646,8 @@ function checkActiveAgentActivity() {
                       tokensUsed: claudeTokens,
                       workspace: claudeCwd,
                       workspaceName: claudeWsName,
+                      isSubagent: false,
+                      parentSessionId: null,
                       timestamp: s.mtimeMs,
                       mtimeMs: s.mtimeMs,
                       expiresAt: s.mtimeMs + AGENT_COMPLETION_RETENTION_MS,
@@ -2552,6 +2667,8 @@ function checkActiveAgentActivity() {
                     tokensUsed: claudeTokens,
                     workspace: claudeCwd,
                     workspaceName: claudeWsName,
+                    isSubagent: false,
+                    parentSessionId: null,
                     timestamp: s.mtimeMs,
                     mtimeMs: s.mtimeMs,
                   });
@@ -2567,6 +2684,8 @@ function checkActiveAgentActivity() {
                     tokensUsed: claudeTokens,
                     workspace: claudeCwd,
                     workspaceName: claudeWsName,
+                    isSubagent: false,
+                    parentSessionId: null,
                     timestamp: now,
                     mtimeMs: s.mtimeMs,
                     expiresAt: now + AGENT_COMPLETION_RETENTION_MS,
@@ -2606,18 +2725,53 @@ function checkActiveAgentActivity() {
   const activeCount = activeSessions.length;
 
   // 6. Select Primary Active Session
+  const mainWorking = workingSessions.filter((s) => !s.isSubagent);
+  const mainWaiting = waitingSessions.filter((s) => !s.isSubagent);
+  const mainCompleted = completedSessions.filter((s) => !s.isSubagent);
+
+  const subWorking = workingSessions.filter((s) => s.isSubagent);
+  const subWaiting = waitingSessions.filter((s) => s.isSubagent);
+  const subCompleted = completedSessions.filter((s) => s.isSubagent);
+
+  const hasActiveMain = mainWorking.length > 0 || mainWaiting.length > 0;
+  const hasActiveSub = subWorking.length > 0 || subWaiting.length > 0;
+
   let primary = null;
   if (focusedSessionId) {
-    primary = visibleSessions.find((s) => s.sessionId === focusedSessionId) || null;
-  }
-  if (!primary) {
-    if (workingSessions.length > 0) {
-      primary = workingSessions[0];
-    } else if (waitingSessions.length > 0) {
-      primary = waitingSessions[0];
-    } else if (completedSessions.length > 0) {
-      primary = completedSessions[0];
+    const focused = visibleSessions.find((s) => s.sessionId === focusedSessionId) || null;
+    if (focused) {
+      if (focused.isSubagent && focused.status === 'completed' && hasActiveMain) {
+        // A finished subagent must never set primary to completed while main agent is active/working
+        primary = mainWorking[0] || mainWaiting[0];
+      } else {
+        primary = focused;
+      }
     }
+  }
+
+  if (!primary) {
+    // Priority order:
+    // 1. Actively working main agent
+    // 2. Actively working subagent
+    // 3. Waiting main agent
+    // 4. Waiting subagent
+    // 5. Completed main agent (ONLY main agents trigger completion status!)
+    if (mainWorking.length > 0) {
+      primary = mainWorking[0];
+    } else if (subWorking.length > 0) {
+      primary = subWorking[0];
+    } else if (mainWaiting.length > 0) {
+      primary = mainWaiting[0];
+    } else if (subWaiting.length > 0) {
+      primary = subWaiting[0];
+    } else if (mainCompleted.length > 0) {
+      primary = mainCompleted[0];
+    } else if (hasActiveMain) {
+      primary = mainWorking[0] || mainWaiting[0];
+    } else if (hasActiveSub) {
+      primary = subWorking[0] || subWaiting[0];
+    }
+    // Subagents that finished must never set primary to completed on their own!
   }
 
   if (!primary) {
@@ -2634,6 +2788,8 @@ function checkActiveAgentActivity() {
       timestamp: now,
       workspace: defaultWorkspace,
       workspaceName: defaultWorkspaceName,
+      isSubagent: false,
+      parentSessionId: null,
       activeCount: 0,
       activeSessions: [],
     };
@@ -2652,6 +2808,8 @@ function checkActiveAgentActivity() {
     sessionId: primary.sessionId,
     workspace: primary.workspace,
     workspaceName: primary.workspaceName,
+    isSubagent: Boolean(primary.isSubagent),
+    parentSessionId: primary.parentSessionId || null,
     activeCount,
     activeSessions: visibleSessions.map((s) => ({
       sessionId: s.sessionId,
@@ -2665,6 +2823,8 @@ function checkActiveAgentActivity() {
       workspace: s.workspace,
       workspaceName: s.workspaceName,
       timestamp: s.timestamp,
+      isSubagent: Boolean(s.isSubagent),
+      parentSessionId: s.parentSessionId || null,
     })),
   };
 }
@@ -2678,49 +2838,56 @@ function checkAndNotifyAgentCompletion(active) {
     const wasRunning = prevStatus === 'working' || prevStatus === 'thinking' || prevStatus === 'waiting';
 
     if (isNowCompleted && wasRunning) {
-      const summaryMsg = s.message || s.taskSummary || 'Agent execution completed successfully';
-      const notifPacket = {
-        magic: 'SK',
-        version: 1,
-        packetId: Date.now(),
-        timestamp: Date.now(),
-        packetType: 'NOTIFICATION_POST',
-        payload: {
-          id: `agent-done-${sId}-${Date.now()}`,
-          appName: s.name || s.agent || 'Google Antigravity',
-          packageName: 'com.soko.agent',
-          title: `${s.name || 'Agent'} Finished Task`,
-          body: summaryMsg,
-          message: summaryMsg,
-          priority: 'high',
+      if (s.isSubagent) {
+        // NEVER emit completion notification for subagents!
+        // Only main agent sessions may trigger task completion notifications.
+        console.log(`[Bridge Agent] Suppressed completion notification for subagent session ${sId}`);
+      } else {
+        const summaryMsg = s.message || s.taskSummary || 'Agent execution completed successfully';
+        const notifPacket = {
+          magic: 'SK',
+          version: 1,
+          packetId: Date.now(),
           timestamp: Date.now(),
-          isAgentDone: true,
-          isTaskDone: true,
-          sessionId: sId,
-        },
-      };
+          packetType: 'NOTIFICATION_POST',
+          payload: {
+            id: `agent-done-${sId}-${Date.now()}`,
+            appName: s.name || s.agent || 'Google Antigravity',
+            packageName: 'com.soko.agent',
+            title: `${s.name || 'Agent'} Finished Task`,
+            body: summaryMsg,
+            message: summaryMsg,
+            priority: 'high',
+            timestamp: Date.now(),
+            isAgentDone: true,
+            isTaskDone: true,
+            sessionId: sId,
+            isSubagent: false,
+          },
+        };
 
-      // Broadcast to ALL connected authorized clients (phone companion, desktop HUD)
-      broadcastPacket(notifPacket);
+        // Broadcast to ALL connected authorized clients (phone companion, desktop HUD)
+        broadcastPacket(notifPacket);
 
-      // In addition, ensure all stream subscribers receive it directly
-      if (activeStreamSubscribers.has(sId)) {
-        for (const sock of activeStreamSubscribers.get(sId)) {
-          if (sock.readyState !== 'closed' && sock.isAuthorized) {
-            sendWsPacket(sock, notifPacket);
-          }
-        }
-      } else if (activeStreamSubscribers.size > 0) {
-        for (const subs of activeStreamSubscribers.values()) {
-          for (const sock of subs) {
+        // In addition, ensure all stream subscribers receive it directly
+        if (activeStreamSubscribers.has(sId)) {
+          for (const sock of activeStreamSubscribers.get(sId)) {
             if (sock.readyState !== 'closed' && sock.isAuthorized) {
               sendWsPacket(sock, notifPacket);
             }
           }
+        } else if (activeStreamSubscribers.size > 0) {
+          for (const subs of activeStreamSubscribers.values()) {
+            for (const sock of subs) {
+              if (sock.readyState !== 'closed' && sock.isAuthorized) {
+                sendWsPacket(sock, notifPacket);
+              }
+            }
+          }
         }
-      }
 
-      console.log(`[Bridge Agent] Notification broadcast: Task finished for session ${sId}`);
+        console.log(`[Bridge Agent] Notification broadcast: Task finished for main agent session ${sId}`);
+      }
     }
     previousSessionStatuses.set(sId, s.status);
   }

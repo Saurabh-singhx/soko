@@ -51,7 +51,7 @@ class AgentRemoteService {
         _handleTranscriptChunk(payload);
         break;
       case PacketType.notificationPost:
-        if (payload['isAgentDone'] == true || payload['isTaskDone'] == true) {
+        if ((payload['isAgentDone'] == true || payload['isTaskDone'] == true) && payload['isSubagent'] != true) {
           _agentDoneController.add(payload);
         }
         break;
@@ -71,10 +71,12 @@ class AgentRemoteService {
     final status = payload['status'] as String? ?? 'idle';
     _isWorking = status == 'working' || status == 'thinking';
 
-    // When agent completes, emit notification to mobile companion
+    // When agent completes, emit notification to mobile companion (ignoring subagents)
     final wasRunning = _previousStatus == 'working' || _previousStatus == 'thinking' || _previousStatus == 'waiting';
     if (wasRunning && status == 'completed') {
-      _agentDoneController.add(payload);
+      if (payload['isSubagent'] != true) {
+        _agentDoneController.add(payload);
+      }
     }
     _previousStatus = status;
 
@@ -90,6 +92,8 @@ class AgentRemoteService {
           workspaceName: payload['workspaceName'] as String?,
           tokensUsed: payload['tokensUsed'] as int?,
           taskSummary: payload['taskSummary'] as String?,
+          isSubagent: payload['isSubagent'] == true,
+          parentSessionId: payload['parentSessionId'] as String?,
         ),
       );
       _activeSessionController.add(current);

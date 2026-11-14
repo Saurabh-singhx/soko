@@ -390,6 +390,11 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         if (!status) return;
 
         if (status.status === 'completed') {
+          // If this is a subagent completion, do not trigger completed task notice or wake Soko to completed mood
+          if (status.isSubagent === true) {
+            return;
+          }
+
           // Agent task is done! If in idle mode, wake Soko to normal mode immediately
           wakeToNormalMode(20000);
           setMood('happy');
@@ -472,7 +477,9 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
       return `${prefix}: ${currentSession.detail || 'Thinking...'}`;
     }
     if (currentSession && currentSession.agent && currentSession.status === 'completed') {
-      return `${currentSession.name || 'Agent'}: Done ✓`;
+      if (currentSession.isSubagent !== true) {
+        return `${currentSession.name || 'Agent'}: Done ✓`;
+      }
     }
 
     // 4. Audio playing / streaming (player controls rendered directly in HUD)
@@ -571,6 +578,11 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     });
 
     const unsubNotif = connectionService.onNotification((notif) => {
+      // Guardrail: Ignore subagent completion notifications so they never show as completed tasks
+      if ((notif.isAgentDone || notif.isTaskDone) && notif.isSubagent === true) {
+        return;
+      }
+
       startTransition(() => {
         wakeToNormalMode();
         setActiveNotification(notif);

@@ -33,6 +33,9 @@ export interface MirroredNotification {
   hasReplyAction?: boolean;
   priority?: 'high' | 'normal' | 'low' | string;
   isImportant?: boolean;
+  isAgentDone?: boolean;
+  isTaskDone?: boolean;
+  isSubagent?: boolean;
 }
 
 export interface CliProcessStatus {
@@ -164,6 +167,8 @@ export interface AgentSessionInfo {
   workspace?: string;
   workspaceName?: string;
   timestamp: number;
+  isSubagent?: boolean;
+  parentSessionId?: string;
 }
 
 export interface AgentActivityStatus {
@@ -183,6 +188,8 @@ export interface AgentActivityStatus {
   workspaceName?: string;
   activeCount?: number;
   activeSessions?: AgentSessionInfo[];
+  isSubagent?: boolean;
+  parentSessionId?: string;
 }
 
 export interface AssistantTokenStats {

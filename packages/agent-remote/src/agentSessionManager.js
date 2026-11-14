@@ -246,6 +246,8 @@ class AgentSessionManager {
             ageSeconds: Math.floor(ageMs / 1000),
             tokensUsed: meta.tokensUsed || 0,
             taskSummary: meta.taskSummary || '',
+            isSubagent: meta.isSubagent || false,
+            parentSessionId: meta.parentSessionId || null,
           });
         }
       } catch (err) {
@@ -263,6 +265,8 @@ class AgentSessionManager {
     let workspace = '';
     let taskSummary = '';
     let tokensUsed = 0;
+    let isSubagent = false;
+    let parentSessionId = null;
 
     let fd;
     try {
@@ -277,6 +281,47 @@ class AgentSessionManager {
                         text.match(/Command Working Directory:\s*([^\n\r]+)/i);
         if (wsMatch && wsMatch[1]) {
           workspace = wsMatch[1].trim();
+        }
+
+        // Subagent detection:
+        // Main agent starts with source: 'USER_EXPLICIT' or a user prompt <USER_REQUEST>.
+        // Subagent starts with source: 'SYSTEM' or content containing sender= or <SYSTEM_MESSAGE> not actually sent by the user.
+        const headLines = text.trim().split('\n');
+        for (let i = 0; i < Math.min(headLines.length, 5); i++) {
+          if (!headLines[i].trim()) continue;
+          try {
+            const item = JSON.parse(headLines[i]);
+            const src = item.source ? String(item.source) : '';
+            const content = item.content ? String(item.content) : '';
+
+            if (i === 0 || !isSubagent) {
+              if (
+                src.startsWith('SYSTEM') ||
+                content.includes('sender=') ||
+                content.includes('not actually sent by the user')
+              ) {
+                isSubagent = true;
+              } else if (
+                src === 'USER_EXPLICIT' ||
+                content.includes('<USER_REQUEST>') ||
+                item.type === 'USER_INPUT'
+              ) {
+                isSubagent = false;
+              }
+            }
+
+            if (!parentSessionId) {
+              if (item.parent_session_id || item.parentSessionId) {
+                parentSessionId = item.parent_session_id || item.parentSessionId;
+              } else if (content.includes('sender=')) {
+                const sMatch = content.match(/sender=([a-zA-Z0-9_-]{8,})/i) ||
+                              content.match(/parent[_-]?session[_-]?id[:=]\s*["']?([a-zA-Z0-9_-]{8,})/i);
+                if (sMatch && sMatch[1]) {
+                  parentSessionId = sMatch[1];
+                }
+              }
+            }
+          } catch {}
         }
 
         const tailBuf = Buffer.alloc(readSize);
@@ -307,6 +352,8 @@ class AgentSessionManager {
       workspaceName,
       taskSummary,
       tokensUsed,
+      isSubagent,
+      parentSessionId,
     };
   }
 
@@ -426,6 +473,7 @@ class AgentSessionManager {
       }
 
       const slicedTurns = turns.slice(-maxTurns);
+      const meta = this._peekSessionMetadata(paths.transcriptPath, stat);
       return {
         success: true,
         sessionId,
@@ -434,6 +482,8 @@ class AgentSessionManager {
         isLocked: Boolean(paths.lockPath),
         isWaiting,
         isWorking,
+        isSubagent: meta.isSubagent || false,
+        parentSessionId: meta.parentSessionId || null,
         turns: slicedTurns,
       };
     } catch (err) {

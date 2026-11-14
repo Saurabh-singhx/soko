@@ -985,6 +985,9 @@ class ConnectionManager {
             hasReplyAction: packet.payload.hasReplyAction || packet.payload.has_reply_action,
             priority: packet.payload.priority,
             isImportant: Boolean(packet.payload.isImportant || packet.payload.important || packet.payload.priority === 'high' || packet.payload.priority === 'urgent'),
+            isAgentDone: Boolean(packet.payload.isAgentDone),
+            isTaskDone: Boolean(packet.payload.isTaskDone),
+            isSubagent: Boolean(packet.payload.isSubagent),
           };
           this.notificationListeners.forEach((l) => l(notif));
         }

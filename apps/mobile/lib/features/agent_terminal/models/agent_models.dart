@@ -8,6 +8,8 @@ class AgentSessionSummary {
   final String? workspace;
   final int? tokensUsed;
   final String? taskSummary;
+  final bool isSubagent;
+  final String? parentSessionId;
 
   AgentSessionSummary({
     required this.sessionId,
@@ -17,6 +19,8 @@ class AgentSessionSummary {
     this.workspace,
     this.tokensUsed,
     this.taskSummary,
+    this.isSubagent = false,
+    this.parentSessionId,
   });
 
   factory AgentSessionSummary.fromJson(Map<String, dynamic> json) {
@@ -28,6 +32,8 @@ class AgentSessionSummary {
       workspace: json['workspace'] as String?,
       tokensUsed: json['tokensUsed'] as int?,
       taskSummary: json['taskSummary'] as String? ?? json['detail'] as String?,
+      isSubagent: json['isSubagent'] == true,
+      parentSessionId: json['parentSessionId'] as String?,
     );
   }
 }
