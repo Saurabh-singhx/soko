@@ -8,7 +8,7 @@ export const CliAgentsTab: React.FC = () => {
     { cmd: 'git status', category: 'Source Control', desc: 'Inspect working tree status' },
     { cmd: 'git diff', category: 'Source Control', desc: 'Inspect unstaged code differences' },
     { cmd: 'npm test', category: 'Test Runner', desc: 'Execute repository test suites' },
-    { cmd: 'agy status', category: 'Agent Fleet', desc: 'Query Antigravity multi-agent VM status' },
+    { cmd: 'agy status', category: 'Agent Fleet', desc: 'Query Antigravity CLI status' },
     { cmd: 'cargo test', category: 'Rust Core', desc: 'Execute Rust Tauri backend unit tests' },
   ];
 

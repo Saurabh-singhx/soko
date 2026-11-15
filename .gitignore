@@ -49,7 +49,7 @@ screenshot_p
 .env
 !.env.signing.example
 
-# Dispatch & Multi-Agent Logs
+# Application Logs
 logs/
 
 # Audit Reports & Extra Audits
