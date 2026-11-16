@@ -35,21 +35,23 @@ import {
   Cpu,
   Database,
   Layers,
+  Bot,
 } from 'lucide-react';
 import { connectionService } from '../../services/connection.ts';
 import { autoUpdateService, UpdateInfo, CURRENT_VERSION } from '../../services/updater.ts';
 import { ConnectionStatus, PairedDevice, DiscoveredDevice, FileTransferStatus, TransferHistoryItem, AiTokenSummary, AgentActivityStatus } from '../../types/index.ts';
 import { CharacterSelector } from '../../characters/CharacterSelector.tsx';
+import { SwarmVisualizerTab } from '../../features/swarm-visualizer/SwarmVisualizerTab.tsx';
 
 interface SettingsViewProps {
   onClose?: () => void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
-  const [activeTab, setActiveTab] = useState<'general' | 'pairing' | 'tokens' | 'cli' | 'files' | 'security' | 'mascot' | 'updates'>(() => {
+  const [activeTab, setActiveTab] = useState<'general' | 'pairing' | 'tokens' | 'cli' | 'swarm' | 'files' | 'security' | 'mascot' | 'updates'>(() => {
     try {
       const stored = localStorage.getItem('soko_settings_initial_tab');
-      if (stored && ['general', 'pairing', 'tokens', 'cli', 'files', 'security', 'mascot', 'updates'].includes(stored)) {
+      if (stored && ['general', 'pairing', 'tokens', 'cli', 'swarm', 'files', 'security', 'mascot', 'updates'].includes(stored)) {
         localStorage.removeItem('soko_settings_initial_tab');
         return stored as any;
       }
@@ -75,11 +77,36 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
 
   useEffect(() => {
     const cleanup = (window as any).electronAPI?.onSwitchSettingsTab?.((tab: any) => {
-      if (['general', 'pairing', 'tokens', 'cli', 'files', 'security', 'mascot', 'updates'].includes(tab)) {
+      if (['general', 'pairing', 'tokens', 'cli', 'swarm', 'files', 'security', 'mascot', 'updates'].includes(tab)) {
         setActiveTab(tab);
       }
     });
     return () => cleanup?.();
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === '1') setActiveTab('general');
+      else if (e.key === '2') setActiveTab('pairing');
+      else if (e.key === '3') setActiveTab('cli');
+      else if (e.key === '4') setActiveTab('swarm');
+      else if (e.key === '5') setActiveTab('files');
+      else if (e.key === '6') setActiveTab('security');
+      else if (e.key === '7') setActiveTab('mascot');
+      else if (e.key === '8') setActiveTab('updates');
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
   const [displayServerInfo, setDisplayServerInfo] = useState<any>(null);
@@ -192,6 +219,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
   };
 
   useEffect(() => {
+    const unsubDiscovered = connectionService.subscribeDiscoveredDevices((devices) => {
+      setDiscoveredDevices(devices);
+    });
+    return () => unsubDiscovered();
+  }, []);
+
+  useEffect(() => {
     // Edge case: If already connected, do NOT scan automatically.
     if (connectionStatus === 'connected' || pairedDevice) {
       return;
@@ -210,7 +244,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
     if (selectedDeviceToPair) {
       setPairError(null);
       connectionService.fetchPendingPair().then((p) => {
-        if (p && (p.deviceId === selectedDeviceToPair.id || (selectedDeviceToPair.ipAddress && p.ip?.includes(selectedDeviceToPair.ipAddress)))) {
+        if (
+          p &&
+          (p.deviceId === selectedDeviceToPair.id ||
+            (selectedDeviceToPair.ipAddress && p.ip?.includes(selectedDeviceToPair.ipAddress)) ||
+            (p.pin && p.pin.replace(/\s+/g, '') === pairingPin.replace(/\s+/g, '')))
+        ) {
           setIsPendingVerified(true);
         } else {
           setIsPendingVerified(false);
@@ -220,19 +259,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
       setPairError(null);
       setIsPendingVerified(false);
     }
-  }, [selectedDeviceToPair]);
+  }, [selectedDeviceToPair, pairingPin]);
 
   useEffect(() => {
     const unsubPending = connectionService.onPendingPair((pairReq) => {
       if (selectedDeviceToPair) {
-        if (pairReq.deviceId === selectedDeviceToPair.id || (selectedDeviceToPair.ipAddress && pairReq.ip?.includes(selectedDeviceToPair.ipAddress))) {
+        if (
+          pairReq.deviceId === selectedDeviceToPair.id ||
+          (selectedDeviceToPair.ipAddress && pairReq.ip?.includes(selectedDeviceToPair.ipAddress)) ||
+          (pairReq.pin && pairReq.pin.replace(/\s+/g, '') === pairingPin.replace(/\s+/g, ''))
+        ) {
           setIsPendingVerified(true);
           setPairError(null);
         }
       }
     });
     return () => unsubPending();
-  }, [selectedDeviceToPair]);
+  }, [selectedDeviceToPair, pairingPin]);
 
   const handleConfirmPair = async () => {
     if (!selectedDeviceToPair) return;
@@ -456,6 +499,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
             </button>
 
             <button
+              onClick={() => setActiveTab('swarm')}
+              className={`flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs font-medium tracking-tight transition-colors ${
+                activeTab === 'swarm'
+                  ? 'bg-white/[0.08] text-white shadow-hairline'
+                  : 'text-linear-text-secondary hover:text-white hover:bg-white/[0.04]'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Bot size={14} className={activeTab === 'swarm' ? 'text-[#2DD4BF]' : 'text-linear-text-tertiary'} />
+                <span>Swarm & Sub-Agents</span>
+              </div>
+              <span className="linear-kbd">4</span>
+            </button>
+
+            <button
               onClick={() => setActiveTab('files')}
               className={`flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs font-medium tracking-tight transition-colors ${
                 activeTab === 'files'
@@ -467,7 +525,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 <FolderDown size={14} className={activeTab === 'files' ? 'text-[#5E6AD2]' : 'text-linear-text-tertiary'} />
                 <span>File Storage</span>
               </div>
-              <span className="linear-kbd">4</span>
+              <span className="linear-kbd">5</span>
             </button>
 
             <button
@@ -482,7 +540,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 <ShieldCheck size={14} className={activeTab === 'security' ? 'text-[#5E6AD2]' : 'text-linear-text-tertiary'} />
                 <span>Security & Tunnel</span>
               </div>
-              <span className="linear-kbd">5</span>
+              <span className="linear-kbd">6</span>
             </button>
 
             <button
@@ -497,7 +555,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 <Sparkles size={14} className={activeTab === 'mascot' ? 'text-[#5E6AD2]' : 'text-linear-text-tertiary'} />
                 <span>Mascot & Island</span>
               </div>
-              <span className="linear-kbd">6</span>
+              <span className="linear-kbd">7</span>
             </button>
 
             <button
@@ -521,7 +579,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 <RefreshCw size={14} className={activeTab === 'updates' ? 'text-[#5E6AD2]' : 'text-linear-text-tertiary'} />
                 <span>Auto-Updates & Feed</span>
               </div>
-              <span className="linear-kbd">7</span>
+              <span className="linear-kbd">8</span>
             </button>
           </nav>
         </div>
@@ -550,7 +608,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
       </aside>
 
       {/* Main Content View */}
-      <main className="flex-1 overflow-y-auto p-9 relative bg-[#08090A]">
+      <main className={`flex-1 relative bg-[#08090A] ${activeTab === 'swarm' ? 'p-0 overflow-hidden flex flex-col h-full' : 'overflow-y-auto p-9'}`}>
         {/* Globally Available Hidden File Input (Mounts for all tabs including Pairing Quick Actions) */}
         <input
           ref={fileInputRef}
@@ -561,7 +619,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
         {onClose && (
           <button
             onClick={onClose}
-            className="absolute top-6 right-6 p-1.5 rounded-md hover:bg-white/5 text-linear-text-secondary hover:text-white transition-colors"
+            className={`absolute z-30 p-1.5 rounded-md hover:bg-white/5 text-linear-text-secondary hover:text-white transition-colors ${
+              activeTab === 'swarm' ? 'top-3 right-4 bg-[#141824]/80 border border-white/10 backdrop-blur-sm' : 'top-6 right-6'
+            }`}
             title="Close Settings"
           >
             <X size={16} />
@@ -777,7 +837,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                       {isScanningDevices && discoveredDevices.length === 0 ? (
                         <div className="py-4 text-center text-xs text-linear-text-secondary flex items-center justify-center gap-2">
                           <RefreshCw size={13} className="animate-spin text-[#5E6AD2]" />
-                          <span>Scanning for nearby Bluetooth and Wi-Fi devices...</span>
+                          <span>Scanning for Soko Mobile devices...</span>
                         </div>
                       ) : discoveredDevices.length > 0 ? (
                         <div className="flex flex-col gap-1.5 max-h-[160px] overflow-y-auto pr-1 custom-scrollbar">
@@ -788,12 +848,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                             >
                               <div className="flex items-center gap-2 min-w-0">
                                 {dev.transport === 'ble' ? (
-                                  <Bluetooth size={14} className="text-[#5E6AD2]" />
+                                  <Bluetooth size={14} className="text-[#5E6AD2] shrink-0" />
                                 ) : (
-                                  <Wifi size={14} className="text-emerald-400" />
+                                  <Wifi size={14} className="text-emerald-400 shrink-0" />
                                 )}
                                 <span className="text-white font-medium truncate">{dev.name}</span>
-                                <span className="text-[10px] text-linear-text-tertiary font-mono">({dev.model || dev.transport})</span>
+                                <span className="text-[9.5px] font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-full inline-flex items-center gap-1 shrink-0">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                  Open Soko Mobile
+                                </span>
+                                <span className="text-[10px] text-linear-text-tertiary font-mono">({dev.model || (dev.transport === 'wifi' ? 'Wi-Fi LAN' : dev.transport)})</span>
                                 <span className="text-[10px] text-linear-text-tertiary font-mono">{dev.rssi} dBm</span>
                               </div>
                               <button
@@ -807,7 +871,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                         </div>
                       ) : (
                         <div className="py-2 text-center text-xs text-linear-text-tertiary">
-                          No other devices found nearby.
+                          No Soko Mobile devices open nearby. Open Soko Mobile on your phone to connect.
                         </div>
                       )}
                     </div>
@@ -846,11 +910,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                         )}
                       </div>
                       <div>
-                        <h4 className="text-xs font-semibold text-white tracking-tight">
-                          {selectedDeviceToPair.name}
-                        </h4>
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-xs font-semibold text-white tracking-tight">
+                            {selectedDeviceToPair.name}
+                          </h4>
+                          <span className="text-[9.5px] font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-full inline-flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                            Open Soko Mobile
+                          </span>
+                        </div>
                         <span className="text-[11px] text-linear-text-secondary font-mono">
-                          {selectedDeviceToPair.model}
+                          {selectedDeviceToPair.model || (selectedDeviceToPair.transport === 'wifi' ? 'Wi-Fi LAN' : selectedDeviceToPair.transport)}
                         </span>
                       </div>
                     </div>
@@ -882,6 +952,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                         <span>{isPendingVerified ? 'Approve & Link' : 'Confirm Link'}</span>
                       </button>
                     </div>
+                  </div>
+
+                  {/* 6-Digit PIN Display Card */}
+                  <div className="bg-black/50 border border-white/[0.08] rounded-xl p-3 flex flex-col items-center justify-center gap-1 text-center">
+                    <span className="text-[10px] uppercase font-mono tracking-wider text-linear-text-tertiary flex items-center gap-1">
+                      <ShieldCheck size={12} className="text-emerald-400" /> Verify SAS Pairing PIN
+                    </span>
+                    <span className="text-lg font-mono font-bold tracking-widest text-emerald-400 bg-emerald-500/10 px-4 py-1 rounded-lg border border-emerald-500/25 my-0.5">
+                      {pairingPin}
+                    </span>
+                    <span className="text-[11px] text-linear-text-secondary">
+                      Enter this 6-digit PIN on your phone in the Soko Mobile companion app
+                    </span>
                   </div>
 
                   {/* Verification Status & Error Banner */}
@@ -925,11 +1008,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                   </div>
 
                   {isScanningDevices && discoveredDevices.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-6 gap-2 text-center">
+                    <div className="flex flex-col items-center justify-center py-8 gap-2 text-center">
                       <RefreshCw size={20} className="text-[#5E6AD2] animate-spin" />
-                      <span className="text-xs font-medium text-white">Scanning for nearby devices...</span>
+                      <span className="text-xs font-medium text-white">Scanning for Soko Mobile devices...</span>
                       <span className="text-[11px] text-linear-text-tertiary">
-                        Checking Bluetooth peripherals & local Wi-Fi companions
+                        Looking for devices with Soko Mobile companion open on local Wi-Fi
                       </span>
                     </div>
                   ) : discoveredDevices.length > 0 ? (
@@ -952,9 +1035,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                               )}
                             </div>
                             <div className="min-w-0">
-                              <h5 className="text-xs font-semibold text-white truncate">{dev.name}</h5>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h5 className="text-xs font-semibold text-white truncate">{dev.name}</h5>
+                                <span className="text-[9.5px] font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-full inline-flex items-center gap-1 shrink-0">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                  Open Soko Mobile
+                                </span>
+                              </div>
                               <div className="flex items-center gap-2 text-[10.5px] text-linear-text-tertiary font-mono">
-                                <span>{dev.transport === 'ble' ? 'Bluetooth Low Energy' : 'Wi-Fi / Hotspot LAN'}</span>
+                                <span>{dev.model || (dev.transport === 'ble' ? 'Bluetooth Low Energy' : 'Wi-Fi / Hotspot LAN')}</span>
+                                {dev.ipAddress && (
+                                  <>
+                                    <span>•</span>
+                                    <span>{dev.ipAddress}</span>
+                                  </>
+                                )}
                                 <span>•</span>
                                 <span>{dev.rssi} dBm</span>
                               </div>
@@ -971,20 +1066,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                       ))}
                     </div>
                   ) : (
-                    <div className="flex flex-col items-center justify-center py-6 gap-2 text-center">
-                      <div className="w-9 h-9 rounded-full bg-linear-red/15 border border-linear-red/30 flex items-center justify-center text-linear-red">
-                        <Power size={16} />
+                    <div className="flex flex-col items-center justify-center py-8 px-4 gap-2 text-center">
+                      <div className="w-10 h-10 rounded-full bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-linear-text-tertiary">
+                        <Smartphone size={18} />
                       </div>
-                      <div>
-                        <h5 className="text-xs font-semibold text-white">No Devices Detected</h5>
-                        <p className="text-[11px] text-linear-text-secondary mt-0.5">
-                          Turn on Bluetooth or ensure your phone is connected to the same Wi-Fi network.
+                      <div className="max-w-[340px]">
+                        <h5 className="text-xs font-semibold text-white">No Soko Mobile devices open nearby</h5>
+                        <p className="text-[11px] text-linear-text-secondary mt-1">
+                          No Soko Mobile devices open nearby. Open Soko Mobile on your phone to connect.
                         </p>
                       </div>
                       <button
                         onClick={fetchDiscoveredDevices}
                         disabled={isScanningDevices}
-                        className="linear-button-primary px-3 py-1.5 text-xs mt-1 flex items-center gap-1.5 disabled:opacity-50"
+                        className="linear-button-primary px-3 py-1.5 text-xs mt-2 flex items-center gap-1.5 disabled:opacity-50"
                       >
                         <RefreshCw size={12} className={isScanningDevices ? 'animate-spin' : ''} />
                         <span>{isScanningDevices ? 'Scanning...' : 'Scan Devices'}</span>
@@ -1507,6 +1602,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* Swarm & Sub-Agents Visualizer Tab */}
+        {activeTab === 'swarm' && (
+          <div className="flex-1 w-full h-full flex flex-col min-h-0 overflow-hidden">
+            <SwarmVisualizerTab />
           </div>
         )}
 

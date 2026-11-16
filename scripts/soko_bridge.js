@@ -32,6 +32,14 @@ const os = require('os');
 const crypto = require('crypto');
 const { spawn, exec, execSync } = require('child_process');
 
+const WebSocketState = {
+  CONNECTING: 0,
+  OPEN: 1,
+  CLOSING: 2,
+  CLOSED: 3,
+};
+const WebSocket = global.WebSocket || WebSocketState;
+
 // Rolling File Logger with 10MB bounds and historical file retention (.1, .2, .3)
 let bridgeLogger = null;
 try {
@@ -162,89 +170,74 @@ function normalizeIp(ip) {
   return s;
 }
 
+// Sanitize device name: strip ANSI escapes, HTML tags, control chars, cap to 48 chars
+function sanitizeDeviceName(name) {
+  if (typeof name !== 'string') return 'Soko Mobile Companion';
+  let clean = name
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '') // strip script blocks and content
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')   // strip style blocks and content
+    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '') // strip ANSI escape sequences
+    .replace(/<[^>]*>/g, '') // strip HTML tags
+    .replace(/[\x00-\x1F\x7F-\x9F]/g, '') // strip control chars
+    .trim();
+  if (clean.length > 48) {
+    clean = clean.slice(0, 48).trim();
+  }
+  return clean || 'Soko Mobile Companion';
+}
+
 function scanAvailableDevices() {
   const devices = [];
+  const now = Date.now();
+  const MAX_SOCKET_AGE_MS = 5 * 60 * 1000; // 5 minutes freshness window
 
-  // 1. Scan for real Bluetooth devices
-  if (os.platform() === 'linux') {
-    try {
-      const btOut = execSync('bluetoothctl devices', { encoding: 'utf8', timeout: 1500 });
-      const lines = btOut.trim().split('\n');
-      for (const line of lines) {
-        const match = line.match(/^Device\s+([0-9A-Fa-f:]+)\s+(.+)$/);
-        if (match && match[2].trim()) {
-          const devName = match[2].trim();
-          devices.push({
-            id: `bt-${match[1].replace(/:/g, '')}`,
-            name: devName,
-            model: devName.toLowerCase().includes('bud') || devName.toLowerCase().includes('ear') ? 'Bluetooth Audio / Wearable' : 'Bluetooth Companion Device',
-            transport: 'ble',
-            rssi: -56,
-            mac: match[1],
-          });
-        }
-      }
-    } catch {}
-  } else if (os.platform() === 'win32') {
-    try {
-      const psCmd = 'Get-PnpDevice -Class Bluetooth -Status OK | Where-Object { $_.FriendlyName -notmatch "Adapter|Enumerator|Radio|Wireless|Generic|Bluetooth Device \\(Personal Area Network\\)" } | Select-Object FriendlyName, InstanceId | ConvertTo-Json -Compress';
-      const btOut = execSync(`powershell -NoProfile -NonInteractive -Command "${psCmd}"`, {
-        encoding: 'utf8',
-        timeout: 2000,
-        stdio: ['ignore', 'pipe', 'ignore'],
-      });
-      if (btOut && btOut.trim()) {
-        const parsed = JSON.parse(btOut.trim());
-        const list = Array.isArray(parsed) ? parsed : [parsed];
-        for (const dev of list) {
-          if (dev && dev.FriendlyName) {
-            const devName = dev.FriendlyName.trim();
-            const rawId = dev.InstanceId || devName;
-            const cleanId = rawId.replace(/[^a-zA-Z0-9]/g, '').slice(-12) || 'winbt';
-            devices.push({
-              id: `bt-${cleanId}`,
-              name: devName,
-              model: devName.toLowerCase().includes('bud') || devName.toLowerCase().includes('ear') ? 'Bluetooth Audio / Wearable' : 'Bluetooth Companion Device',
-              transport: 'ble',
-              rssi: -58,
-            });
-          }
-        }
-      }
-    } catch {}
-  }
-
-  // 2. Discover local mobile companion on the Wi-Fi / Hotspot LAN
-  const localIps = getLocalIps();
-  const primaryIp = localIps[0] || '192.168.31.210';
-  devices.push({
-    id: `wifi-companion-${primaryIp}`,
-    name: 'Android Mobile Companion (Wi-Fi / Hotspot)',
-    model: `Local Companion (${primaryIp}:8766)`,
-    transport: 'wifi',
-    rssi: -42,
-    ipAddress: primaryIp,
-    isAuthorized: false,
-    requiresPairing: true,
-  });
-
-  // 3. Include connected but unauthenticated sockets
-  if (typeof getDiscoveredUnpairedDevices === 'function') {
-    const discovered = getDiscoveredUnpairedDevices();
-    for (const d of discovered) {
-      if (!devices.some((x) => x.id === d.id)) {
-        devices.unshift({
-          id: d.id,
-          name: d.name || 'Discovered Wi-Fi Device',
-          model: d.model || 'Nearby Mobile Client',
-          transport: 'wifi',
-          rssi: -45,
-          ipAddress: d.ip,
-          isAuthorized: false,
-          requiresPairing: true,
-        });
-      }
+  // Query ONLY active WebSocket clients from activeClients that have announced themselves as Soko Mobile
+  for (const socket of activeClients) {
+    if (!socket || socket.isSokoMobile !== true || socket.isLocalDesktop) {
+      continue;
     }
+
+    // Check socket freshness and readyState === WebSocket.OPEN
+    if (socket.destroyed || socket.closed) {
+      continue;
+    }
+
+    const isOpen =
+      (typeof WebSocket !== 'undefined' && socket.readyState === WebSocket.OPEN) ||
+      socket.readyState === 1 ||
+      socket.readyState === 'open';
+    if (!isOpen) {
+      continue;
+    }
+
+    if (socket.isFresh === false) {
+      continue;
+    }
+
+    const lastActivity = socket.lastSeen || socket.announcedAt || socket.connectedAt || now;
+    if (now - lastActivity > MAX_SOCKET_AGE_MS) {
+      continue;
+    }
+
+    const cleanIp = socket.simulatedRemoteIp || normalizeIp(socket.remoteAddress) || '127.0.0.1';
+    const devId = socket.deviceId || `wifi-companion-${cleanIp}`;
+    const devName = sanitizeDeviceName(socket.deviceName || 'Mobile Companion');
+    const devModel = socket.deviceModel || 'Soko Mobile Companion';
+
+    devices.push({
+      id: devId,
+      deviceId: devId,
+      name: devName,
+      model: devModel,
+      cleanIp: cleanIp,
+      ipAddress: cleanIp,
+      transport: 'wifi',
+      rssi: typeof socket.rssi === 'number' ? socket.rssi : -45,
+      isSokoMobile: true,
+      isPaired: Boolean(socket.isAuthorized),
+      isAuthorized: Boolean(socket.isAuthorized),
+      requiresPairing: !socket.isAuthorized,
+    });
   }
 
   return devices;
@@ -939,22 +932,7 @@ rateLimiter.onAlert((alert) => {
 pairedDevice = null;
 
 function getDiscoveredUnpairedDevices() {
-  const list = [];
-  for (const client of activeClients) {
-    if (!client.isLocalDesktop && !client.isAuthorized) {
-      const cleanIp = client.remoteAddress?.replace(/^.*:/, '') || 'Wi-Fi Client';
-      list.push({
-        id: client.deviceId || `wifi-companion-${cleanIp}`,
-        name: client.deviceName || 'Mobile Companion (Android)',
-        model: client.deviceModel || `Local Companion (${cleanIp})`,
-        ipAddress: cleanIp,
-        transport: 'wifi',
-        rssi: -45,
-        isPaired: false,
-      });
-    }
-  }
-  return list;
+  return scanAvailableDevices().filter((d) => !d.isAuthorized);
 }
 
 const pendingPairRequests = new Map();
@@ -3070,7 +3048,7 @@ function validateInboundPacket(packet) {
 
   // 3. Monotonic sequence counter (Replay attack defense)
   if (typeof packet.packetId === 'number') {
-    if (packet.packetId <= highestSeenPacketId && packet.packetType !== 'HEARTBEAT_PING') {
+    if (packet.packetId <= highestSeenPacketId && packet.packetType !== 'HEARTBEAT_PING' && packet.packetType !== 'COMPANION_ANNOUNCE') {
       return { valid: false, reason: `Replay detected: packetId ${packet.packetId} <= highest seen ${highestSeenPacketId}` };
     }
     highestSeenPacketId = Math.max(highestSeenPacketId, packet.packetId);
@@ -3592,9 +3570,18 @@ function encodeWsFrame(payload) {
   return Buffer.concat([header, payload]);
 }
 
+function isSocketOpen(socket) {
+  if (!socket || socket.destroyed || socket.closed) return false;
+  return (
+    (typeof WebSocket !== 'undefined' && socket.readyState === WebSocket.OPEN) ||
+    socket.readyState === 1 ||
+    socket.readyState === 'open'
+  );
+}
+
 // Send WS packet to single socket
 function sendWsPacket(socket, packet) {
-  if (socket && socket.readyState !== 'closed') {
+  if (isSocketOpen(socket)) {
     try {
       const payloadBuffer = Buffer.from(JSON.stringify(packet), 'utf8');
       socket.write(encodeWsFrame(payloadBuffer));
@@ -3610,7 +3597,7 @@ function broadcastPacket(packet, senderSocket = null) {
   const frame = encodeWsFrame(payloadBuffer);
 
   for (const client of activeClients) {
-    if (client !== senderSocket && client.readyState !== 'closed') {
+    if (client !== senderSocket && isSocketOpen(client)) {
       try {
         client.write(frame);
       } catch (err) {
@@ -3618,6 +3605,43 @@ function broadcastPacket(packet, senderSocket = null) {
       }
     }
   }
+}
+
+// Helper to broadcast current discovered devices and status to all connected clients
+function broadcastDiscoveredDevices() {
+  const remainingDiscovered = getDiscoveredUnpairedDevices();
+  broadcastPacket({
+    magic: 'SK',
+    version: 1,
+    packetId: Date.now(),
+    timestamp: Date.now(),
+    packetType: 'BRIDGE_STATUS',
+    payload: {
+      status: 'online',
+      service: 'Soko Connection Bridge',
+      version: appVersion,
+      activeClients: activeClients.size,
+      localIps: getLocalIps(),
+      port: PORT,
+      pairedDevice: pairedDevice && pairedDevice.isAuthorized ? pairedDevice : null,
+      discoveredDevice: remainingDiscovered[0] || null,
+      discoveredDevices: remainingDiscovered,
+      certFingerprint: tlsEngine.getFingerprint(),
+      tlsEnabled: true,
+    },
+  });
+
+  broadcastPacket({
+    magic: 'SK',
+    version: 1,
+    packetId: Date.now(),
+    timestamp: Date.now(),
+    packetType: 'DISCOVERED_DEVICE',
+    payload: {
+      device: remainingDiscovered[0] || null,
+      devices: remainingDiscovered,
+    },
+  });
 }
 
 // Minimal WebSocket framing parser
@@ -3649,6 +3673,25 @@ function createWebSocketServer(server) {
     socket.isAuthorized = socket.isLocalDesktop;
     socket.deviceId = null;
     socket.deviceName = null;
+    socket.deviceModel = null;
+    socket.isSokoMobile = false;
+    if (simRemote) {
+      socket.simulatedRemoteIp = simRemote;
+    }
+    socket.connectedAt = Date.now();
+    socket.lastSeen = Date.now();
+
+    try {
+      Object.defineProperty(socket, 'readyState', {
+        get() {
+          if (socket.destroyed || socket.closed || socket._closed) {
+            return WebSocket.CLOSED;
+          }
+          return WebSocket.OPEN;
+        },
+        configurable: true,
+      });
+    } catch (_) {}
 
     activeClients.add(socket);
     console.log(`[Bridge WS] Client connected from ${socket.remoteAddress} (local: ${socket.isLocalDesktop}, simRemote: ${Boolean(simRemote)}). Total active: ${activeClients.size}`);
@@ -3728,29 +3771,17 @@ function createWebSocketServer(server) {
         pairedDevice = null;
       }
 
-      const remainingDiscovered = getDiscoveredUnpairedDevices();
-      broadcastPacket({
-        magic: 'SK',
-        version: 1,
-        packetId: Date.now(),
-        timestamp: Date.now(),
-        packetType: 'BRIDGE_STATUS',
-        payload: {
-          status: 'online',
-          service: 'Soko Connection Bridge',
-          version: appVersion,
-          activeClients: activeClients.size,
-          localIps: getLocalIps(),
-          port: PORT,
-          pairedDevice: pairedDevice && pairedDevice.isAuthorized ? pairedDevice : null,
-          discoveredDevice: remainingDiscovered[0] || null,
-          discoveredDevices: remainingDiscovered,
-        },
-      });
+      broadcastDiscoveredDevices();
     });
 
     socket.on('error', () => {
+      removeStreamSubscriber(null, socket);
       activeClients.delete(socket);
+      const remainingAuthorized = Array.from(activeClients).some((c) => !c.isLocalDesktop && c.isAuthorized);
+      if (!remainingAuthorized) {
+        pairedDevice = null;
+      }
+      broadcastDiscoveredDevices();
     });
   });
 }
@@ -3836,6 +3867,14 @@ function handleWsFrame(socket, buffer) {
       }
     }
 
+    if (packet && (packet.packetType === 'COMPANION_ANNOUNCE' || packet.type === 'COMPANION_ANNOUNCE' || packet.packet_type === 'COMPANION_ANNOUNCE')) {
+      if (!packet.magic) packet.magic = 'SK';
+      if (!packet.version) packet.version = 1;
+      if (!packet.packetType) packet.packetType = 'COMPANION_ANNOUNCE';
+      if (!packet.timestamp) packet.timestamp = Date.now();
+      if (!packet.packetId) packet.packetId = Date.now();
+    }
+
     // Security Gate: Check framing, magic bytes, clock drift, and monotonic nonces
     const sec = validateInboundPacket(packet);
     if (!sec.valid) {
@@ -3848,6 +3887,68 @@ function handleWsFrame(socket, buffer) {
         packetType: 'SECURITY_ALERT',
         payload: { error: sec.reason },
       });
+      return;
+    }
+
+    // Update socket activity timestamp
+    socket.lastSeen = Date.now();
+
+    // Handle COMPANION_ANNOUNCE: when a mobile device connects and announces itself
+    if (
+      packet.packetType === 'COMPANION_ANNOUNCE' ||
+      packet.packet_type === 'COMPANION_ANNOUNCE' ||
+      packet.type === 'COMPANION_ANNOUNCE'
+    ) {
+      const payload = packet.payload || packet;
+      const rawDeviceId = payload.deviceId || packet.deviceId || socket.deviceId || `dev-${Date.now()}`;
+      const rawDeviceName = payload.deviceName || packet.deviceName || payload.name || 'Mobile Companion';
+      const cleanDeviceName = sanitizeDeviceName(rawDeviceName);
+      const rawModel = payload.model || payload.deviceModel || packet.model || 'Soko Mobile Companion';
+
+      socket.isSokoMobile = true;
+      socket.deviceId = rawDeviceId;
+      socket.deviceName = cleanDeviceName;
+      socket.deviceModel = rawModel;
+      socket.announcedAt = Date.now();
+      socket.lastSeen = Date.now();
+
+      // Security: COMPANION_ANNOUNCE ONLY registers discovery metadata for pairing.
+      // It MUST NOT authorize the socket (socket.isAuthorized remains false until SAS PIN verification!).
+      if (!socket.isAuthorized) {
+        socket.isAuthorized = false;
+      } else if (pairedDevice && pairedDevice.id === socket.deviceId) {
+        pairedDevice.name = cleanDeviceName;
+      }
+
+      console.log(`[Bridge WS] COMPANION_ANNOUNCE registered: "${cleanDeviceName}" (${rawDeviceId}, model: ${rawModel}, authorized: ${socket.isAuthorized})`);
+
+      broadcastDiscoveredDevices();
+
+      sendWsPacket(socket, {
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'ANNOUNCE_ACK',
+        payload: {
+          registered: true,
+          deviceId: socket.deviceId,
+          deviceName: socket.deviceName,
+          requiresPairing: !socket.isAuthorized,
+        },
+      });
+
+      return;
+    }
+
+    // Handle COMPANION_DISCONNECT / DISCONNECT: graceful teardown from mobile
+    if (packet.packetType === 'COMPANION_DISCONNECT' || packet.packetType === 'DISCONNECT') {
+      socket.isSokoMobile = false;
+      activeClients.delete(socket);
+      try {
+        socket.destroy();
+      } catch (_) {}
+      broadcastDiscoveredDevices();
       return;
     }
 
@@ -5244,8 +5345,41 @@ const serverHandler = (req, res) => {
   }
 
   // 3. Scan for available nearby devices (Bluetooth & Wi-Fi LAN)
-  if ((url.pathname === '/api/devices/scan' || url.pathname === '/api/devices/discovered') && req.method === 'GET') {
+  if (url.pathname === '/api/devices/scan' && req.method === 'GET') {
     const devices = scanAvailableDevices();
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.end(JSON.stringify({ devices }));
+    return;
+  }
+
+  // 3a. Discovered unauthenticated devices (Wi-Fi presence and scan results)
+  if (url.pathname === '/api/devices/discovered' && req.method === 'GET') {
+    const devices = scanAvailableDevices();
+    for (const client of activeClients) {
+      if (!client || client.isLocalDesktop || client.isAuthorized) continue;
+      if (client.destroyed || client.closed) continue;
+      const cleanIp = client.simulatedRemoteIp || normalizeIp(client.remoteAddress) || '127.0.0.1';
+      const devId = client.deviceId || `wifi-companion-${cleanIp}`;
+      if (!devices.some((x) => x.id === devId || x.deviceId === devId)) {
+        devices.push({
+          id: devId,
+          deviceId: devId,
+          name: sanitizeDeviceName(client.deviceName || 'Mobile Companion (Android)'),
+          model: client.deviceModel || `Local Companion (${cleanIp})`,
+          cleanIp: cleanIp,
+          ipAddress: cleanIp,
+          transport: 'wifi',
+          rssi: typeof client.rssi === 'number' ? client.rssi : -45,
+          isSokoMobile: Boolean(client.isSokoMobile),
+          isPaired: false,
+          isAuthorized: false,
+          requiresPairing: true,
+        });
+      }
+    }
     res.writeHead(200, {
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*',
@@ -6821,4 +6955,11 @@ module.exports = {
   bridgeLogger,
   activeAudioStreamsMp3,
   activeAudioStreamsOpus,
+  scanAvailableDevices,
+  sanitizeDeviceName,
+  getDiscoveredUnpairedDevices,
+  activeClients,
+  broadcastDiscoveredDevices,
+  sendWsPacket,
+  broadcastPacket,
 };

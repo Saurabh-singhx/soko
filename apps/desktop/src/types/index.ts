@@ -88,6 +88,7 @@ export interface DiscoveredDevice {
   isPaired?: boolean;
   ipAddress?: string;
   mac?: string;
+  isSokoMobile?: boolean;
 }
 
 export interface PairedDevice {
@@ -149,7 +150,12 @@ export interface SokoPacketEnvelope {
     | 'TOKEN_REFRESH_CONFIRM'
     | 'REVOKE_ALL_SESSIONS'
     | 'REVOKE_ALL_CONFIRM'
-    | 'DEVICE_UNPAIRED';
+    | 'DEVICE_UNPAIRED'
+    | 'DISCOVERED_DEVICE'
+    | 'DISCOVERED_DEVICES'
+    | 'COMPANION_DISCOVERED'
+    | 'COMPANION_DISCONNECTED'
+    | 'COMPANION_ANNOUNCE';
   payload: Record<string, any>;
 }
 

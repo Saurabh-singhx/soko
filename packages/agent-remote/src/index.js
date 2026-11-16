@@ -3,6 +3,9 @@ const {
   cleanAnsi,
   formatToolCall,
   sanitizeToolOutput,
+  extractCleanUserInput,
+  isSubagentDispatchEnvelope,
+  extractDispatchEnvelopePrompt,
 } = require('./agentSessionManager');
 
 module.exports = {
@@ -10,4 +13,7 @@ module.exports = {
   cleanAnsi,
   formatToolCall,
   sanitizeToolOutput,
+  extractCleanUserInput,
+  isSubagentDispatchEnvelope,
+  extractDispatchEnvelopePrompt,
 };

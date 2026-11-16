@@ -111,6 +111,43 @@ function sanitizeToolOutput(rawOutput, maxLines = 40, maxChars = 4096) {
   };
 }
 
+/**
+ * Detects if a transcript item is a subagent dispatch envelope.
+ */
+function isSubagentDispatchEnvelope(item) {
+  if (!item) return false;
+  const content = item.content ? String(item.content) : '';
+  if (content.includes('[Message]') && (content.includes('sender=') || content.includes('content='))) {
+    return true;
+  }
+  if (
+    (item.type === 'SYSTEM_MESSAGE' || item.source === 'SYSTEM') &&
+    (content.includes('sender=') || content.includes('not actually sent by the user'))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Extracts prompt/instructions from a subagent dispatch envelope.
+ */
+function extractDispatchEnvelopePrompt(rawContent) {
+  if (!rawContent) return '';
+  const cleaned = cleanAnsi(String(rawContent));
+  // Look for content=...
+  const match = cleaned.match(/\[Message\][\s\S]*?\bcontent=([\s\S]*?)(?:<\/SYSTEM_MESSAGE>|$)/i);
+  if (match && match[1]) {
+    return match[1].trim();
+  }
+  // Strip preamble if present
+  const stripped = cleaned
+    .replace(/The following is a <SYSTEM_MESSAGE>[\s\S]*?attention to\./gi, '')
+    .replace(/<\/?SYSTEM_MESSAGE>/gi, '')
+    .trim();
+  return stripped;
+}
+
 class AgentSessionManager {
   constructor(options = {}) {
     this.brainDirs = options.brainDirs || this._resolveDefaultBrainDirs();
@@ -215,39 +252,58 @@ class AgentSessionManager {
           const ageMs = now - stat.mtimeMs;
           if (ageMs > recentLimitMs) continue;
 
-          // Check presence lock - verify if lock is recent (< 2h) or transcript active
+          // Check presence lock - verify if lock is recent (< 20m) and transcript active (< 20m)
+          const STALE_LOCK_TIMEOUT_MS = 20 * 60 * 1000; // 20 minutes
+          let hasLockFile = false;
           let isLocked = false;
           for (const pDir of this.presenceDirs) {
             const cLock = path.join(pDir, `${sessionId}.lock`);
             if (fs.existsSync(cLock)) {
+              hasLockFile = true;
               try {
                 const lStat = fs.statSync(cLock);
-                if (now - lStat.mtimeMs < 2 * 60 * 60 * 1000 || ageMs < 15 * 60 * 1000) {
+                const lockAgeMs = now - lStat.mtimeMs;
+                if (lockAgeMs < STALE_LOCK_TIMEOUT_MS && ageMs < STALE_LOCK_TIMEOUT_MS) {
                   isLocked = true;
                 }
               } catch {
-                if (ageMs < 15 * 60 * 1000) isLocked = true;
+                if (ageMs < STALE_LOCK_TIMEOUT_MS) isLocked = true;
               }
               break;
             }
           }
 
           seen.add(sessionId);
-          const meta = this._peekSessionMetadata(tPath, stat);
+          const meta = this._peekSessionMetadata(tPath, stat, sessionId);
+
+          let status = 'idle';
+          if (ageMs >= STALE_LOCK_TIMEOUT_MS || (hasLockFile && !isLocked)) {
+            status = 'completed';
+          } else if (isLocked) {
+            status = ageMs < 60000 ? 'working' : 'active';
+          } else if (ageMs < 60000) {
+            status = 'working';
+          } else if (ageMs < 10 * 60 * 1000) {
+            status = 'active';
+          } else {
+            status = 'idle';
+          }
+
           sessions.push({
             sessionId,
-            name: meta.workspaceName || 'Antigravity Agent',
+            name: (meta.isSubagent && meta.role && meta.role !== 'Sub-Agent') ? meta.role : (meta.workspaceName || 'Antigravity Agent'),
             workspace: meta.workspace || '',
             workspaceName: meta.workspaceName || 'soko',
             mtimeMs: stat.mtimeMs,
             sizeBytes: stat.size,
             isLocked,
-            status: ageMs < 60000 ? 'working' : (isLocked || ageMs < 10 * 60 * 1000 ? 'active' : 'idle'),
+            status,
             ageSeconds: Math.floor(ageMs / 1000),
             tokensUsed: meta.tokensUsed || 0,
             taskSummary: meta.taskSummary || '',
             isSubagent: meta.isSubagent || false,
             parentSessionId: meta.parentSessionId || null,
+            role: meta.role || '',
           });
         }
       } catch (err) {
@@ -259,14 +315,136 @@ class AgentSessionManager {
   }
 
   /**
+   * Parses real sub-agent roles from envelope content or swarm briefs.
+   */
+  _parseRoleFromText(text) {
+    if (!text || typeof text !== 'string') return '';
+    const cleaned = cleanAnsi(text);
+
+    // 1. "You are <name>, the <role>"
+    // E.g. content matching 'You are ([a-zA-Z0-9_\- ]+), the ([a-zA-Z0-9_\- ]+)'
+    const youAreTheMatch = cleaned.match(/(?:You are|you are)\s+[a-zA-Z0-9_\- ]+,\s+(?:the|an?)\s+([a-zA-Z0-9_\- ]+)/i);
+    if (youAreTheMatch && youAreTheMatch[1]) {
+      const candidate = youAreTheMatch[1].split(/[.\n\r,]/)[0].trim();
+      if (candidate) return candidate;
+    }
+
+    const youAreMatch2 = cleaned.match(/You are ([a-zA-Z0-9_\- ]+), the ([a-zA-Z0-9_\- ]+)/i);
+    if (youAreMatch2 && youAreMatch2[2]) {
+      const candidate = youAreMatch2[2].split(/[.\n\r,]/)[0].trim();
+      if (candidate) return candidate;
+    }
+
+    // 2. "Role:\s*([^\n\r]+)" or "YOUR ROLE:\s*([^\n\r]+)"
+    const roleMatch = cleaned.match(/(?:YOUR\s+ROLE|Your\s+role|ROLE|Role)[:\s]+[*_]*([^\n\r*]+)/i);
+    if (roleMatch && roleMatch[1]) {
+      const candidate = roleMatch[1].replace(/[*_.]+$|^[*_.\s]+/, '').trim();
+      if (candidate) return candidate;
+    }
+
+    // 3. Parenthetical role: "You are Reviewer 1 (Primary Full-Suite Reviewer)"
+    const parenRoleMatch = cleaned.match(/(?:You are|you are)\s+[a-zA-Z0-9_\- ]+\s*\(([^)\n\r]+)\)/i);
+    if (parenRoleMatch && parenRoleMatch[1]) {
+      const candidate = parenRoleMatch[1].replace(/[*_.]+$|^[*_.\s]+/, '').trim();
+      if (candidate) return candidate;
+    }
+
+    // 4. "You are <name>, one agent in a swarm"
+    const swarmWorkerMatch = cleaned.match(/(?:You are|you are)\s+([a-zA-Z0-9_\- ]+),\s+one agent in a swarm/i);
+    if (swarmWorkerMatch && swarmWorkerMatch[1]) {
+      return swarmWorkerMatch[1].trim();
+    }
+
+    // 5. Swarm board mention: "recorded on the board as #2 for @backend-remote"
+    const swarmBoardMatch = cleaned.match(/(?:recorded on the board as #\d+ for @([a-zA-Z0-9_\-]+))/i);
+    if (swarmBoardMatch && swarmBoardMatch[1]) {
+      return swarmBoardMatch[1].trim();
+    }
+
+    // 6. Swarm roster mentions: "@backend-remote You own packages/..."
+    const swarmBriefMatch = cleaned.match(/@([a-zA-Z0-9_\-]+)\s+(?:You own|You are|Your job|Check|Verify|Please)/i);
+    if (swarmBriefMatch && swarmBriefMatch[1]) {
+      return swarmBriefMatch[1].trim();
+    }
+
+    return '';
+  }
+
+  /**
+   * Scans parent transcript for invoke_subagent or swarm tool calls targeting this subagent.
+   */
+  _extractRoleFromParent(parentSessionId, childSessionId) {
+    if (!parentSessionId || !this.isValidSessionId(parentSessionId)) return '';
+    try {
+      const parentPaths = this.resolveSessionPaths(parentSessionId);
+      if (!parentPaths || !fs.existsSync(parentPaths.transcriptPath)) return '';
+
+      const stat = fs.statSync(parentPaths.transcriptPath);
+      const readSize = Math.min(stat.size, 131072); // Read last 128KB of parent transcript
+      const buffer = Buffer.alloc(readSize);
+      const fd = fs.openSync(parentPaths.transcriptPath, 'r');
+      fs.readSync(fd, buffer, 0, readSize, Math.max(0, stat.size - readSize));
+      fs.closeSync(fd);
+
+      const text = buffer.toString('utf8');
+      const lines = text.trim().split('\n');
+
+      let fallbackRole = '';
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i].trim();
+        if (!line) continue;
+        try {
+          const item = JSON.parse(line);
+          const toolCalls = item.tool_calls;
+          if (Array.isArray(toolCalls)) {
+            for (const tc of toolCalls) {
+              const name = tc.name || '';
+              const args = tc.args || {};
+              if (name === 'invoke_subagent') {
+                const r = args.Role || args.role || args.TypeName || args.typeName || args.subagent_type || args.description || args.name;
+                const matchesChild = childSessionId && (line.includes(childSessionId) || (lines[i + 1] && lines[i + 1].includes(childSessionId)));
+                if (matchesChild && r) {
+                  return cleanAnsi(String(r)).trim();
+                }
+                if (r && !fallbackRole) {
+                  fallbackRole = cleanAnsi(String(r)).trim();
+                }
+              } else if (name === 'swarm') {
+                const subName = args.name || '';
+                const brief = args.brief || '';
+                const roleFromBrief = this._parseRoleFromText(brief);
+                const roleFound = roleFromBrief || (subName ? cleanAnsi(String(subName)).trim() : '');
+                const matchesChild = childSessionId && (line.includes(childSessionId) || (lines[i + 1] && lines[i + 1].includes(childSessionId)));
+                if (matchesChild && roleFound) {
+                  return roleFound;
+                }
+                if (roleFound && !fallbackRole) {
+                  fallbackRole = roleFound;
+                }
+              }
+            }
+          }
+        } catch {}
+      }
+      return fallbackRole;
+    } catch {
+      return '';
+    }
+  }
+
+  /**
    * Fast metadata peek without reading the entire transcript file.
    */
-  _peekSessionMetadata(tPath, stat) {
+  _peekSessionMetadata(tPath, stat, sessionId) {
     let workspace = '';
     let taskSummary = '';
     let tokensUsed = 0;
     let isSubagent = false;
     let parentSessionId = null;
+    let role = '';
+    let subagentPrompt = '';
+
+    const currentSessionId = sessionId || path.basename(path.dirname(path.dirname(path.dirname(tPath))));
 
     let fd;
     try {
@@ -287,7 +465,7 @@ class AgentSessionManager {
         // Main agent starts with source: 'USER_EXPLICIT' or a user prompt <USER_REQUEST>.
         // Subagent starts with source: 'SYSTEM' or content containing sender= or <SYSTEM_MESSAGE> not actually sent by the user.
         const headLines = text.trim().split('\n');
-        for (let i = 0; i < Math.min(headLines.length, 5); i++) {
+        for (let i = 0; i < Math.min(headLines.length, 10); i++) {
           if (!headLines[i].trim()) continue;
           try {
             const item = JSON.parse(headLines[i]);
@@ -298,7 +476,8 @@ class AgentSessionManager {
               if (
                 src.startsWith('SYSTEM') ||
                 content.includes('sender=') ||
-                content.includes('not actually sent by the user')
+                content.includes('not actually sent by the user') ||
+                content.includes('[Message]')
               ) {
                 isSubagent = true;
               } else if (
@@ -321,7 +500,25 @@ class AgentSessionManager {
                 }
               }
             }
+
+            if (!role) {
+              if (item.role) {
+                role = cleanAnsi(String(item.role)).trim();
+              } else if (content) {
+                role = this._parseRoleFromText(content);
+              }
+            }
+
+            if (isSubagent && !subagentPrompt && content) {
+              subagentPrompt = extractDispatchEnvelopePrompt(content);
+            }
           } catch {}
+        }
+
+        // Dynamic Sub-Agent Role Extraction:
+        // If subagent role was not in child transcript envelope, parse from parent invoke_subagent / swarm calls
+        if (isSubagent && !role && parentSessionId) {
+          role = this._extractRoleFromParent(parentSessionId, currentSessionId);
         }
 
         const tailBuf = Buffer.alloc(readSize);
@@ -339,6 +536,11 @@ class AgentSessionManager {
             }
           } catch {}
         }
+
+        // Subagents without explicit USER_INPUT can use their dispatch prompt as taskSummary
+        if (!taskSummary && isSubagent && subagentPrompt) {
+          taskSummary = subagentPrompt.slice(0, 120).trim();
+        }
       }
     } catch {} finally {
       if (fd !== undefined) {
@@ -354,7 +556,50 @@ class AgentSessionManager {
       tokensUsed,
       isSubagent,
       parentSessionId,
+      role: role || (isSubagent ? 'Sub-Agent' : ''),
     };
+  }
+
+  /**
+   * Helper to accumulate thinking, tool_calls, and responses into a conversational turn.
+   */
+  _accumulateTurnItem(currentTurn, item, type) {
+    if (item.thinking) {
+      const cleanThinking = cleanAnsi(item.thinking).trim();
+      if (cleanThinking) {
+        currentTurn.thinking.push(cleanThinking);
+      }
+    }
+
+    if (item.tool_calls && Array.isArray(item.tool_calls)) {
+      for (const tc of item.tool_calls) {
+        const formatted = formatToolCall(tc);
+        currentTurn.toolCalls.push(formatted);
+      }
+    }
+
+    // In Antigravity transcripts, tool outputs (command stdout, read_file dumps, search redirects)
+    // are recorded with type 'GENERIC' (and source 'MODEL').
+    // These are NOT agent conversational responses and must not clutter the mobile screen.
+    // Only actual PLANNER_RESPONSE / MODEL assistant messages to the user should be treated as responses.
+    if (
+      item.content &&
+      (type === 'PLANNER_RESPONSE' || type === 'MODEL') &&
+      type !== 'GENERIC' &&
+      item.type !== 'GENERIC'
+    ) {
+      const cleanText = cleanAnsi(item.content).trim();
+      if (
+        cleanText &&
+        !cleanText.startsWith('<') &&
+        !cleanText.includes('vertexaisearch.cloud.google.com') &&
+        !cleanText.includes('grounding-api-redirect') &&
+        !cleanText.startsWith('Created At:') &&
+        !currentTurn.responses.includes(cleanText)
+      ) {
+        currentTurn.responses.push(cleanText);
+      }
+    }
   }
 
   /**
@@ -379,6 +624,8 @@ class AgentSessionManager {
       const raw = buffer.toString('utf8');
       const lines = raw.trim().split('\n');
 
+      const meta = this._peekSessionMetadata(paths.transcriptPath, stat, sessionId);
+
       const turns = [];
       let currentTurn = null;
       let isWaiting = false;
@@ -397,10 +644,11 @@ class AgentSessionManager {
 
         const type = item.type || '';
 
+        // 1. Explicit USER_INPUT
         if (type === 'USER_INPUT') {
           if (currentTurn) turns.push(currentTurn);
           currentTurn = {
-            id: `turn-${item.step_index || turns.length + 1}`,
+            id: `turn-${item.step_index !== undefined ? item.step_index : turns.length + 1}`,
             stepIndex: item.step_index || 0,
             timestamp: item.created_at ? new Date(item.created_at).getTime() : Date.now(),
             userInput: extractCleanUserInput(item.content || ''),
@@ -409,44 +657,42 @@ class AgentSessionManager {
             responses: [],
             status: 'completed',
           };
-        } else if (currentTurn) {
-          if (item.thinking) {
-            const cleanThinking = cleanAnsi(item.thinking).trim();
-            if (cleanThinking) {
-              currentTurn.thinking.push(cleanThinking);
-            }
+        }
+        // 2. Sub-agent dispatch envelope (turn 0 or subsequent turn envelope)
+        else if (isSubagentDispatchEnvelope(item)) {
+          if (currentTurn) turns.push(currentTurn);
+          const prompt = extractDispatchEnvelopePrompt(item.content);
+          currentTurn = {
+            id: `turn-${item.step_index !== undefined ? item.step_index : turns.length + 1}`,
+            stepIndex: item.step_index || 0,
+            timestamp: item.created_at ? new Date(item.created_at).getTime() : Date.now(),
+            userInput: prompt || 'Subagent Task',
+            thinking: [],
+            toolCalls: [],
+            responses: [],
+            status: 'completed',
+          };
+        }
+        // 3. Sub-agent starting directly with PLANNER_RESPONSE (no USER_INPUT or SYSTEM_MESSAGE)
+        else if (!currentTurn && turns.length === 0 && (type === 'PLANNER_RESPONSE' || type === 'MODEL')) {
+          currentTurn = {
+            id: `turn-${item.step_index !== undefined ? item.step_index : 0}`,
+            stepIndex: item.step_index || 0,
+            timestamp: item.created_at ? new Date(item.created_at).getTime() : Date.now(),
+            userInput: meta.taskSummary || 'Subagent Task',
+            thinking: [],
+            toolCalls: [],
+            responses: [],
+            status: 'completed',
+          };
+          this._accumulateTurnItem(currentTurn, item, type);
+          if (item.status === 'RUNNING') {
+            isWorking = true;
           }
-
-          if (item.tool_calls && Array.isArray(item.tool_calls)) {
-            for (const tc of item.tool_calls) {
-              const formatted = formatToolCall(tc);
-              currentTurn.toolCalls.push(formatted);
-            }
-          }
-
-          // In Antigravity transcripts, tool outputs (command stdout, read_file dumps, search redirects)
-          // are recorded with type 'GENERIC' (and source 'MODEL').
-          // These are NOT agent conversational responses and must not clutter the mobile screen.
-          // Only actual PLANNER_RESPONSE / MODEL assistant messages to the user should be treated as responses.
-          if (
-            item.content &&
-            (type === 'PLANNER_RESPONSE' || type === 'MODEL') &&
-            type !== 'GENERIC' &&
-            item.type !== 'GENERIC'
-          ) {
-            const cleanText = cleanAnsi(item.content).trim();
-            if (
-              cleanText &&
-              !cleanText.startsWith('<') &&
-              !cleanText.includes('vertexaisearch.cloud.google.com') &&
-              !cleanText.includes('grounding-api-redirect') &&
-              !cleanText.startsWith('Created At:') &&
-              !currentTurn.responses.includes(cleanText)
-            ) {
-              currentTurn.responses.push(cleanText);
-            }
-          }
-
+        }
+        // 4. Accumulate into current active turn
+        else if (currentTurn) {
+          this._accumulateTurnItem(currentTurn, item, type);
           if (item.status === 'RUNNING') {
             isWorking = true;
           }
@@ -455,6 +701,26 @@ class AgentSessionManager {
 
       if (currentTurn) {
         turns.push(currentTurn);
+      }
+
+      const STALE_LOCK_TIMEOUT_MS = 20 * 60 * 1000; // 20 minutes
+      const now = Date.now();
+      const ageMs = now - stat.mtimeMs;
+
+      let hasLockFile = Boolean(paths.lockPath);
+      let isLocked = false;
+      if (paths.lockPath) {
+        try {
+          const lStat = fs.statSync(paths.lockPath);
+          const lockAgeMs = now - lStat.mtimeMs;
+          if (lockAgeMs < STALE_LOCK_TIMEOUT_MS && ageMs < STALE_LOCK_TIMEOUT_MS) {
+            isLocked = true;
+          }
+        } catch {
+          if (ageMs < STALE_LOCK_TIMEOUT_MS) {
+            isLocked = true;
+          }
+        }
       }
 
       // Check state of the very last item in transcript
@@ -472,18 +738,25 @@ class AgentSessionManager {
         } catch {}
       }
 
+      // Accurate running status: check isLocked and verify timestamp (< 20m)
+      // so dead sessions with stale locks are marked idle/completed, not working
+      if (ageMs >= STALE_LOCK_TIMEOUT_MS || (hasLockFile && !isLocked)) {
+        isWorking = false;
+        isWaiting = false;
+      }
+
       const slicedTurns = turns.slice(-maxTurns);
-      const meta = this._peekSessionMetadata(paths.transcriptPath, stat);
       return {
         success: true,
         sessionId,
         cursor: stat.size,
         mtimeMs: stat.mtimeMs,
-        isLocked: Boolean(paths.lockPath),
+        isLocked,
         isWaiting,
         isWorking,
         isSubagent: meta.isSubagent || false,
         parentSessionId: meta.parentSessionId || null,
+        role: meta.role || '',
         turns: slicedTurns,
       };
     } catch (err) {
@@ -675,4 +948,7 @@ module.exports = {
   cleanAnsi,
   formatToolCall,
   sanitizeToolOutput,
+  extractCleanUserInput,
+  isSubagentDispatchEnvelope,
+  extractDispatchEnvelopePrompt,
 };

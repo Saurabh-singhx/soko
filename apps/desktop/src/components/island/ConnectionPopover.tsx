@@ -112,6 +112,13 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
   };
 
   React.useEffect(() => {
+    const unsubDiscovered = connectionService.subscribeDiscoveredDevices((devices) => {
+      setDiscoveredDevices(devices);
+    });
+    return () => unsubDiscovered();
+  }, []);
+
+  React.useEffect(() => {
     // Edge case: If already connected, do NOT scan automatically.
     if (isConnected || status === 'connected' || Boolean(device?.isAuthorized)) {
       return;
@@ -166,7 +173,12 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
     if (selectedDeviceToPair) {
       setPairError(null);
       connectionService.fetchPendingPair().then((p) => {
-        if (p && (p.deviceId === selectedDeviceToPair.id || (selectedDeviceToPair.ipAddress && p.ip?.includes(selectedDeviceToPair.ipAddress)))) {
+        if (
+          p &&
+          (p.deviceId === selectedDeviceToPair.id ||
+            (selectedDeviceToPair.ipAddress && p.ip?.includes(selectedDeviceToPair.ipAddress)) ||
+            (p.pin && p.pin.replace(/\s+/g, '') === sasPin.replace(/\s+/g, '')))
+        ) {
           setPendingVerified(true);
         } else {
           setPendingVerified(false);
@@ -176,19 +188,23 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
       setPairError(null);
       setPendingVerified(false);
     }
-  }, [selectedDeviceToPair]);
+  }, [selectedDeviceToPair, sasPin]);
 
   React.useEffect(() => {
     const unsubPending = connectionService.onPendingPair((pairReq) => {
       if (selectedDeviceToPair) {
-        if (pairReq.deviceId === selectedDeviceToPair.id || (selectedDeviceToPair.ipAddress && pairReq.ip?.includes(selectedDeviceToPair.ipAddress))) {
+        if (
+          pairReq.deviceId === selectedDeviceToPair.id ||
+          (selectedDeviceToPair.ipAddress && pairReq.ip?.includes(selectedDeviceToPair.ipAddress)) ||
+          (pairReq.pin && pairReq.pin.replace(/\s+/g, '') === sasPin.replace(/\s+/g, ''))
+        ) {
           setPendingVerified(true);
           setPairError(null);
         }
       }
     });
     return () => unsubPending();
-  }, [selectedDeviceToPair]);
+  }, [selectedDeviceToPair, sasPin]);
 
   const handleConfirmPair = async () => {
     if (!selectedDeviceToPair) return;
@@ -363,7 +379,7 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
                   {isScanningDevices && discoveredDevices.length === 0 ? (
                     <div className="py-2.5 text-center text-[10px] text-linear-text-secondary flex items-center justify-center gap-1.5">
                       <RefreshCw size={11} className="animate-spin text-[#5E6AD2]" />
-                      <span>Scanning nearby devices...</span>
+                      <span>Scanning for Soko Mobile devices...</span>
                     </div>
                   ) : discoveredDevices.length > 0 ? (
                     <div className="flex flex-col gap-1 max-h-[120px] overflow-y-auto pr-0.5 custom-scrollbar">
@@ -379,6 +395,10 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
                               <Wifi size={11} className="text-emerald-400 shrink-0" />
                             )}
                             <span className="text-white truncate font-medium">{dev.name}</span>
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-medium font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 shrink-0">
+                              <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse" />
+                              Open Soko Mobile
+                            </span>
                             <span className="text-[9px] text-linear-text-tertiary font-mono">{dev.rssi}dBm</span>
                           </div>
                           <button
@@ -392,7 +412,7 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
                     </div>
                   ) : (
                     <div className="py-2 text-center text-[10px] text-linear-text-tertiary">
-                      No additional devices found.
+                      No Soko Mobile devices open nearby. Open Soko Mobile on your phone to connect.
                     </div>
                   )}
                 </div>
@@ -427,11 +447,17 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
                   )}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <h4 className="text-xs font-semibold text-white tracking-tight truncate">
-                    {selectedDeviceToPair.name}
-                  </h4>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <h4 className="text-xs font-semibold text-white tracking-tight truncate">
+                      {selectedDeviceToPair.name}
+                    </h4>
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-medium font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 shrink-0">
+                      <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse" />
+                      Open Soko Mobile
+                    </span>
+                  </div>
                   <span className="text-[10px] text-linear-text-secondary block font-mono truncate">
-                    {selectedDeviceToPair.model}
+                    {selectedDeviceToPair.model || (selectedDeviceToPair.transport === 'wifi' ? 'Wi-Fi LAN' : selectedDeviceToPair.transport)}
                   </span>
                 </div>
               </div>
@@ -521,9 +547,9 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
               {isScanning && discoveredDevices.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-5 gap-2 text-center">
                   <RefreshCw size={18} className="text-[#5E6AD2] animate-spin" />
-                  <span className="text-xs font-medium text-white">Scanning for nearby devices...</span>
+                  <span className="text-xs font-medium text-white">Scanning for Soko Mobile devices...</span>
                   <span className="text-[10px] text-linear-text-tertiary">
-                    Checking Bluetooth peripherals & local Wi-Fi companions
+                    Looking for devices with Soko Mobile companion open on local Wi-Fi
                   </span>
                 </div>
               ) : discoveredDevices.length > 0 ? (
@@ -546,9 +572,21 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
                           )}
                         </div>
                         <div className="min-w-0">
-                          <h5 className="text-[11px] font-semibold text-white truncate">{dev.name}</h5>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <h5 className="text-[11px] font-semibold text-white truncate">{dev.name}</h5>
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-medium font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 shrink-0">
+                              <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse" />
+                              Open Soko Mobile
+                            </span>
+                          </div>
                           <div className="flex items-center gap-1.5 text-[9.5px] text-linear-text-tertiary font-mono">
-                            <span>{dev.transport === 'ble' ? 'BLE 5.3' : 'Wi-Fi LAN'}</span>
+                            <span>{dev.model || (dev.transport === 'ble' ? 'BLE 5.3' : 'Wi-Fi LAN')}</span>
+                            {dev.ipAddress && (
+                              <>
+                                <span>•</span>
+                                <span>{dev.ipAddress}</span>
+                              </>
+                            )}
                             <span>•</span>
                             <span>{dev.rssi} dBm</span>
                           </div>
@@ -565,20 +603,20 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
                   ))}
                 </div>
               ) : (
-                <div className="flex flex-col items-center justify-center py-4 gap-2 text-center">
-                  <div className="w-8 h-8 rounded-full bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400">
-                    <Power size={14} />
+                <div className="flex flex-col items-center justify-center py-5 px-3 gap-2 text-center">
+                  <div className="w-9 h-9 rounded-full bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-linear-text-tertiary">
+                    <Smartphone size={16} />
                   </div>
-                  <div>
-                    <h5 className="text-xs font-semibold text-white">No Devices Detected</h5>
+                  <div className="max-w-[260px]">
+                    <h5 className="text-[11.5px] font-semibold text-white">No Soko Mobile devices open nearby</h5>
                     <p className="text-[10px] text-linear-text-secondary mt-0.5">
-                      Turn on Bluetooth or connect companion to local Wi-Fi.
+                      No Soko Mobile devices open nearby. Open Soko Mobile on your phone to connect.
                     </p>
                   </div>
                   <button
                     onClick={fetchDiscoveredDevices}
                     disabled={isScanningDevices}
-                    className="mt-1 px-3.5 py-1.5 rounded-lg bg-[#5E6AD2] hover:bg-[#6875E3] text-white text-[10.5px] font-medium shadow-[0_0_12px_rgba(94,106,210,0.3)] active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-50"
+                    className="mt-1 px-3 py-1 rounded-lg bg-[#5E6AD2] hover:bg-[#6875E3] text-white text-[10.5px] font-medium shadow-[0_0_12px_rgba(94,106,210,0.3)] active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-50"
                   >
                     <RefreshCw size={11} className={isScanningDevices ? 'animate-spin' : ''} />
                     <span>{isScanningDevices ? 'Scanning...' : 'Scan Devices'}</span>

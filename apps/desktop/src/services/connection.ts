@@ -1,4 +1,4 @@
-import {
+import type {
   ConnectionStatus,
   PairedDevice,
   DiscoveredDevice,
@@ -25,6 +25,18 @@ type PendingPairListener = (request: PairRequestPending) => void;
 type AudioStatusListener = (status: AudioStreamStatus) => void;
 type TokenStatsListener = (stats: AiTokenSummary) => void;
 type AgentActivityListener = (status: AgentActivityStatus) => void;
+type DiscoveredDevicesListener = (devices: DiscoveredDevice[]) => void;
+
+export interface AgentTranscriptResponse {
+  success: boolean;
+  sessionId?: string;
+  totalTurns?: number;
+  isWorking?: boolean;
+  isWaiting?: boolean;
+  cursor?: number;
+  turns?: any[];
+  error?: string;
+}
 
 /**
  * Singleton Connection Manager for Soko Desktop.
@@ -39,6 +51,7 @@ class ConnectionManager {
   private status: ConnectionStatus = 'disconnected';
   private activeDevice: PairedDevice | null = null;
   private discoveredDevice: DiscoveredDevice | null = null;
+  private discoveredDevices: DiscoveredDevice[] = [];
   private sasPin: string = '482 195';
   private bridgeUrl: string = 'ws://127.0.0.1:8766';
   private localIps: string[] = ['192.168.31.210'];
@@ -48,6 +61,7 @@ class ConnectionManager {
   private certFingerprint: string | null = null;
 
   private statusListeners: Set<ConnectionEventListener> = new Set();
+  private discoveredDevicesListeners: Set<DiscoveredDevicesListener> = new Set();
   private notificationListeners: Set<NotificationListener> = new Set();
   private cliListeners: Set<CliListener> = new Set();
   private transferListeners: Set<TransferListener> = new Set();
@@ -58,6 +72,7 @@ class ConnectionManager {
   private tokenStatsListeners: Set<TokenStatsListener> = new Set();
   private tokenStats: AiTokenSummary | null = null;
   private agentActivityListeners: Set<AgentActivityListener> = new Set();
+  private sessionStreamListeners: Map<string, Set<(delta: any) => void>> = new Map();
   private agentActivity: AgentActivityStatus = {
     agent: null,
     name: null,
@@ -109,6 +124,21 @@ class ConnectionManager {
 
   public getDiscoveredDevice(): DiscoveredDevice | null {
     return this.discoveredDevice;
+  }
+
+  public getDiscoveredDevices(): DiscoveredDevice[] {
+    return [...this.discoveredDevices];
+  }
+
+  public subscribeDiscoveredDevices(listener: DiscoveredDevicesListener): () => void {
+    this.discoveredDevicesListeners.add(listener);
+    listener([...this.discoveredDevices]);
+    return () => this.discoveredDevicesListeners.delete(listener);
+  }
+
+  private notifyDiscoveredDevices(): void {
+    const list = [...this.discoveredDevices];
+    this.discoveredDevicesListeners.forEach((l) => l(list));
   }
 
   public getSasPin(): string {
@@ -468,6 +498,99 @@ class ConnectionManager {
     });
   }
 
+  public async fetchDiscoveredAgentSessions(): Promise<AgentSessionInfo[]> {
+    const httpBase = this.bridgeUrl.replace(/^ws/, 'http');
+    try {
+      const res = await fetch(`${httpBase}/api/agent/sessions`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.sessions)) {
+          return data.sessions;
+        }
+      }
+    } catch (err) {
+      console.warn('[ConnectionManager] Failed to fetch discovered agent sessions:', err);
+    }
+    return [];
+  }
+
+  public async fetchSessionTranscript(sessionId: string): Promise<AgentTranscriptResponse> {
+    const httpBase = this.bridgeUrl.replace(/^ws/, 'http');
+    try {
+      const res = await fetch(`${httpBase}/api/agent/transcript?sessionId=${encodeURIComponent(sessionId)}`);
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (err) {
+      console.warn('[ConnectionManager] Failed to fetch session transcript:', err);
+    }
+    return { success: false, error: 'Failed to fetch transcript from bridge server.' };
+  }
+
+  public async dispatchSessionPrompt(sessionId: string, prompt: string): Promise<boolean> {
+    const httpBase = this.bridgeUrl.replace(/^ws/, 'http');
+    try {
+      const res = await fetch(`${httpBase}/api/agent/prompt`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, prompt }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return data.success !== false;
+      }
+    } catch (err) {
+      console.warn('[ConnectionManager] Failed to dispatch session prompt via HTTP:', err);
+    }
+
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.sendPacket({
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'AGENT_SEND_PROMPT',
+        payload: { sessionId, prompt },
+      });
+      return true;
+    }
+    return false;
+  }
+
+  public subscribeSessionStream(sessionId: string, onTurnDelta: (delta: any) => void): () => void {
+    if (!this.sessionStreamListeners.has(sessionId)) {
+      this.sessionStreamListeners.set(sessionId, new Set());
+    }
+    this.sessionStreamListeners.get(sessionId)!.add(onTurnDelta);
+
+    this.sendPacket({
+      magic: 'SK',
+      version: 1,
+      packetId: Date.now(),
+      timestamp: Date.now(),
+      packetType: 'AGENT_START_TERMINAL_STREAM',
+      payload: { sessionId, stream: true },
+    });
+
+    return () => {
+      const listeners = this.sessionStreamListeners.get(sessionId);
+      if (listeners) {
+        listeners.delete(onTurnDelta);
+        if (listeners.size === 0) {
+          this.sessionStreamListeners.delete(sessionId);
+          this.sendPacket({
+            magic: 'SK',
+            version: 1,
+            packetId: Date.now(),
+            timestamp: Date.now(),
+            packetType: 'AGENT_STOP_STREAM',
+            payload: { sessionId },
+          });
+        }
+      }
+    };
+  }
+
   public wakeToNormalMode(): void {
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('soko:wake-to-normal-mode'));
@@ -734,6 +857,7 @@ class ConnectionManager {
         this.fetchTokenSummary();
         this.fetchAgentActivity();
         this.fetchAudioStatus();
+        this.scanForDevices().catch(() => {});
       };
 
       this.ws.onmessage = (event) => {
@@ -809,7 +933,7 @@ class ConnectionManager {
       return;
     }
 
-    switch (packet.packetType) {
+    switch (packet.packetType as string) {
       case 'BRIDGE_STATUS':
         if (packet.payload) {
           if (packet.payload.certFingerprint) {
@@ -824,34 +948,76 @@ class ConnectionManager {
           if (packet.payload.activeClients !== undefined) {
             this.activeClients = packet.payload.activeClients;
           }
+          if (Array.isArray(packet.payload.discoveredDevices)) {
+            this.discoveredDevices = packet.payload.discoveredDevices;
+            this.discoveredDevice = packet.payload.discoveredDevices[0] || null;
+          } else if (packet.payload.discoveredDevice) {
+            this.discoveredDevice = packet.payload.discoveredDevice;
+            this.discoveredDevices = [packet.payload.discoveredDevice];
+          } else if (packet.payload.discoveredDevice === null || packet.payload.discoveredDevices === null) {
+            this.discoveredDevice = null;
+            this.discoveredDevices = [];
+          }
+
           if (packet.payload.pairedDevice && packet.payload.pairedDevice.isAuthorized) {
             this.activeDevice = packet.payload.pairedDevice;
-            this.discoveredDevice = null;
             this.status = 'connected';
-          } else if (packet.payload.discoveredDevice) {
+          } else if (this.discoveredDevices.length > 0 || this.discoveredDevice) {
             this.activeDevice = null;
-            this.discoveredDevice = packet.payload.discoveredDevice;
-            this.status = 'discovered';
-          } else if (this.activeClients >= 2) {
-            // Unpaired client connected on LAN: show discovered/present with pairing option, NOT connected!
-            this.activeDevice = null;
-            const primaryIp = this.localIps[0] || '192.168.31.210';
-            this.discoveredDevice = {
-              id: `wifi-companion-${primaryIp}`,
-              name: 'Mobile Companion (Android)',
-              model: `Local Companion (${primaryIp}:8766)`,
-              transport: 'wifi',
-              rssi: -45,
-              ipAddress: primaryIp,
-              isPaired: false,
-            };
             this.status = 'discovered';
           } else {
             this.activeDevice = null;
             this.discoveredDevice = null;
+            this.discoveredDevices = [];
             this.status = 'disconnected';
           }
+          this.notifyDiscoveredDevices();
           this.notifyBridge();
+          this.notifyStatus();
+        }
+        break;
+
+      case 'DISCOVERED_DEVICE':
+      case 'DISCOVERED_DEVICES':
+      case 'COMPANION_DISCOVERED':
+      case 'COMPANION_DISCONNECTED':
+        if (packet.payload) {
+          if (Array.isArray(packet.payload.devices)) {
+            this.discoveredDevices = packet.payload.devices;
+            this.discoveredDevice = this.discoveredDevices[0] || null;
+          } else if (Array.isArray(packet.payload.discoveredDevices)) {
+            this.discoveredDevices = packet.payload.discoveredDevices;
+            this.discoveredDevice = this.discoveredDevices[0] || null;
+          } else if (packet.payload.device) {
+            const dev = packet.payload.device;
+            if (
+              packet.packetType === 'COMPANION_DISCONNECTED' ||
+              packet.payload.action === 'remove' ||
+              packet.payload.disconnected
+            ) {
+              this.discoveredDevices = this.discoveredDevices.filter(
+                (d) => d.id !== dev.id && (!dev.ipAddress || d.ipAddress !== dev.ipAddress)
+              );
+              this.discoveredDevice = this.discoveredDevices[0] || null;
+            } else {
+              const existingIdx = this.discoveredDevices.findIndex(
+                (d) => d.id === dev.id || (dev.ipAddress && d.ipAddress === dev.ipAddress)
+              );
+              if (existingIdx >= 0) {
+                this.discoveredDevices[existingIdx] = { ...this.discoveredDevices[existingIdx], ...dev };
+              } else {
+                this.discoveredDevices = [dev, ...this.discoveredDevices];
+              }
+              this.discoveredDevice = dev;
+            }
+          } else if (packet.packetType === 'COMPANION_DISCONNECTED') {
+            this.discoveredDevices = [];
+            this.discoveredDevice = null;
+          }
+          if (this.status !== 'connected') {
+            this.status = this.discoveredDevices.length > 0 ? 'discovered' : 'disconnected';
+          }
+          this.notifyDiscoveredDevices();
           this.notifyStatus();
         }
         break;
@@ -933,6 +1099,23 @@ class ConnectionManager {
         }
         break;
 
+      case 'AGENT_TRANSCRIPT_CHUNK':
+      case 'AGENT_TRANSCRIPT_HISTORY':
+        if (packet.payload?.sessionId) {
+          const sId = packet.payload.sessionId;
+          const listeners = this.sessionStreamListeners.get(sId);
+          if (listeners) {
+            listeners.forEach((listener) => {
+              try {
+                listener(packet.payload);
+              } catch (e) {
+                console.error('[ConnectionManager] Stream listener error:', e);
+              }
+            });
+          }
+        }
+        break;
+
       case 'PAIR_REQUEST_PENDING':
         if (packet.payload) {
           const req: PairRequestPending = {
@@ -953,7 +1136,11 @@ class ConnectionManager {
           if (packet.payload.certFingerprint) {
             this.certFingerprint = packet.payload.certFingerprint;
           }
+          if (packet.payload.pairedDevice) {
+            this.activeDevice = packet.payload.pairedDevice;
+          }
           this.currentPendingPair = null;
+          this.discoveredDevice = null;
           this.status = 'connected';
           this.notifyStatus();
         }
@@ -1083,6 +1270,9 @@ class ConnectionManager {
         if (res.ok) {
           const data = await res.json();
           if (Array.isArray(data.devices)) {
+            this.discoveredDevices = data.devices;
+            this.discoveredDevice = data.devices[0] || null;
+            this.notifyDiscoveredDevices();
             return data.devices;
           }
         }
@@ -1090,17 +1280,10 @@ class ConnectionManager {
         console.warn('[ConnectionManager] Failed to scan devices via bridge:', err);
       }
 
-      const primaryIp = this.localIps[0] || '192.168.31.210';
-      return [
-        {
-          id: `wifi-companion-${primaryIp}`,
-          name: 'Mobile Companion',
-          model: `Local Companion (${primaryIp}:8766)`,
-          transport: 'wifi',
-          rssi: -45,
-          ipAddress: primaryIp,
-        },
-      ];
+      this.discoveredDevices = [];
+      this.discoveredDevice = null;
+      this.notifyDiscoveredDevices();
+      return [];
     };
 
     this.activeScanPromise = runScan()
@@ -1257,7 +1440,7 @@ class ConnectionManager {
   /**
    * Dispatches outgoing packet to WebSocket bridge if connected.
    */
-  public sendPacket(packet: SokoPacketEnvelope): boolean {
+  public sendPacket(packet: SokoPacketEnvelope | Record<string, any>): boolean {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try {
         this.ws.send(JSON.stringify(packet));

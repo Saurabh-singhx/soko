@@ -910,9 +910,9 @@
           <div class="bot-eye" id="eyeRight"></div>
         </div>
       </div>
-      <div class="header-titles">
+      <div class="header-titles" onclick="focusDeviceNameInput()" style="cursor: pointer;" title="Tap to view or edit device name">
         <h1 id="headerAppTitle">Soko Mobile</h1>
-        <p id="headerSubtitle">Companion Controller</p>
+        <p id="headerSubtitle"><span id="headerDeviceName">Mobile Companion</span> • <span id="headerDeviceStatus">Ready</span></p>
       </div>
     </div>
 
@@ -958,6 +958,47 @@
         <div id="connectionGuideText">
           <strong>Desktop Not Connected</strong><br>
           Ensure Soko is running on your PC and both devices are on the same Wi-Fi network (or your mobile hotspot).
+        </div>
+      </div>
+
+      <!-- Device Identity & Discovery Settings Card -->
+      <div class="card" id="deviceIdentityCard">
+        <div class="card-title">
+          <div class="card-title-left">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect>
+              <line x1="12" y1="18" x2="12.01" y2="18"></line>
+            </svg>
+            <span>Device Identity & Name</span>
+          </div>
+          <span class="badge" id="devicePlatformBadge">Wi-Fi Announce</span>
+        </div>
+
+        <p style="font-size: 12px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 12px;">
+          Set a custom name so your PC instantly recognizes this device when scanning on Wi-Fi.
+        </p>
+
+        <label class="input-label" for="customDeviceNameInput">Custom Device Name</label>
+        <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
+          <input
+            type="text"
+            id="customDeviceNameInput"
+            class="ip-input"
+            placeholder="e.g. Saurabh's Galaxy S24, Pixel 8"
+            maxlength="48"
+            spellcheck="false"
+            autocomplete="off"
+            style="flex: 1;"
+            onkeydown="if(event.key === 'Enter') saveDeviceNameFromUI()"
+          />
+          <button class="btn btn-secondary" id="btnSaveDeviceName" onclick="saveDeviceNameFromUI()" style="min-width: 72px;">
+            Save
+          </button>
+        </div>
+
+        <div style="display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--text-tertiary);">
+          <span id="deviceNameHint">Announced automatically to Desktop</span>
+          <span id="deviceModelBadge" style="font-family: ui-monospace, monospace; color: var(--text-secondary);"></span>
         </div>
       </div>
 
@@ -2204,6 +2245,160 @@
     // ============================================================
     // DEVICE IDENTITY & PAIRING LOGIC
     // ============================================================
+    function sanitizeDeviceName(raw) {
+      if (!raw || typeof raw !== 'string') return '';
+      return raw
+        .replace(/[<>]/g, '') // remove HTML tag brackets to prevent XSS
+        .replace(/[\x00-\x1F\x7F]/g, '') // remove ASCII control characters
+        .trim()
+        .slice(0, 48);
+    }
+
+    function getDeviceModel() {
+      if (window.SokoNative && typeof window.SokoNative.getDeviceModel === 'function') {
+        const nativeModel = window.SokoNative.getDeviceModel();
+        if (nativeModel) return sanitizeDeviceName(nativeModel);
+      }
+      const ua = (typeof navigator !== 'undefined' && navigator.userAgent) ? navigator.userAgent : '';
+      if (/iPad/i.test(ua)) return 'Apple iPad';
+      if (/iPhone/i.test(ua)) return 'Apple iPhone';
+      if (/Android/i.test(ua)) {
+        const match = ua.match(/Android[^;]+;\s*([^;)]+)\s*[;)]/i);
+        if (match && match[1]) {
+          const cleaned = match[1].replace(/Build\/.*/i, '').trim();
+          if (cleaned && cleaned.length > 1 && !/wv/i.test(cleaned)) {
+            return sanitizeDeviceName(cleaned);
+          }
+        }
+        return 'Android Phone';
+      }
+      return 'Mobile Companion';
+    }
+
+    function getDeviceName() {
+      try {
+        const custom = localStorage.getItem('soko_device_name');
+        if (custom && custom.trim()) {
+          const sanitized = sanitizeDeviceName(custom);
+          if (sanitized) return sanitized;
+        }
+      } catch (e) {}
+
+      const ua = (typeof navigator !== 'undefined' && navigator.userAgent) ? navigator.userAgent : '';
+      if (/iPhone|iPad|iPod/i.test(ua)) {
+        return 'Apple iPhone';
+      }
+      return 'Android Phone';
+    }
+
+    function updateDeviceNameUI() {
+      const currentName = getDeviceName();
+      const storedName = localStorage.getItem('soko_device_name') || '';
+      const input = document.getElementById('customDeviceNameInput');
+      if (input && document.activeElement !== input) {
+        input.value = storedName;
+        input.placeholder = `e.g. ${currentName}`;
+      }
+      const headerDevice = document.getElementById('headerDeviceName');
+      if (headerDevice) {
+        headerDevice.textContent = currentName;
+      }
+      const headerSub = document.getElementById('headerSubtitle');
+      if (headerSub && !headerDevice) {
+        headerSub.textContent = `${currentName} • Companion`;
+      }
+      const hint = document.getElementById('deviceNameHint');
+      if (hint) {
+        hint.textContent = storedName
+          ? `Custom name active • "${currentName}"`
+          : `Default name active • "${currentName}"`;
+      }
+      const modelBadge = document.getElementById('deviceModelBadge');
+      if (modelBadge) {
+        modelBadge.textContent = `Model: ${getDeviceModel()}`;
+      }
+    }
+
+    function saveDeviceNameFromUI() {
+      const input = document.getElementById('customDeviceNameInput');
+      if (!input) return;
+      const sanitized = sanitizeDeviceName(input.value);
+      const prevStored = localStorage.getItem('soko_device_name') || '';
+
+      if (sanitized) {
+        localStorage.setItem('soko_device_name', sanitized);
+        input.value = sanitized;
+        if (prevStored !== sanitized) {
+          showToast(`Device name saved: "${sanitized}"`, 'success');
+        }
+      } else {
+        localStorage.removeItem('soko_device_name');
+        input.value = '';
+        input.placeholder = `e.g. ${getDeviceName()}`;
+        if (prevStored) {
+          showToast(`Device name reset to "${getDeviceName()}"`, 'info');
+        }
+      }
+      updateDeviceNameUI();
+      sendCompanionAnnounce();
+    }
+
+    function focusDeviceNameInput() {
+      switchTab('tab-link');
+      const input = document.getElementById('customDeviceNameInput');
+      if (input) {
+        input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setTimeout(() => input.focus(), 300);
+      }
+    }
+
+    function sendCompanionAnnounce() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        sendPacket('COMPANION_ANNOUNCE', {
+          deviceId: getDeviceId(),
+          deviceName: getDeviceName(),
+          model: getDeviceModel(),
+          platform: 'mobile',
+          appOpened: true
+        });
+      }
+    }
+
+    let deviceNameDebounceTimer = null;
+    function initDeviceName() {
+      updateDeviceNameUI();
+      const input = document.getElementById('customDeviceNameInput');
+      if (input) {
+        input.addEventListener('input', () => {
+          if (deviceNameDebounceTimer) clearTimeout(deviceNameDebounceTimer);
+          deviceNameDebounceTimer = setTimeout(() => {
+            saveDeviceNameFromUI();
+          }, 800);
+        });
+        input.addEventListener('change', () => {
+          if (deviceNameDebounceTimer) clearTimeout(deviceNameDebounceTimer);
+          saveDeviceNameFromUI();
+        });
+      }
+    }
+
+    function handleGracefulExit() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try {
+          sendPacket('COMPANION_DISCONNECT', {
+            deviceId: getDeviceId(),
+            deviceName: getDeviceName(),
+            reason: 'page_unload'
+          });
+        } catch (e) {}
+        try {
+          ws.close(1000, 'Page Unload');
+        } catch (e) {}
+      }
+    }
+    window.addEventListener('beforeunload', handleGracefulExit);
+    window.addEventListener('pagehide', handleGracefulExit);
+
     function getDeviceId() {
       let id = localStorage.getItem('soko_device_id');
       if (!id) {
@@ -2306,8 +2501,8 @@
       const payload = {
         deviceId: getDeviceId(),
         pin: formattedPin,
-        deviceName: 'Mobile Companion (Android)',
-        model: 'Soko Mobile Companion v1.0.0',
+        deviceName: getDeviceName(),
+        model: getDeviceModel(),
         rssi: -45,
         batteryLevel: 94
       };
@@ -2380,8 +2575,8 @@
               sendPacket('PAIR_REQUEST', {
                 deviceId: deviceId,
                 token: data.token,
-                deviceName: 'Mobile Companion (Android)',
-                model: 'Soko Mobile Companion v1.0.0'
+                deviceName: getDeviceName(),
+                model: getDeviceModel()
               });
               syncTransfersFromServer();
               sendPacket('FETCH_TOKEN_STATS', {});
@@ -2523,6 +2718,9 @@
           blinkBot();
           window.isWsConnected = true;
 
+          // Immediate Presence Announcement
+          sendCompanionAnnounce();
+
           const token = getPairToken();
           const deviceId = getDeviceId();
           const savedKey = localStorage.getItem('soko_session_key') || (window.SokoNative?.getSavedSessionKey ? window.SokoNative.getSavedSessionKey() : '');
@@ -2536,8 +2734,8 @@
             sendPacket('PAIR_REQUEST', {
               deviceId: deviceId,
               token: token,
-              deviceName: 'Mobile Companion (Android)',
-              model: 'Soko Mobile Companion v1.0.0',
+              deviceName: getDeviceName(),
+              model: getDeviceModel(),
               rssi: -48,
               batteryLevel: 94
             });
@@ -2769,8 +2967,8 @@
           sendPacket('PAIR_REQUEST', {
             deviceId: getDeviceId(),
             token: token,
-            deviceName: 'Mobile Companion (Android)',
-            model: 'Soko Mobile Companion v1.0.0'
+            deviceName: getDeviceName(),
+            model: getDeviceModel()
           });
         } else {
           showToast(packet.payload?.message || 'Access denied: Pairing required', 'amber');
@@ -2791,8 +2989,8 @@
             sendPacket('PAIR_REQUEST', {
               deviceId: getDeviceId(),
               token: savedToken,
-              deviceName: 'Mobile Companion (Android)',
-              model: 'Soko Mobile Companion v1.0.0'
+              deviceName: getDeviceName(),
+              model: getDeviceModel()
             });
           }
         } else {
@@ -4112,6 +4310,9 @@
       // Restore active tab
       const savedTab = localStorage.getItem('soko_active_tab') || 'tab-link';
       switchTab(savedTab);
+
+      // Initialize device name settings & UI
+      initDeviceName();
 
       if (window.SokoNative && typeof window.SokoNative.getSavedBridgeIp === 'function') {
         const saved = window.SokoNative.getSavedBridgeIp();
