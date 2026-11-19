@@ -157,7 +157,7 @@ function getStatusStyle(agent: SwarmAgent, isSelected: boolean): StatusStyle {
     };
   }
 
-  if (status === 'working' || status === 'thinking') {
+  if (status === 'working' || status === 'active' || status === 'thinking') {
     const palette = getRolePalette(agent);
     const paletteStyles = {
       cyan: {
@@ -282,7 +282,9 @@ export const AgentCard: React.FC<AgentCardProps> = ({
   const isRetrying = agent.status === 'retrying';
 
   // Format progress for bottom activity bar
-  const progressPercent = Math.min(100, Math.max(0, agent.progress ?? 50));
+  const progressPercent = agent.progress === undefined
+    ? undefined
+    : Math.min(100, Math.max(0, agent.progress));
   const tokenMetric = formatTokenCount(agent.totalTokens, agent.tokensPerSec);
 
   return (
@@ -305,7 +307,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
         <div className="flex items-center gap-1.5 min-w-0 flex-1">
           <IconComponent
             className={`w-3.5 h-3.5 shrink-0 ${styles.iconColor} ${
-              agent.status === 'working' ? 'animate-pulse' : ''
+              agent.status === 'working' || agent.status === 'active' ? 'animate-pulse' : ''
             }`}
           />
           <span
@@ -370,12 +372,14 @@ export const AgentCard: React.FC<AgentCardProps> = ({
       </div>
 
       {/* Bottom Progress Bar / Activity Indicator Line */}
-      <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden mt-1">
-        <div
-          className={`h-full rounded-full transition-all duration-300 ${styles.progressBarColor}`}
-          style={{ width: `${progressPercent}%` }}
-        />
-      </div>
+      {progressPercent !== undefined && (
+        <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden mt-1">
+          <div
+            className={`h-full rounded-full transition-all duration-300 ${styles.progressBarColor}`}
+            style={{ width: `${progressPercent}%` }}
+          />
+        </div>
+      )}
     </motion.div>
   );
 };

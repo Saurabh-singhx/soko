@@ -119,7 +119,7 @@ export const TopBarControls: React.FC<TopBarControlsProps> = ({
     const previous: DiscoveredSessionSummary[] = [];
 
     sessions.forEach((s) => {
-      if (s.isLocked || s.status === 'working') {
+      if (s.isLocked || ['working', 'active', 'thinking', 'waiting'].includes(s.status || '')) {
         active.push(s);
       } else {
         previous.push(s);
@@ -139,7 +139,7 @@ export const TopBarControls: React.FC<TopBarControlsProps> = ({
   }, [sessions, activeSessionId]);
 
   return (
-    <header className="w-full bg-[#0E121B] border-b border-white/[0.08] px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs select-none relative z-20">
+    <header className="w-full bg-[#0E121B] border-b border-white/[0.08] px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs select-none relative z-50">
       {/* Left Section: Live Engine Toggle, Session Selector & Live/Archive Pills */}
       <div className="flex items-center flex-wrap gap-2.5">
         {/* Live Engine Start / Stop Control */}
@@ -181,8 +181,9 @@ export const TopBarControls: React.FC<TopBarControlsProps> = ({
         {viewMode === 'live' ? (
           <button
             type="button"
-            onClick={() => onToggleViewMode ? onToggleViewMode('history') : undefined}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] font-sans font-medium bg-emerald-950/40 border-emerald-800/40 text-emerald-300 hover:bg-emerald-900/50 transition-colors cursor-pointer"
+            onClick={() => onToggleViewMode?.('history')}
+            disabled={!onToggleViewMode}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] font-sans font-medium bg-emerald-950/40 border-emerald-800/40 text-emerald-300 hover:bg-emerald-900/50 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
             title="Current mode: Live Telemetry. Click to toggle Historical Archive mode."
           >
             <Radio size={12} className={isConnected ? 'text-emerald-400 animate-pulse' : 'text-slate-500'} />
@@ -192,7 +193,8 @@ export const TopBarControls: React.FC<TopBarControlsProps> = ({
           <button
             type="button"
             onClick={() => onSwitchToLive ? onSwitchToLive() : onToggleViewMode?.('live')}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] font-sans font-medium bg-amber-950/30 border-amber-800/40 text-amber-300 hover:bg-amber-900/50 transition-colors cursor-pointer"
+            disabled={!onSwitchToLive && !onToggleViewMode}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] font-sans font-medium bg-amber-950/30 border-amber-800/40 text-amber-300 hover:bg-amber-900/50 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
             title="Current mode: Historical Archive. Click to switch to Live Telemetry."
           >
             <Archive size={12} className="text-amber-400" />
@@ -205,7 +207,8 @@ export const TopBarControls: React.FC<TopBarControlsProps> = ({
           <button
             type="button"
             onClick={onSwitchToLive}
-            className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/50 text-emerald-300 text-[11px] font-medium shadow-[0_0_12px_rgba(16,185,129,0.3)] animate-pulse transition-all cursor-pointer"
+            disabled={!onSwitchToLive}
+            className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/50 text-emerald-300 text-[11px] font-medium shadow-[0_0_12px_rgba(16,185,129,0.3)] animate-pulse transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
             title="Switch from historical session to active live session"
           >
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
@@ -219,8 +222,9 @@ export const TopBarControls: React.FC<TopBarControlsProps> = ({
           <button
             type="button"
             onClick={() => setIsSessionDropdownOpen(!isSessionDropdownOpen)}
-            className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-[#141824] border border-white/[0.08] hover:border-slate-500 text-slate-200 text-[11px] font-mono transition-colors"
-            title="Switch Session"
+            disabled={sessions.length === 0 || !onSelectSession}
+            className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-[#141824] border border-white/[0.08] hover:border-slate-500 text-slate-200 text-[11px] font-mono transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+            title={sessions.length === 0 ? 'No sessions discovered' : 'Switch session'}
           >
             <Layers size={12} className="text-indigo-400" />
             <span className="max-w-[150px] truncate font-medium">
@@ -230,7 +234,7 @@ export const TopBarControls: React.FC<TopBarControlsProps> = ({
           </button>
 
           {isSessionDropdownOpen && (
-            <div className="absolute left-0 top-full mt-1 w-80 bg-[#0D111A] border border-[#252F48] rounded-lg shadow-2xl p-1.5 z-50 text-xs max-h-96 overflow-y-auto custom-scrollbar">
+            <div className="absolute left-0 top-full mt-1 w-80 bg-[#0D111A] border border-[#252F48] rounded-lg shadow-2xl p-1.5 z-[100] text-xs max-h-96 overflow-y-auto custom-scrollbar">
               {/* Active Sessions Group */}
               {activeSessions.length > 0 && (
                 <div className="mb-2">
@@ -344,7 +348,8 @@ export const TopBarControls: React.FC<TopBarControlsProps> = ({
                 key={alignment}
                 type="button"
                 onClick={() => onAlignView?.(alignment)}
-                className={`px-2.5 py-1 text-[11px] font-mono font-medium rounded transition-colors ${
+                disabled={!onAlignView}
+                className={`px-2.5 py-1 text-[11px] font-mono font-medium rounded transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                   isActive
                     ? 'bg-white/[0.1] text-white shadow-hairline'
                     : 'text-slate-400 hover:text-white hover:bg-white/[0.04]'
@@ -416,7 +421,8 @@ export const TopBarControls: React.FC<TopBarControlsProps> = ({
         <button
           type="button"
           onClick={onToggleLogsModal}
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md font-mono text-[11px] transition-colors ${
+          disabled={!onToggleLogsModal}
+          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md font-mono text-[11px] transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
             showLogsModal
               ? 'bg-[#5E6AD2] text-white shadow-hairline'
               : 'bg-[#141824] hover:bg-white/[0.08] text-slate-300 hover:text-white border border-white/[0.06]'
@@ -429,7 +435,7 @@ export const TopBarControls: React.FC<TopBarControlsProps> = ({
       </div>
 
       {/* Right Section: Search Filter Bar with Cmd+K */}
-      <div className="flex items-center min-w-[200px] sm:w-64 max-w-xs relative">
+      <div className="flex items-center min-w-0 w-full sm:w-64 sm:flex-none max-w-xs relative">
         <Search
           size={13}
           className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none"

@@ -54,74 +54,6 @@ function formatDuration(ms: number) {
   return `${ms}ms`;
 }
 
-/**
- * Generate spans dynamically from session turns if spans are not directly provided
- */
-function generateSpansFromTurns(turns: TranscriptTurn[], maxTimeMs: number): SpanItem[] {
-  if (!turns || turns.length === 0) return [];
-
-  const items: SpanItem[] = [];
-  const totalTurns = turns.length;
-  const turnWindow = 100 / Math.max(1, totalTurns);
-
-  turns.forEach((turn, idx) => {
-    const turnBasePct = idx * turnWindow;
-
-    // 1. LLM Inference Span
-    const llmDuration = turn.thinking && turn.thinking.length > 0 ? 3200 : 1800;
-    const llmWidth = Math.min(turnWindow * 0.45, (llmDuration / maxTimeMs) * 100);
-    items.push({
-      id: `turn-${turn.stepIndex || idx}-llm`,
-      lane: 'llm',
-      label: `LLM Turn ${turn.stepIndex || idx + 1}: ${turn.userInput ? turn.userInput.slice(0, 24) + '...' : 'Inference'}`,
-      startPct: Math.max(1, turnBasePct),
-      widthPct: Math.max(3, llmWidth),
-      durationMs: llmDuration,
-      status: turn.status === 'running' ? 'running' : turn.status === 'failed' ? 'failed' : 'success',
-      color: 'emerald',
-    });
-
-    // 2. Tool execution spans
-    const toolCalls = turn.toolCalls || [];
-    if (toolCalls.length > 0) {
-      const toolSlice = (turnWindow * 0.5) / toolCalls.length;
-      toolCalls.forEach((tool, tIdx) => {
-        const toolStart = turnBasePct + turnWindow * 0.45 + tIdx * toolSlice;
-        const name = tool.name || 'tool_call';
-        let lane: SwarmTraceLane = 'tool_blue';
-        let color: 'sky' | 'amber' | 'purple' = 'sky';
-
-        if (name.includes('edit') || name.includes('write') || name.includes('patch')) {
-          lane = 'tool_orange';
-          color = 'amber';
-        } else if (name.includes('read') || name.includes('search') || name.includes('web')) {
-          lane = 'tool_purple';
-          color = 'purple';
-        } else {
-          lane = 'tool_blue';
-          color = 'sky';
-        }
-
-        const durationMs = 800 + (tIdx + 1) * 600;
-        const widthPct = Math.max(2.5, Math.min(toolSlice * 0.9, (durationMs / maxTimeMs) * 100));
-
-        items.push({
-          id: `turn-${turn.stepIndex || idx}-tool-${tIdx}`,
-          lane,
-          label: `${name}${tool.summary ? ` (${tool.summary.slice(0, 20)})` : ''}`,
-          startPct: Math.min(96, Math.max(1, toolStart)),
-          widthPct,
-          durationMs,
-          status: 'success',
-          color,
-        });
-      });
-    }
-  });
-
-  return items;
-}
-
 export const TraceWaterfall: React.FC<TraceWaterfallProps> = ({
   cursorMs = 0,
   maxTimeMs = 60000,
@@ -129,7 +61,6 @@ export const TraceWaterfall: React.FC<TraceWaterfallProps> = ({
   isSynchronized = true,
   onToggleSync,
   spans,
-  turns,
   isCollapsed = false,
   onToggleCollapse,
   className = '',
@@ -218,7 +149,7 @@ export const TraceWaterfall: React.FC<TraceWaterfallProps> = ({
     setExpandedLanes((prev) => ({ ...prev, [laneId]: !prev[laneId] }));
   };
 
-  // Convert spans or synthesize from turns
+  // Render only spans supplied by the telemetry source.
   const activeSpans: SpanItem[] = useMemo(() => {
     if (spans && spans.length > 0) {
       return spans.map((s) => ({
@@ -227,7 +158,7 @@ export const TraceWaterfall: React.FC<TraceWaterfallProps> = ({
         label: s.name,
         startPct: s.startTimePercent,
         widthPct: s.widthPercent,
-        durationMs: s.durationMs || 1000,
+        durationMs: s.durationMs,
         status: s.status || 'success',
         color:
           s.lane === 'llm'
@@ -240,12 +171,8 @@ export const TraceWaterfall: React.FC<TraceWaterfallProps> = ({
       }));
     }
 
-    if (turns && turns.length > 0) {
-      return generateSpansFromTurns(turns, effectiveMaxMs);
-    }
-
     return [];
-  }, [spans, turns, effectiveMaxMs]);
+  }, [spans]);
 
   // Dynamic time ticks based on effectiveMaxMs
   const timeTicks = useMemo(() => {
@@ -296,8 +223,8 @@ export const TraceWaterfall: React.FC<TraceWaterfallProps> = ({
 
   return (
     <section
-      className={`w-full flex flex-col bg-[#0B0F19]/95 backdrop-blur-md border-t border-[#1A2234] text-slate-200 select-none transition-all duration-300 z-20 ${
-        isMaximized ? 'h-[480px]' : collapsed ? 'h-10' : 'h-[260px]'
+      className={`w-full min-h-0 flex flex-col bg-[#0B0F19]/95 backdrop-blur-md border-t border-[#1A2234] text-slate-200 select-none transition-all duration-300 z-20 ${
+        collapsed ? 'h-10' : isMaximized ? 'h-[min(60vh,480px)]' : 'h-[260px]'
       } ${className}`}
     >
       {/* Top Header Row */}
@@ -329,7 +256,9 @@ export const TraceWaterfall: React.FC<TraceWaterfallProps> = ({
           <button
             type="button"
             onClick={onToggleSync}
-            className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors focus:outline-none cursor-pointer"
+            disabled={!onToggleSync}
+            aria-pressed={isSynchronized}
+            className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors focus:outline-none cursor-pointer disabled:cursor-default disabled:opacity-60"
             title={isSynchronized ? 'Telemetry synchronized. Click to toggle.' : 'Telemetry desynchronized. Click to synchronize.'}
           >
             <span
@@ -337,7 +266,7 @@ export const TraceWaterfall: React.FC<TraceWaterfallProps> = ({
                 isSynchronized ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]' : 'bg-slate-600'
               }`}
             />
-            <span>Synchronized</span>
+            <span>{isSynchronized ? 'Synchronized' : 'Sync paused'}</span>
           </button>
 
           {/* Arize Phoenix Badge / Toggle */}
@@ -346,28 +275,29 @@ export const TraceWaterfall: React.FC<TraceWaterfallProps> = ({
               type="button"
               onClick={() => setIsArizeDropdownOpen(!isArizeDropdownOpen)}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#161C2C] border border-[#252F48] hover:border-slate-500 text-xs text-slate-200 transition-colors cursor-pointer"
-              title="Arize Phoenix Telemetry Options"
+              title="Trace telemetry settings"
             >
-              <span className="font-medium">Arize</span>
-              <span className="text-slate-400">Phoenix</span>
+              <span className="font-medium">Trace</span>
+              <span className="text-slate-400">settings</span>
               <ChevronDown className="w-3 h-3 text-slate-400" />
             </button>
 
             {isArizeDropdownOpen && (
               <div className="absolute right-0 bottom-full mb-1 w-48 bg-[#0D111A] border border-[#252F48] rounded-lg shadow-xl p-2 text-xs space-y-1.5 z-40">
                 <div className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
-                  Telemetry Target
+                  Telemetry sync
                 </div>
                 <div className="flex items-center justify-between text-slate-200 py-1 px-1.5 rounded bg-indigo-600/20 text-indigo-300">
-                  <span>Phoenix v4.12</span>
+                  <span>Trace timeline</span>
                   <Check className="w-3 h-3 text-indigo-400" />
                 </div>
                 <button
                   type="button"
                   onClick={() => {
-                    if (onToggleSync) onToggleSync();
+                    onToggleSync?.();
                     setIsArizeDropdownOpen(false);
                   }}
+                  disabled={!onToggleSync}
                   className="w-full text-[10px] text-slate-400 hover:text-white px-1 pt-1 border-t border-slate-800 flex items-center justify-between transition-colors cursor-pointer"
                 >
                   <span>OTel Sync: {isSynchronized ? 'Enabled' : 'Disabled'}</span>
@@ -395,7 +325,7 @@ export const TraceWaterfall: React.FC<TraceWaterfallProps> = ({
           {/* Main Timeline Grid */}
           <div className="flex-1 flex overflow-hidden">
             {/* Left Lane Labels Column */}
-            <div className="w-48 shrink-0 border-r border-[#1A2234] bg-[#0A0D16] flex flex-col text-xs font-mono select-none">
+            <div className="w-32 sm:w-48 shrink-0 border-r border-[#1A2234] bg-[#0A0D16] flex flex-col text-xs font-mono select-none">
               {/* Lane header */}
               <div className="h-7 px-3 flex items-center justify-between border-b border-[#1A2234] text-[11px] text-slate-400 font-sans">
                 <span>Lane</span>
@@ -547,7 +477,7 @@ export const TraceWaterfall: React.FC<TraceWaterfallProps> = ({
           </div>
 
           {/* Bottom Time Travel Scrub Bar */}
-          <div className="h-10 px-4 border-t border-[#1A2234] bg-[#0E1322] flex items-center gap-4 shrink-0">
+          <div className="h-10 px-2 sm:px-4 border-t border-[#1A2234] bg-[#0E1322] flex items-center gap-2 sm:gap-4 shrink-0">
             {/* Play/Pause control */}
             <button
               type="button"
@@ -563,7 +493,7 @@ export const TraceWaterfall: React.FC<TraceWaterfallProps> = ({
             </button>
 
             {/* Label */}
-            <span className="text-xs font-medium text-slate-300 shrink-0 font-sans">
+            <span className="hidden sm:inline text-xs font-medium text-slate-300 shrink-0 font-sans">
               Time travel scrub bar
             </span>
 

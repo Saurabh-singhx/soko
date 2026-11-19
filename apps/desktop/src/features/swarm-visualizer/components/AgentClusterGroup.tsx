@@ -193,7 +193,7 @@ export const AgentClusterGroup: React.FC<AgentClusterGroupProps> = ({
   // Metrics summary
   const activeCount =
     cluster.activeCount ??
-    agents.filter((a) => a.status === 'working' || a.status === 'thinking').length;
+    agents.filter((a) => a.status === 'working' || a.status === 'active' || a.status === 'thinking').length;
   const awaitingApprovalCount = agents.filter(
     (a) => a.status === 'awaiting_approval' || (a.status as string) === 'waiting'
   ).length;

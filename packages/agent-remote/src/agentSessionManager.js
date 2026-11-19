@@ -152,6 +152,11 @@ class AgentSessionManager {
   constructor(options = {}) {
     this.brainDirs = options.brainDirs || this._resolveDefaultBrainDirs();
     this.presenceDirs = options.presenceDirs || this._resolveDefaultPresenceDirs();
+    const home = os.homedir();
+    this.codexSessionDirs = options.codexSessionDirs || (options.brainDirs ? [] : (process.env.SOKO_CODEX_SESSIONS_DIR || path.join(home, '.codex/sessions')).split(path.delimiter).filter(Boolean));
+    this.claudeProjectDirs = options.claudeProjectDirs || (options.brainDirs ? [] : (process.env.SOKO_CLAUDE_PROJECTS_DIR || path.join(home, '.claude/projects')).split(path.delimiter).filter(Boolean));
+    this.discoveredFiles = new Map();
+    this.jsonlMetadataCache = new Map();
     this.activeWatchers = new Map(); // sessionId -> { watcher, byteOffset, partialLine }
     this.pendingQueue = new Map(); // sessionId -> Array<{ prompt, resolve, reject, timestamp }>
     this.activeChildProcesses = new Map(); // sessionId -> ChildProcess
@@ -169,7 +174,7 @@ class AgentSessionManager {
       path.join(home, '.gemini/antigravity-cli/brain'),
       path.join(home, '.gemini/antigravity/brain'),
       path.join(home, '.gemini/antigravity-ide/brain'),
-    ].filter((d) => fs.existsSync(d));
+    ];
   }
 
   _resolveDefaultPresenceDirs() {
@@ -184,7 +189,7 @@ class AgentSessionManager {
       path.join(home, '.gemini/antigravity-cli/presence'),
       path.join(home, '.gemini/antigravity/presence'),
       path.join(home, '.gemini/antigravity-ide/presence'),
-    ].filter((d) => fs.existsSync(d));
+    ];
   }
 
   /**
@@ -199,6 +204,16 @@ class AgentSessionManager {
    */
   resolveSessionPaths(sessionId) {
     if (!this.isValidSessionId(sessionId)) return null;
+
+    const discovered = this.discoveredFiles.get(sessionId);
+    if (discovered && discovered.provider !== 'antigravity' && fs.existsSync(discovered.transcriptPath)) {
+      return {
+        sessionId,
+        provider: discovered.provider,
+        transcriptPath: discovered.transcriptPath,
+        lockPath: null,
+      };
+    }
 
     for (const bDir of this.brainDirs) {
       const candidateTranscript = path.join(bDir, sessionId, '.system_generated/logs/transcript.jsonl');
@@ -229,6 +244,7 @@ class AgentSessionManager {
     const sessions = [];
     const now = Date.now();
     const seen = new Set();
+    this.discoveredFiles.clear();
 
     for (const bDir of this.brainDirs) {
       if (!fs.existsSync(bDir)) continue;
@@ -275,6 +291,7 @@ class AgentSessionManager {
 
           seen.add(sessionId);
           const meta = this._peekSessionMetadata(tPath, stat, sessionId);
+          this.discoveredFiles.set(sessionId, { provider: 'antigravity', transcriptPath: tPath });
 
           let status = 'idle';
           if (ageMs >= STALE_LOCK_TIMEOUT_MS || (hasLockFile && !isLocked)) {
@@ -291,9 +308,10 @@ class AgentSessionManager {
 
           sessions.push({
             sessionId,
+            agent: 'antigravity',
             name: (meta.isSubagent && meta.role && meta.role !== 'Sub-Agent') ? meta.role : (meta.workspaceName || 'Antigravity Agent'),
             workspace: meta.workspace || '',
-            workspaceName: meta.workspaceName || 'soko',
+            workspaceName: meta.workspaceName || '',
             mtimeMs: stat.mtimeMs,
             sizeBytes: stat.size,
             isLocked,
@@ -304,6 +322,8 @@ class AgentSessionManager {
             isSubagent: meta.isSubagent || false,
             parentSessionId: meta.parentSessionId || null,
             role: meta.role || '',
+            detail: meta.detail || '',
+            timestamp: stat.mtimeMs,
           });
         }
       } catch (err) {
@@ -311,7 +331,198 @@ class AgentSessionManager {
       }
     }
 
+    for (const root of this.codexSessionDirs) {
+      this._discoverJsonlSessions(root, 'codex', now, recentLimitMs, sessions, seen);
+    }
+    for (const root of this.claudeProjectDirs) {
+      this._discoverJsonlSessions(root, 'claude', now, recentLimitMs, sessions, seen);
+    }
+
     return sessions.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  }
+
+  /** Discover CLI session logs as observations. Activity is inferred only from log
+   * timestamps and explicit provider metadata; missing values remain empty/unknown. */
+  _discoverJsonlSessions(root, provider, now, recentLimitMs, sessions, seen) {
+    if (!root || !fs.existsSync(root)) return;
+    const maxDepth = 10;
+    const walk = (dir, depth) => {
+      if (depth > maxDepth) return;
+      let entries;
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const entry of entries) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full, depth + 1);
+          continue;
+        }
+        if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
+        if (provider === 'codex' && !entry.name.startsWith('rollout-')) continue;
+        try {
+          const stat = fs.statSync(full);
+          const ageMs = now - stat.mtimeMs;
+          if (ageMs > recentLimitMs) continue;
+          const meta = this._peekJsonlMetadata(full, stat, provider);
+          const rawId = meta.sessionId || path.basename(entry.name, '.jsonl').replace(/^rollout-/, '');
+          if (!rawId) continue;
+
+          const subagentParent = provider === 'claude' ? this._claudeSubagentParent(full, root) : null;
+          const isSubagent = Boolean(meta.isSubagent || subagentParent || meta.parentSessionId);
+          const parentSessionId = meta.parentSessionId || subagentParent || null;
+          const sourceId = provider === 'claude' && subagentParent
+            ? path.basename(entry.name, '.jsonl')
+            : rawId;
+          const sessionId = `${provider}-${sourceId}`;
+          if (seen.has(sessionId)) continue;
+          seen.add(sessionId);
+          const isLocked = !meta.isComplete && ageMs <= 60000;
+          const status = isLocked ? 'working' : 'completed';
+          const workspace = meta.workspace || '';
+          const workspaceName = workspace ? path.basename(workspace) : '';
+          const role = meta.role || (isSubagent ? 'Sub-Agent' : '');
+          const normalizedParentId = parentSessionId && !String(parentSessionId).startsWith(`${provider}-`)
+            ? `${provider}-${parentSessionId}`
+            : parentSessionId;
+          const session = {
+            sessionId,
+            agent: provider,
+            name: role || workspaceName || `${provider} session ${rawId.slice(0, 8)}`,
+            workspace,
+            workspaceName,
+            mtimeMs: stat.mtimeMs,
+            timestamp: stat.mtimeMs,
+            sizeBytes: stat.size,
+            isLocked,
+            status,
+            ageSeconds: Math.floor(ageMs / 1000),
+            tokensUsed: meta.tokensUsed,
+            taskSummary: meta.taskSummary,
+            detail: meta.detail,
+            isSubagent,
+            parentSessionId: normalizedParentId,
+            role,
+          };
+          this.discoveredFiles.set(sessionId, { provider, transcriptPath: full, rawId: sourceId });
+          sessions.push(session);
+        } catch {
+          // Logs may be rotated or actively written while discovery runs.
+        }
+      }
+    };
+    walk(root, 0);
+  }
+
+  _claudeSubagentParent(filePath, root) {
+    const relativeParts = path.relative(root, filePath).split(path.sep);
+    const subagentsIndex = relativeParts.lastIndexOf('subagents');
+    if (subagentsIndex < 1) return null;
+    return `claude-${relativeParts[subagentsIndex - 1]}`;
+  }
+
+  _peekJsonlMetadata(filePath, stat, provider) {
+    const cached = this.jsonlMetadataCache.get(filePath);
+    if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.data;
+    const maxBytes = 256 * 1024;
+    if (!stat.size) return {};
+    let fd;
+    try {
+      fd = fs.openSync(filePath, 'r');
+      const headSize = Math.min(stat.size, Math.floor(maxBytes / 2));
+      const tailSize = Math.min(Math.max(0, stat.size - headSize), Math.floor(maxBytes / 2));
+      const head = Buffer.alloc(headSize);
+      fs.readSync(fd, head, 0, headSize, 0);
+      const tail = Buffer.alloc(tailSize);
+      if (tailSize) fs.readSync(fd, tail, 0, tailSize, stat.size - tailSize);
+      const lines = `${head.toString('utf8')}\n${tail.toString('utf8')}`.split('\n').filter(Boolean);
+      const records = [];
+      for (const line of lines) {
+        try { records.push(JSON.parse(line)); } catch {}
+      }
+      let sessionId = '';
+      let workspace = '';
+      let taskSummary = '';
+      let detail = '';
+      let role = '';
+      let parentSessionId = null;
+      let isSubagent = false;
+      let tokensUsed;
+      let isComplete = false;
+
+      for (const item of records) {
+        const payload = item.payload || item.data || {};
+        const message = item.message || payload.message || {};
+        const content = message.content || payload.content || item.content;
+        if (provider === 'codex') {
+          if (item.type === 'session_meta') {
+            sessionId = payload.id || sessionId;
+            workspace = payload.cwd || workspace;
+            parentSessionId = payload.parent_session_id || payload.parentSessionId || parentSessionId;
+            isSubagent = Boolean(payload.is_subagent || payload.isSubagent || parentSessionId);
+            role = payload.role || payload.agent_role || role;
+          }
+          workspace = workspace || payload.cwd || '';
+          if (payload.parent_session_id || payload.parentSessionId) {
+            parentSessionId = payload.parent_session_id || payload.parentSessionId;
+            isSubagent = true;
+          }
+          if (item.type === 'token_count') {
+            const usage = payload.info?.total_token_usage || payload.usage || {};
+            if (Number.isFinite(usage.total_tokens)) tokensUsed = usage.total_tokens;
+          }
+          if (item.type === 'response_item') {
+            const body = Array.isArray(content) ? content.map((part) => part.text || '').join('\n') : String(content || '');
+            if (payload.role === 'user' || message.role === 'user') {
+              isComplete = false;
+              if (!taskSummary) taskSummary = body.trim().slice(0, 160);
+            }
+            const calls = payload.name || payload.tool_name || message.name;
+            if (calls) detail = String(calls);
+            if (body && (payload.role === 'assistant' || message.role === 'assistant')) detail = body.trim().split('\n')[0].slice(0, 160) || detail;
+          }
+          if (item.type === 'event_msg') {
+            const eventType = payload.type || '';
+            if (/tool|command|spawn_agent/i.test(eventType)) detail = eventType;
+            if (/turn_complete|task_complete|turn_aborted/i.test(eventType)) isComplete = true;
+            if (/turn_started|task_started/i.test(eventType)) isComplete = false;
+          }
+        } else {
+          sessionId = item.sessionId || item.session_id || sessionId;
+          workspace = item.cwd || workspace;
+          parentSessionId = item.parentSessionId || item.parent_session_id || parentSessionId;
+          isSubagent = Boolean(item.isSidechain || item.isSubagent || item.agentId || parentSessionId);
+          role = item.agentName || item.role || role;
+          if (message.usage) {
+            const input = Number(message.usage.input_tokens || 0);
+            const output = Number(message.usage.output_tokens || 0);
+            const cache = Number(message.usage.cache_read_input_tokens || 0);
+            tokensUsed = (tokensUsed || 0) + input + output + cache;
+          }
+          if (message.stop_reason === 'end_turn') isComplete = true;
+          else if (message.stop_reason === 'tool_use') isComplete = false;
+          const body = Array.isArray(content)
+            ? content.map((part) => part.text || part.name || '').join('\n')
+            : String(content || '');
+          if (item.type === 'user') {
+            isComplete = false;
+            if (!taskSummary) taskSummary = body.trim().slice(0, 160);
+          }
+          if (item.type === 'assistant') {
+            const tool = Array.isArray(content) ? content.find((part) => part.type === 'tool_use') : null;
+            if (tool) detail = tool.name || 'Tool action';
+            else if (body.trim()) detail = body.trim().split('\n')[0].slice(0, 160);
+          }
+        }
+      }
+      const data = { sessionId, workspace, taskSummary, detail, role, parentSessionId, isSubagent, tokensUsed, isComplete };
+      this.jsonlMetadataCache.set(filePath, { mtimeMs: stat.mtimeMs, size: stat.size, data });
+      return data;
+    } catch {
+      return {};
+    } finally {
+      if (fd !== undefined) {
+        try { fs.closeSync(fd); } catch {}
+      }
+    }
   }
 
   /**
@@ -320,6 +531,18 @@ class AgentSessionManager {
   _parseRoleFromText(text) {
     if (!text || typeof text !== 'string') return '';
     const cleaned = cleanAnsi(text);
+
+    // 0a. Header inside <Identity> block, e.g. # SWE Light Implementer
+    const identityHeaderMatch = cleaned.match(/<Identity>[\s\S]*?#+\s*([A-Za-z0-9_\- ]{3,40})/i);
+    if (identityHeaderMatch && identityHeaderMatch[1]) {
+      return identityHeaderMatch[1].trim();
+    }
+
+    // 0b. Explicit roles tag, e.g. "roles: reviewer, qa" or "Role: Security Auditor"
+    const rolesMatch = cleaned.match(/(?:roles?|Identity|Role)\s*:\s*([A-Za-z0-9_\-, ]{3,40})/i);
+    if (rolesMatch && rolesMatch[1]) {
+      return rolesMatch[1].trim();
+    }
 
     // 1. "You are <name>, the <role>"
     // E.g. content matching 'You are ([a-zA-Z0-9_\- ]+), the ([a-zA-Z0-9_\- ]+)'
@@ -446,9 +669,57 @@ class AgentSessionManager {
 
     const currentSessionId = sessionId || path.basename(path.dirname(path.dirname(path.dirname(tPath))));
 
+    // 0. Check .system_generated/messages for instant, accurate subagent & parent dispatch detection
+    const sessionDir = path.dirname(path.dirname(path.dirname(tPath)));
+    const messagesDir = path.join(sessionDir, '.system_generated', 'messages');
+    if (fs.existsSync(messagesDir)) {
+      try {
+        const msgFiles = fs.readdirSync(messagesDir);
+        for (const mf of msgFiles) {
+          if (!mf.endsWith('.json')) continue;
+          try {
+            const rawMsg = fs.readFileSync(path.join(messagesDir, mf), 'utf8');
+            const msgObj = JSON.parse(rawMsg);
+            if (msgObj.sender && msgObj.sender !== currentSessionId) {
+              isSubagent = true;
+              parentSessionId = msgObj.sender;
+            }
+            const tc = msgObj.sourceMetadata?.tool?.toolCall;
+            if (tc) {
+              isSubagent = true;
+              if (msgObj.sourceMetadata?.tool?.conversationId) {
+                parentSessionId = msgObj.sourceMetadata.tool.conversationId;
+              }
+              let args = tc.argumentsJson;
+              if (typeof args === 'string') {
+                try { args = JSON.parse(args); } catch {}
+              }
+              if (args) {
+                if (tc.name === 'invoke_subagent') {
+                  const r = args.Role || args.TypeName || args.role || args.typeName;
+                  if (r) role = cleanAnsi(String(r)).trim();
+                  if (args.Prompt && !subagentPrompt) subagentPrompt = extractDispatchEnvelopePrompt(args.Prompt);
+                } else if (tc.name === 'swarm') {
+                  const r = this._parseRoleFromText(args.brief) || args.name;
+                  if (r) role = cleanAnsi(String(r)).trim();
+                  if (args.brief && !subagentPrompt) subagentPrompt = extractDispatchEnvelopePrompt(args.brief);
+                }
+              }
+            }
+            if (msgObj.content) {
+              const r = this._parseRoleFromText(msgObj.content);
+              if (r && !role) role = r;
+              if (!subagentPrompt) subagentPrompt = extractDispatchEnvelopePrompt(msgObj.content);
+            }
+            if (isSubagent && role && parentSessionId) break;
+          } catch {}
+        }
+      } catch {}
+    }
+
     let fd;
     try {
-      const readSize = Math.min(stat.size, 32768);
+      const readSize = Math.min(stat.size, 131072);
       if (readSize > 0) {
         fd = fs.openSync(tPath, 'r');
         const buffer = Buffer.alloc(readSize);
@@ -465,7 +736,7 @@ class AgentSessionManager {
         // Main agent starts with source: 'USER_EXPLICIT' or a user prompt <USER_REQUEST>.
         // Subagent starts with source: 'SYSTEM' or content containing sender= or <SYSTEM_MESSAGE> not actually sent by the user.
         const headLines = text.trim().split('\n');
-        for (let i = 0; i < Math.min(headLines.length, 10); i++) {
+        for (let i = 0; i < Math.min(headLines.length, 25); i++) {
           if (!headLines[i].trim()) continue;
           try {
             const item = JSON.parse(headLines[i]);
@@ -476,14 +747,15 @@ class AgentSessionManager {
               if (
                 src.startsWith('SYSTEM') ||
                 content.includes('sender=') ||
+                content.includes('Message from') ||
                 content.includes('not actually sent by the user') ||
                 content.includes('[Message]')
               ) {
                 isSubagent = true;
               } else if (
-                src === 'USER_EXPLICIT' ||
-                content.includes('<USER_REQUEST>') ||
-                item.type === 'USER_INPUT'
+                !parentSessionId &&
+                (src === 'USER_EXPLICIT' ||
+                content.includes('<USER_REQUEST>'))
               ) {
                 isSubagent = false;
               }
@@ -492,11 +764,13 @@ class AgentSessionManager {
             if (!parentSessionId) {
               if (item.parent_session_id || item.parentSessionId) {
                 parentSessionId = item.parent_session_id || item.parentSessionId;
+                isSubagent = true;
               } else if (content.includes('sender=')) {
                 const sMatch = content.match(/sender=([a-zA-Z0-9_-]{8,})/i) ||
                               content.match(/parent[_-]?session[_-]?id[:=]\s*["']?([a-zA-Z0-9_-]{8,})/i);
                 if (sMatch && sMatch[1]) {
                   parentSessionId = sMatch[1];
+                  isSubagent = true;
                 }
               }
             }
@@ -623,6 +897,97 @@ class AgentSessionManager {
 
       const raw = buffer.toString('utf8');
       const lines = raw.trim().split('\n');
+
+      if (paths.provider === 'codex' || paths.provider === 'claude') {
+        const turns = [];
+        let current = null;
+        const pushTurn = () => {
+          if (!current) return;
+          current.status = 'completed';
+          turns.push(current);
+          current = null;
+        };
+        const textOf = (content) => Array.isArray(content)
+          ? content.map((part) => part.text || '').filter(Boolean).join('\n')
+          : (typeof content === 'string' ? content : '');
+        const addUserTurn = (content, timestamp) => {
+          pushTurn();
+          current = {
+            id: `turn-${turns.length + 1}`,
+            stepIndex: turns.length,
+            timestamp: timestamp ? new Date(timestamp).getTime() : Date.now(),
+            userInput: extractCleanUserInput(textOf(content)),
+            thinking: [],
+            toolCalls: [],
+            responses: [],
+            status: 'running',
+          };
+        };
+
+        for (const line of lines) {
+          let item;
+          try { item = JSON.parse(line); } catch { continue; }
+          const payload = item.payload || {};
+          const message = item.message || payload.message || {};
+          const content = message.content || payload.content || item.content;
+          const role = message.role || payload.role || item.role;
+          const type = item.type || '';
+
+          if (paths.provider === 'codex') {
+            if (type === 'response_item' && role === 'user') {
+              addUserTurn(content, item.timestamp || payload.timestamp);
+            } else if (type === 'response_item' && role === 'assistant') {
+              if (!current) addUserTurn('', item.timestamp || payload.timestamp);
+              const parts = Array.isArray(content) ? content : [];
+              for (const part of parts) {
+                if (part.type === 'tool_call' || part.type === 'function_call') {
+                  const name = part.name || part.function?.name || 'tool';
+                  current.toolCalls.push(formatToolCall({ name, args: part.arguments || part.function?.arguments || {} }));
+                } else if (part.type === 'output_text' || part.type === 'text') {
+                  const response = String(part.text || '').trim();
+                  if (response) current.responses.push(response);
+                }
+              }
+            } else if (type === 'response_item' && payload.type === 'function_call') {
+              if (!current) addUserTurn('', item.timestamp || payload.timestamp);
+              let args = payload.arguments || {};
+              if (typeof args === 'string') {
+                try { args = JSON.parse(args); } catch { args = { raw: args }; }
+              }
+              current.toolCalls.push(formatToolCall({ name: payload.name, args }));
+            } else if (type === 'event_msg' && /turn_complete|task_complete/i.test(payload.type || '')) {
+              pushTurn();
+            }
+          } else {
+            if (type === 'user' && !item.isMeta) {
+              addUserTurn(content, item.timestamp);
+            } else if (type === 'assistant') {
+              if (!current) addUserTurn('', item.timestamp);
+              const parts = Array.isArray(content) ? content : [];
+              for (const part of parts) {
+                if (part.type === 'thinking' && part.thinking) current.thinking.push(String(part.thinking));
+                else if (part.type === 'tool_use') {
+                  current.toolCalls.push(formatToolCall({ name: part.name, args: part.input || {} }));
+                } else if (part.type === 'text' && part.text) current.responses.push(String(part.text));
+              }
+            }
+          }
+        }
+        if (current) {
+          const stat = fs.statSync(paths.transcriptPath);
+          current.status = Date.now() - stat.mtimeMs <= 15000 ? 'running' : 'completed';
+          turns.push(current);
+        }
+        const stat = fs.statSync(paths.transcriptPath);
+        return {
+          success: true,
+          sessionId,
+          totalTurns: turns.length,
+          isWorking: Date.now() - stat.mtimeMs <= 15000,
+          isWaiting: false,
+          turns: turns.slice(-30),
+        };
+      }
 
       const meta = this._peekSessionMetadata(paths.transcriptPath, stat, sessionId);
 

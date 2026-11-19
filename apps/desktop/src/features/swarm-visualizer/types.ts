@@ -7,6 +7,7 @@
 
 export type SwarmAgentStatus =
   | 'working'
+  | 'active'
   | 'thinking'
   | 'awaiting_approval'
   | 'retrying'
@@ -112,7 +113,7 @@ export interface SwarmAgent {
   clusterName: string;
   role: string;
   status: SwarmAgentStatus;
-  progress: number; // 0 - 100
+  progress?: number; // Only populated when the provider reports a measured value.
   tokensPerSec: number;
   totalTokens: number;
   rawReasoningSteps?: ReasoningStep[];
@@ -177,7 +178,9 @@ export interface TerminalLogEntry {
 
 export interface DiscoveredSessionSummary {
   sessionId: string;
+  agent?: 'antigravity' | 'codex' | 'claude' | null;
   name: string;
+  detail?: string;
   workspaceName?: string;
   workspace?: string;
   mtimeMs: number;

@@ -154,8 +154,11 @@ export const SwarmVisualizerTab: React.FC<SwarmVisualizerTabProps> = ({
               filterQuery={filterQuery}
               isRunning={state.isRunning}
               sessionId={state.selectedSessionId || state.activeSession?.sessionId || undefined}
-              workspaceName={state.activeSession?.workspaceName || 'workspace'}
-              model={state.activeSession?.model || 'gemini-3.8-flash-high'}
+              workspaceName={state.activeSession?.workspaceName}
+              model={state.activeSession?.model}
+              agentName={state.activeSession?.name}
+              agentStatus={state.activeSession?.status}
+              agentDetail={state.activeSession?.detail || state.activeSession?.taskSummary}
               turns={state.turns || []}
               activeTurnIndex={state.activeTurnIndex}
               viewMode={state.viewMode}
@@ -164,11 +167,22 @@ export const SwarmVisualizerTab: React.FC<SwarmVisualizerTabProps> = ({
             />
 
             {/* Mobile / Compact Inspector Toggle Floating Button */}
-            <div className="lg:hidden absolute bottom-4 right-4 z-20">
+            <div className="xl:hidden absolute bottom-4 right-4 z-20">
               <button
                 type="button"
-                onClick={() => setIsMobileInspectorOpen((prev) => !prev)}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#5E6AD2] hover:bg-[#6875E8] text-white shadow-lg text-xs font-medium transition-all active:scale-95"
+                onClick={() => {
+                  if (isMobileInspectorOpen) {
+                    setIsMobileInspectorOpen(false);
+                  } else {
+                    if (!activeAgent && allAgents[0]) {
+                      swarmDataEngine.selectAgent(allAgents[0].id);
+                    }
+                    setIsMobileInspectorOpen(true);
+                  }
+                }}
+                disabled={allAgents.length === 0}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#5E6AD2] hover:bg-[#6875E8] text-white shadow-lg text-xs font-medium transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+                title={allAgents.length === 0 ? 'No agents are available to inspect' : 'Open the agent inspector'}
               >
                 <Bot size={14} />
                 <span>{isMobileInspectorOpen ? 'Hide Inspector' : 'Show Inspector'}</span>
@@ -193,7 +207,7 @@ export const SwarmVisualizerTab: React.FC<SwarmVisualizerTabProps> = ({
           </div>
 
           {/* Desktop Right Inspector Panel (docked on screens >= lg) */}
-          <div className="hidden lg:block w-96 shrink-0 h-full border-l border-white/[0.08] bg-[#0E121B] overflow-y-auto">
+          <div className="hidden xl:block w-80 2xl:w-96 shrink-0 min-w-0 h-full border-l border-white/[0.08] bg-[#0E121B] overflow-y-auto">
             <InspectorPanel
               agent={activeAgent}
               allAgents={allAgents}
@@ -208,13 +222,13 @@ export const SwarmVisualizerTab: React.FC<SwarmVisualizerTabProps> = ({
             />
           </div>
 
-          {/* Mobile Slide-Over Inspector Drawer (screens < lg) */}
+          {/* Compact Slide-Over Inspector Drawer (screens < xl) */}
           {isMobileInspectorOpen && (
-            <div className="lg:hidden fixed inset-0 z-40 flex justify-end">
+            <div className="xl:hidden fixed inset-0 z-40 flex justify-end">
               {/* Backdrop */}
               <div
                 className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
-                onClick={() => setIsMobileInspectorOpen(false)}
+                onClick={handleCloseInspector}
               />
               {/* Drawer Container */}
               <div className="relative w-full max-w-md h-full bg-[#0E121B] shadow-2xl z-50 flex flex-col border-l border-white/10">
@@ -225,7 +239,7 @@ export const SwarmVisualizerTab: React.FC<SwarmVisualizerTabProps> = ({
                   </div>
                   <button
                     type="button"
-                    onClick={() => setIsMobileInspectorOpen(false)}
+                    onClick={handleCloseInspector}
                     className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-white/5"
                   >
                     <X size={16} />

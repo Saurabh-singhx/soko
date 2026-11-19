@@ -1,12 +1,5 @@
 import React, { useRef, useState, useEffect, useLayoutEffect, useCallback } from 'react';
-import {
-  Workflow,
-  Sparkles,
-  CheckCircle2,
-  Brain,
-  Wrench,
-  MessageSquare,
-} from 'lucide-react';
+import { Activity, Bot, Network, Brain, Wrench, MessageSquare, Terminal, Sparkles } from 'lucide-react';
 import type { AgentCluster, SwarmStats, TranscriptTurn } from '../types';
 import { OrchestratorNode } from './OrchestratorNode';
 import { AgentClusterGroup } from './AgentClusterGroup';
@@ -22,6 +15,9 @@ export interface SwarmCanvasProps {
   sessionId?: string;
   workspaceName?: string;
   model?: string;
+  agentName?: string;
+  agentStatus?: string;
+  agentDetail?: string;
   className?: string;
   turns?: TranscriptTurn[];
   activeTurnIndex?: number;
@@ -41,15 +37,17 @@ interface ConnectionLine {
 
 export const SwarmCanvas: React.FC<SwarmCanvasProps> = ({
   clusters = [],
-  stats,
   selectedAgentId,
   onSelectAgent,
   viewAlignment = 'CENTER',
   filterQuery = '',
   isRunning = true,
   sessionId,
-  workspaceName = 'workspace',
-  model = 'gemini-3.8-flash-high',
+  workspaceName,
+  model,
+  agentName,
+  agentStatus,
+  agentDetail,
   className = '',
   turns = [],
   activeTurnIndex,
@@ -59,13 +57,13 @@ export const SwarmCanvas: React.FC<SwarmCanvasProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const orchestratorPinRef = useRef<HTMLDivElement>(null);
   const clusterPinsRef = useRef<Record<string, HTMLDivElement | null>>({});
-  const pipelinePinRef = useRef<HTMLDivElement>(null);
+  const sessionPinRef = useRef<HTMLDivElement | null>(null);
 
   const [connectionLines, setConnectionLines] = useState<ConnectionLine[]>([]);
   const [collapsedClusters, setCollapsedClusters] = useState<Record<string, boolean>>({});
   const [svgDimensions, setSvgDimensions] = useState<{ width: number; height: number }>({
-    width: 1200,
-    height: 800,
+    width: 0,
+    height: 0,
   });
 
   // Filter agents by filterQuery if provided
@@ -96,11 +94,9 @@ export const SwarmCanvas: React.FC<SwarmCanvasProps> = ({
     })
     .filter((c) => !query || c.agents.length > 0);
 
-  const totalAgentsCount =
-    stats?.totalParallel ??
-    clusters.reduce((acc, c) => acc + (c.agents?.length || 0), 0);
+  const childSessionCount = clusters.reduce((acc, c) => acc + (c.agents?.length || 0), 0);
 
-  const isSingleAgentPipeline = clusters.length === 0;
+  const isSingleSessionView = clusters.length === 0;
 
   const toggleClusterCollapse = (clusterId: string) => {
     setCollapsedClusters((prev) => {
@@ -114,11 +110,6 @@ export const SwarmCanvas: React.FC<SwarmCanvasProps> = ({
     });
     onToggleClusterCollapse?.(clusterId);
   };
-
-  const handleClusterPinMount = useCallback((clusterId: string, el: HTMLDivElement | null) => {
-    clusterPinsRef.current[clusterId] = el;
-    requestAnimationFrame(recalculateConnections);
-  }, []);
 
   /**
    * Dynamically measures pins and calculates SVG cubic bezier paths for any N clusters
@@ -135,10 +126,11 @@ export const SwarmCanvas: React.FC<SwarmCanvasProps> = ({
     const scrollWidth = Math.max(container.scrollWidth, container.clientWidth);
     const scrollHeight = Math.max(container.scrollHeight, container.clientHeight);
 
-    setSvgDimensions({
-      width: scrollWidth,
-      height: scrollHeight,
-    });
+    setSvgDimensions((current) =>
+      current.width === scrollWidth && current.height === scrollHeight
+        ? current
+        : { width: scrollWidth, height: scrollHeight }
+    );
 
     const orchPin = orchestratorPinRef.current;
     if (!orchPin) return;
@@ -149,9 +141,9 @@ export const SwarmCanvas: React.FC<SwarmCanvasProps> = ({
 
     const lines: ConnectionLine[] = [];
 
-    // If 0 clusters (Single-Agent Turn Execution Pipeline)
-    if (isSingleAgentPipeline && pipelinePinRef.current) {
-      const pinRect = pipelinePinRef.current.getBoundingClientRect();
+    // Connect a single session view to its activity card.
+    if (isSingleSessionView && sessionPinRef.current) {
+      const pinRect = sessionPinRef.current.getBoundingClientRect();
       const endX = pinRect.left + pinRect.width / 2 - containerRect.left + scrollLeft;
       const endY = pinRect.top + pinRect.height / 2 - containerRect.top + scrollTop;
 
@@ -159,8 +151,8 @@ export const SwarmCanvas: React.FC<SwarmCanvasProps> = ({
       const pathD = `M ${startX} ${startY} C ${startX + dx} ${startY}, ${endX - dx} ${endY}, ${endX} ${endY}`;
 
       lines.push({
-        id: 'wire-single-agent-pipeline',
-        clusterId: 'pipeline',
+        id: 'wire-single-session',
+        clusterId: 'session',
         pathD,
         startX,
         startY,
@@ -192,15 +184,30 @@ export const SwarmCanvas: React.FC<SwarmCanvasProps> = ({
       });
     }
 
-    setConnectionLines(lines);
-  }, [clusters, isSingleAgentPipeline]);
+    setConnectionLines((current) => {
+      const unchanged = current.length === lines.length && current.every((line, index) =>
+        line.id === lines[index]?.id && line.pathD === lines[index]?.pathD
+      );
+      return unchanged ? current : lines;
+    });
+  }, [clusters, isSingleSessionView]);
+
+  const handleClusterPinMount = useCallback((clusterId: string, el: HTMLDivElement | null) => {
+    clusterPinsRef.current[clusterId] = el;
+    requestAnimationFrame(recalculateConnections);
+  }, [recalculateConnections]);
+
+  const handleSessionPinMount = useCallback((el: HTMLDivElement | null) => {
+    sessionPinRef.current = el;
+    requestAnimationFrame(recalculateConnections);
+  }, [recalculateConnections]);
 
   // Recalculate on mount, resize, cluster collapse, and state updates
   useLayoutEffect(() => {
     recalculateConnections();
     const timer = setTimeout(recalculateConnections, 100);
     return () => clearTimeout(timer);
-  }, [recalculateConnections, collapsedClusters, clusters, isSingleAgentPipeline]);
+  }, [recalculateConnections, collapsedClusters, clusters, isSingleSessionView]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -237,12 +244,43 @@ export const SwarmCanvas: React.FC<SwarmCanvasProps> = ({
     }
   }, [viewAlignment]);
 
-  // Current turn for Single-Agent Turn Execution Pipeline
-  const currentTurn = turns && turns.length > 0
-    ? (activeTurnIndex !== undefined && activeTurnIndex >= 0 && activeTurnIndex < turns.length
-        ? turns[activeTurnIndex]
-        : turns[turns.length - 1])
-    : null;
+  const observedActionCount = turns.reduce((total, turn) => total + turn.toolCalls.length, 0);
+  const recentTurns = turns.slice(-12);
+  const maxTurnActions = Math.max(1, ...recentTurns.map((turn) => turn.toolCalls.length));
+  const isAgentActive = ['working', 'active', 'thinking', 'waiting'].includes(agentStatus || '');
+  const isAgentComplete = agentStatus === 'completed';
+
+  const latestTurn =
+    typeof activeTurnIndex === 'number' && turns[activeTurnIndex]
+      ? turns[activeTurnIndex]
+      : turns.length > 0
+      ? turns[turns.length - 1]
+      : null;
+
+  const singleAgentRole =
+    agentDetail && agentDetail.length > 0 && agentDetail.length < 50
+      ? agentDetail
+      : 'Primary Execution Agent';
+
+  if (!sessionId && clusters.length === 0) {
+    return (
+      <div className={`w-full h-full flex items-center justify-center bg-[#0A0D14] ${className}`}>
+        <div className="max-w-md mx-5 rounded-2xl border border-white/10 bg-[#0E121B] px-8 py-10 text-center shadow-xl">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03]">
+            <Network className="h-5 w-5 text-slate-400" />
+          </div>
+          <h2 className="text-base font-semibold text-white">
+            {isRunning ? 'No CLI agents are running' : 'Live monitoring is paused'}
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-slate-400">
+            {isRunning
+              ? 'Live session activity will appear here when a supported agent starts working.'
+              : 'Resume live monitoring to discover agent sessions on this machine.'}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -308,8 +346,8 @@ export const SwarmCanvas: React.FC<SwarmCanvasProps> = ({
               fill="none"
               stroke="url(#swarmWireGradient)"
               strokeWidth="2"
-              strokeOpacity={isSingleAgentPipeline ? 0.7 : 0.85}
-              strokeDasharray={isSingleAgentPipeline ? 'none' : isRunning ? 'none' : '4 4'}
+              strokeOpacity={isSingleSessionView ? 0.85 : 0.85}
+              strokeDasharray={isSingleSessionView ? 'none' : isRunning ? 'none' : '4 4'}
             />
 
             {/* Animated Pulse Data Packets along the wire */}
@@ -346,47 +384,41 @@ export const SwarmCanvas: React.FC<SwarmCanvasProps> = ({
       </svg>
 
       {/* Main Graph Layout Content */}
-      <div className="relative z-20 min-w-[760px] max-w-7xl mx-auto p-4 sm:p-6 lg:p-8 flex flex-col md:flex-row items-start gap-8 lg:gap-14">
+      <div className="relative z-20 w-full min-w-0 max-w-7xl mx-auto p-4 sm:p-6 lg:p-8 flex flex-col xl:flex-row items-stretch xl:items-start gap-5 xl:gap-8 2xl:gap-14">
         {/* Left Column: Root Orchestrator */}
-        <div className="w-full md:w-72 lg:w-80 shrink-0 pt-4 md:pt-16">
+        <div className="w-full xl:w-72 2xl:w-80 min-w-0 shrink-0 pt-2 xl:pt-16">
           <OrchestratorNode
             pinRef={orchestratorPinRef}
             sessionId={sessionId}
             workspaceName={workspaceName}
             model={model}
-            activeCount={totalAgentsCount}
-            totalParallel={totalAgentsCount}
-            isRunning={isRunning}
-            statusText={isSingleAgentPipeline ? 'Primary Agent' : 'Root Orchestrator'}
+            agentName={agentName}
+            agentStatus={agentStatus}
+            activeCount={childSessionCount}
+            totalParallel={childSessionCount}
+            isRunning={agentStatus === 'working' || agentStatus === 'active' || agentStatus === 'thinking' || agentStatus === 'waiting'}
+            statusText={isSingleSessionView ? 'Agent session' : 'Parent session'}
           />
 
           {/* Quick Swarm Graph Info Card */}
           <div className="mt-4 p-3 rounded-lg bg-white/[0.02] border border-white/5 text-[11px] font-mono text-slate-400 space-y-1.5 hidden md:block">
             <div className="flex items-center justify-between">
               <span className="text-slate-500">Topology:</span>
-              <span className="text-slate-300">
-                {isSingleAgentPipeline ? 'Single-Agent Pipeline' : 'Hierarchical DAG'}
-              </span>
+              <span className="text-slate-300">{isSingleSessionView ? 'Single session' : 'Parent and child sessions'}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-slate-500">Dispatch Mode:</span>
-              <span className="text-teal-400">
-                {isSingleAgentPipeline ? 'Turn Execution Loop' : 'Non-blocking Async'}
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-slate-500">Execution Depth:</span>
+              <span className="text-slate-500">Observed sessions:</span>
               <span className="text-slate-300">
-                {isSingleAgentPipeline ? `${turns.length} Turns` : `${totalAgentsCount} Subagents`}
+                {childSessionCount + 1}
               </span>
             </div>
           </div>
         </div>
 
-        {/* Right Column: Active Clusters or Single-Agent Turn Execution Pipeline */}
-        <div className="flex-1 w-full space-y-5">
+        {/* Right Column: Active Clusters or selected session activity */}
+        <div className="flex-1 w-full min-w-0 space-y-5">
           {/* Real Active Clusters (N dynamic clusters) */}
-          {!isSingleAgentPipeline &&
+          {!isSingleSessionView &&
             filteredClusters.map((cluster) => (
               <AgentClusterGroup
                 key={cluster.id}
@@ -399,181 +431,230 @@ export const SwarmCanvas: React.FC<SwarmCanvasProps> = ({
               />
             ))}
 
-          {/* Single-Agent Turn Execution Pipeline when clusters.length === 0 */}
-          {isSingleAgentPipeline && (
+          {/* A real root session with no discovered child sessions. */}
+          {isSingleSessionView && (
             <div
-              className="relative rounded-xl bg-[#0E121B]/95 border border-cyan-500/30 p-5 sm:p-6 shadow-[0_4px_24px_rgba(0,0,0,0.4)] backdrop-blur-sm"
-              data-cluster-id="single-agent-pipeline"
+              className={`relative overflow-hidden rounded-2xl border transition-all duration-300 ${
+                isAgentActive
+                  ? 'border-cyan-400/40 shadow-[0_0_30px_rgba(6,182,212,0.18)] bg-gradient-to-br from-[#111827] via-[#0E1524] to-[#101827]'
+                  : isAgentComplete
+                  ? 'border-emerald-500/30 shadow-[0_0_24px_rgba(16,185,129,0.12)] bg-gradient-to-br from-[#111827] via-[#0D1917] to-[#101827]'
+                  : 'border-white/10 shadow-xl bg-gradient-to-br from-[#111827] via-[#0E121B] to-[#101827]'
+              } p-5 sm:p-7`}
             >
-              {/* Input Connection Pin */}
+              {/* SVG Input Connection Pin linking directly from Orchestrator */}
               <div
-                ref={pipelinePinRef}
-                id="cluster-pin-pipeline"
-                data-pin="cluster-in-pipeline"
-                className="absolute -left-2 top-8 -translate-y-1/2 flex items-center justify-center w-3.5 h-3.5 rounded-full bg-[#0E121B] border-2 border-cyan-400 shadow-sm z-20 cursor-crosshair"
+                ref={handleSessionPinMount}
+                id="single-agent-pin"
+                data-pin="session-in"
+                className="absolute -left-2 top-8 -translate-y-1/2 flex items-center justify-center w-3.5 h-3.5 rounded-full bg-[#0E121B] border-2 border-cyan-400 shadow-[0_0_8px_#06B6D4] z-20 cursor-crosshair transition-transform hover:scale-125"
+                title="Agent Input Connection Pin"
               >
-                <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-[0_0_8px_#06B6D4]" />
+                <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-[0_0_6px_#2DD4BF]" />
               </div>
 
-              {/* Pipeline Header */}
-              <div className="flex items-start justify-between gap-4 border-b border-white/[0.06] pb-4">
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 shrink-0">
-                    <Workflow className="w-5 h-5 animate-pulse" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-white text-sm font-semibold tracking-tight font-sans">
-                        Single-Agent Turn Execution Pipeline
-                      </h3>
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
-                        <Sparkles className="w-2.5 h-2.5 text-cyan-400" />
-                        {isRunning ? 'EXECUTING PIPELINE' : viewMode === 'history' ? 'ARCHIVED PIPELINE' : 'PIPELINE READY'}
-                      </span>
+              <div className="pointer-events-none absolute -right-12 -top-16 h-56 w-56 rounded-full bg-cyan-500/[0.07] blur-3xl" />
+              <div className="relative flex flex-col gap-6">
+                {/* Agent Header */}
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex min-w-0 items-center gap-4">
+                    <div
+                      className={`relative flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border ${
+                        isAgentComplete
+                          ? 'border-emerald-400/30 bg-emerald-500/10'
+                          : isAgentActive
+                          ? 'border-cyan-300/30 bg-cyan-500/10'
+                          : 'border-slate-500/30 bg-slate-500/10'
+                      }`}
+                    >
+                      <Bot
+                        className={`h-8 w-8 ${
+                          isAgentComplete
+                            ? 'text-emerald-300'
+                            : isAgentActive
+                            ? 'text-cyan-200'
+                            : 'text-slate-300'
+                        }`}
+                      />
+                      <span
+                        className={`absolute -right-1 -top-1 h-3.5 w-3.5 rounded-full border-2 border-[#111827] ${
+                          isAgentComplete
+                            ? 'bg-emerald-400'
+                            : isAgentActive
+                            ? 'bg-cyan-300 animate-pulse'
+                            : 'bg-slate-500'
+                        }`}
+                      />
                     </div>
-                    <p className="text-slate-400 text-xs mt-0.5">
-                      Autonomous sequential turn execution with chain-of-thought reasoning and tool invocations.
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-slate-500">
+                          {viewMode === 'live' ? 'Live Agent' : 'Agent Session'}
+                        </span>
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono border border-cyan-500/30 bg-cyan-500/10 text-cyan-300">
+                          <Sparkles className="w-2.5 h-2.5 text-cyan-300" />
+                          <span>{singleAgentRole}</span>
+                        </span>
+                      </div>
+                      <h3 className="mt-1 truncate text-lg font-semibold text-white">
+                        {agentName || workspaceName || 'Agent session'}
+                      </h3>
+                      <div className="mt-1 flex items-center gap-2 text-xs capitalize text-slate-400">
+                        <span
+                          className={`h-1.5 w-1.5 rounded-full ${
+                            isAgentComplete
+                              ? 'bg-emerald-400'
+                              : isAgentActive
+                              ? 'bg-cyan-300'
+                              : 'bg-slate-500'
+                          }`}
+                        />
+                        {agentStatus || 'Status unavailable'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider text-slate-400">
+                    {viewMode === 'live' ? 'Live telemetry' : 'Session history'}
+                  </div>
+                </div>
+
+                {/* Key Metrics */}
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  <div className="rounded-xl border border-white/[0.07] bg-black/15 p-3">
+                    <div className="text-[9px] uppercase tracking-wider text-slate-500">Observed turns</div>
+                    <div className="mt-1.5 font-mono text-xl text-white">{turns.length}</div>
+                  </div>
+                  <div className="rounded-xl border border-white/[0.07] bg-black/15 p-3">
+                    <div className="text-[9px] uppercase tracking-wider text-slate-500">Observed actions</div>
+                    <div className="mt-1.5 font-mono text-xl text-white">{observedActionCount}</div>
+                  </div>
+                  <div className="col-span-2 rounded-xl border border-white/[0.07] bg-black/15 p-3 sm:col-span-1">
+                    <div className="text-[9px] uppercase tracking-wider text-slate-500">Subagent Topology</div>
+                    <div className="mt-1.5 flex items-center gap-2 font-mono text-sm text-cyan-300">
+                      <Network className="h-4 w-4 text-cyan-400 shrink-0" />
+                      <span>Direct (1 Working Agent)</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Current Instruction / Active Task */}
+                {(latestTurn?.userInput || agentDetail) && (
+                  <div className="rounded-xl border border-white/[0.08] bg-black/25 p-4 space-y-2">
+                    <div className="flex items-center justify-between text-xs font-medium text-slate-300">
+                      <div className="flex items-center gap-2">
+                        <MessageSquare className="h-3.5 w-3.5 text-cyan-300" />
+                        <span className="font-mono text-[11px] uppercase tracking-wider text-slate-400">
+                          Active Task / Instruction
+                        </span>
+                      </div>
+                      {latestTurn && (
+                        <span className="text-[10px] font-mono text-slate-500">Turn {latestTurn.stepIndex + 1}</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-200 line-clamp-3 leading-relaxed whitespace-pre-wrap font-sans">
+                      {latestTurn?.userInput || agentDetail}
                     </p>
                   </div>
-                </div>
+                )}
 
-                <div className="text-right shrink-0 hidden sm:block font-mono text-[11px] text-slate-400">
-                  <span className="text-cyan-300 font-semibold">{turns.length}</span> turns total
-                </div>
-              </div>
-
-              {/* Pipeline Stages Flow Diagram */}
-              <div className="mt-5 grid grid-cols-1 sm:grid-cols-4 gap-2.5">
-                {/* Stage 1: Ingestion */}
-                <div className="p-3 rounded-lg bg-[#121624] border border-white/5 flex flex-col justify-between space-y-2">
-                  <div className="flex items-center justify-between text-slate-400">
-                    <span className="text-[10px] font-mono uppercase tracking-wider">Stage 01</span>
-                    <MessageSquare className="w-3.5 h-3.5 text-indigo-400" />
-                  </div>
-                  <div>
-                    <div className="text-xs font-semibold text-slate-200">Context Assembly</div>
-                    <div className="text-[10px] text-slate-400 mt-0.5">Prompt & History</div>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-[10px] font-mono text-emerald-400">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                    <span>Loaded</span>
-                  </div>
-                </div>
-
-                {/* Stage 2: Reasoning */}
-                <div className="p-3 rounded-lg bg-[#121624] border border-cyan-500/30 shadow-[0_0_12px_rgba(6,182,212,0.1)] flex flex-col justify-between space-y-2">
-                  <div className="flex items-center justify-between text-cyan-400">
-                    <span className="text-[10px] font-mono uppercase tracking-wider">Stage 02</span>
-                    <Brain className="w-3.5 h-3.5 text-cyan-400" />
-                  </div>
-                  <div>
-                    <div className="text-xs font-semibold text-cyan-200">Thinking & Plan</div>
-                    <div className="text-[10px] text-slate-400 mt-0.5">Chain-of-Thought</div>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-[10px] font-mono text-cyan-400">
-                    {isRunning ? (
-                      <>
-                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
-                        <span>Active CoT</span>
-                      </>
-                    ) : (
-                      <>
-                        <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                        <span>Resolved</span>
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                {/* Stage 3: Tool Execution */}
-                <div className="p-3 rounded-lg bg-[#121624] border border-amber-500/20 flex flex-col justify-between space-y-2">
-                  <div className="flex items-center justify-between text-amber-400">
-                    <span className="text-[10px] font-mono uppercase tracking-wider">Stage 03</span>
-                    <Wrench className="w-3.5 h-3.5 text-amber-400" />
-                  </div>
-                  <div>
-                    <div className="text-xs font-semibold text-amber-200">Tool Execution</div>
-                    <div className="text-[10px] text-slate-400 mt-0.5">Bash, Edits, Search</div>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-[10px] font-mono text-slate-400">
-                    {currentTurn && currentTurn.toolCalls?.length > 0 ? (
-                      <span className="text-amber-300 font-semibold">{currentTurn.toolCalls.length} tools dispatched</span>
-                    ) : (
-                      <span>Direct Response</span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Stage 4: Synthesis */}
-                <div className="p-3 rounded-lg bg-[#121624] border border-white/5 flex flex-col justify-between space-y-2">
-                  <div className="flex items-center justify-between text-slate-400">
-                    <span className="text-[10px] font-mono uppercase tracking-wider">Stage 04</span>
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                  </div>
-                  <div>
-                    <div className="text-xs font-semibold text-slate-200">Turn Synthesis</div>
-                    <div className="text-[10px] text-slate-400 mt-0.5">Response Output</div>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-[10px] font-mono text-slate-400">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                    <span>Verified</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Current / Latest Turn Live Execution Details */}
-              {currentTurn && (
-                <div className="mt-4 p-3.5 rounded-lg bg-[#0A0D15] border border-white/[0.08] text-xs space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono font-semibold text-cyan-300">
-                        Turn #{currentTurn.stepIndex !== undefined ? currentTurn.stepIndex : (activeTurnIndex !== undefined ? activeTurnIndex + 1 : turns.length)}
-                      </span>
-                      <span className="text-[10px] font-mono text-slate-500">
-                        {currentTurn.status.toUpperCase()}
-                      </span>
-                    </div>
-                    {currentTurn.timestamp && (
-                      <span className="text-[10px] font-mono text-slate-500">
-                        {new Date(currentTurn.timestamp).toLocaleTimeString()}
-                      </span>
-                    )}
-                  </div>
-
-                  {currentTurn.userInput && (
-                    <div className="text-slate-300 font-sans text-xs bg-slate-900/50 p-2 rounded border border-white/5 truncate">
-                      <span className="text-slate-500 font-mono text-[10px] mr-1.5">USER:</span>
-                      {currentTurn.userInput}
-                    </div>
-                  )}
-
-                  {currentTurn.thinking && currentTurn.thinking.length > 0 && (
-                    <div className="text-slate-400 font-mono text-[11px] bg-slate-900/30 p-2 rounded border-l-2 border-cyan-500 truncate">
-                      <span className="text-cyan-400 font-semibold mr-1.5">CoT:</span>
-                      {currentTurn.thinking[0]}
-                    </div>
-                  )}
-
-                  {currentTurn.toolCalls && currentTurn.toolCalls.length > 0 && (
-                    <div className="flex items-center gap-1.5 flex-wrap pt-1">
-                      <span className="text-[10px] font-mono text-slate-500">Tools:</span>
-                      {currentTurn.toolCalls.map((t, idx) => (
-                        <span
-                          key={idx}
-                          className="px-2 py-0.5 rounded text-[10px] font-mono bg-indigo-500/15 text-indigo-300 border border-indigo-500/30"
-                        >
-                          {t.name}
+                {/* Real-time Chain-of-Thought / Active Reasoning */}
+                {latestTurn?.thinking && latestTurn.thinking.length > 0 && (
+                  <div className="rounded-xl border border-indigo-500/20 bg-indigo-950/20 p-4 space-y-2">
+                    <div className="flex items-center justify-between text-xs font-medium text-indigo-300">
+                      <div className="flex items-center gap-2">
+                        <Brain className="h-3.5 w-3.5 text-indigo-400" />
+                        <span className="font-mono text-[11px] uppercase tracking-wider">Active Reasoning / CoT</span>
+                      </div>
+                      {isAgentActive && (
+                        <span className="flex items-center gap-1.5 text-[10px] font-mono text-cyan-400 animate-pulse">
+                          <span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />
+                          Thinking in progress
                         </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-slate-300 line-clamp-4 leading-relaxed font-mono bg-black/30 p-2.5 rounded-lg border border-white/5">
+                      {latestTurn.thinking[latestTurn.thinking.length - 1]}
+                    </div>
+                  </div>
+                )}
+
+                {/* Active Tool Executions */}
+                {latestTurn?.toolCalls && latestTurn.toolCalls.length > 0 && (
+                  <div className="rounded-xl border border-white/[0.07] bg-black/15 p-4 space-y-2.5">
+                    <div className="flex items-center justify-between text-xs font-medium text-slate-300">
+                      <div className="flex items-center gap-2">
+                        <Wrench className="h-3.5 w-3.5 text-teal-400" />
+                        <span className="font-mono text-[11px] uppercase tracking-wider text-slate-400">
+                          Observed Tool Calls ({latestTurn.toolCalls.length})
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {latestTurn.toolCalls.map((tc, idx) => (
+                        <div
+                          key={`${tc.name}-${idx}`}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white/[0.04] border border-white/10 text-xs text-slate-300 font-mono"
+                          title={tc.summary || JSON.stringify(tc.args)}
+                        >
+                          <Terminal className="w-3 h-3 text-teal-400" />
+                          <span className="font-semibold text-teal-300">{tc.name}</span>
+                          {tc.summary && (
+                            <span className="text-[11px] text-slate-400 max-w-[200px] truncate">
+                              ({tc.summary})
+                            </span>
+                          )}
+                        </div>
                       ))}
                     </div>
+                  </div>
+                )}
+
+                {/* Activity by Turn Chart */}
+                <div className="rounded-xl border border-white/[0.07] bg-black/15 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 text-xs font-medium text-slate-300">
+                      <Activity className="h-3.5 w-3.5 text-cyan-300" />Activity by turn
+                    </div>
+                    <span className="text-[10px] font-mono text-slate-500">Action events</span>
+                  </div>
+                  {recentTurns.length > 0 ? (
+                    <div className="mt-5 flex h-24 items-end gap-1.5 sm:gap-2">
+                      {recentTurns.map((turn) => {
+                        const actionCount = turn.toolCalls.length;
+                        const height = actionCount === 0 ? 8 : 12 + (actionCount / maxTurnActions) * 56;
+                        return (
+                          <div
+                            key={turn.id || turn.stepIndex}
+                            className="group flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-2"
+                            title={`Turn ${turn.stepIndex + 1}: ${actionCount} observed actions`}
+                          >
+                            <div className="flex w-full flex-1 items-end justify-center rounded-t bg-white/[0.025]">
+                              <div
+                                className={`w-full max-w-8 rounded-t-sm transition-[height] ${
+                                  actionCount > 0
+                                    ? 'bg-gradient-to-t from-indigo-500/70 to-cyan-300/80'
+                                    : 'bg-slate-700/70'
+                                }`}
+                                style={{ height: `${height}px` }}
+                              />
+                            </div>
+                            <span className="text-[9px] font-mono text-slate-500">{turn.stepIndex + 1}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="mt-4 flex h-20 items-center justify-center rounded-lg border border-dashed border-white/[0.08] text-xs text-slate-500">
+                      <Activity className="mr-2 h-4 w-4 text-slate-600" />No turn activity recorded
+                    </div>
                   )}
                 </div>
-              )}
+              </div>
             </div>
           )}
 
           {/* Filter query with 0 matches */}
-          {!isSingleAgentPipeline && filteredClusters.length === 0 && (
+          {!isSingleSessionView && filteredClusters.length === 0 && (
             <div className="text-center py-12 rounded-xl bg-white/[0.02] border border-dashed border-white/10 text-slate-400 font-mono text-xs">
               No agents or clusters matched your filter query: &quot;{filterQuery}&quot;
             </div>

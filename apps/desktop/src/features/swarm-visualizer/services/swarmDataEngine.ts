@@ -2,13 +2,11 @@ import type {
   AgentCluster,
   DiscoveredSessionSummary,
   ReasoningStep,
-  StateDiff,
   SwarmAgent,
   SwarmAgentStatus,
   SwarmState,
   SwarmStateListener,
   TerminalLogEntry,
-  TraceSpan,
   TranscriptTurn,
 } from '../types.ts';
 import { connectionService } from '../../../services/connection.ts';
@@ -354,7 +352,7 @@ export function extractSubagentRoleAndTask(
     const text = `${cleanTask} ${rawTask} ${fullPrompt}`.toLowerCase();
     if (text.includes('security') || text.includes('audit') || text.includes('cve') || text.includes('vulnerability') || text.includes('auth') || text.includes('rbac') || text.includes('jwt') || text.includes('secret')) {
       properRole = 'Security Auditor';
-    } else if (text.includes('qa') || text.includes('test') || text.includes('verify') || text.includes('spec') || text.includes('assertion') || text.includes('vitest') || text.includes('playwright') || text.includes('cypress')) {
+    } else if (text.includes('qa') || text.includes('test') || text.includes('verify') || text.includes('spec') || text.includes('assertion') || text.includes('vitest') || text.includes('playwright') || text.includes('cypress') || text.includes('defect')) {
       properRole = 'QA Engineer';
     } else if (text.includes('ui') || text.includes('frontend') || text.includes('css') || text.includes('design') || text.includes('canvas') || text.includes('layout') || text.includes('component') || text.includes('tailwind')) {
       properRole = 'UI Architect';
@@ -393,6 +391,8 @@ export function extractSubagentRoleAndTask(
     JWT: 'JWT',
     RBAC: 'RBAC',
     REST: 'REST',
+    AI: 'AI',
+    ML: 'ML',
   };
   const formatWord = (w: string) => {
     const upper = w.toUpperCase();
@@ -434,14 +434,14 @@ export function extractSubagentRoleAndTask(
  */
 export class SwarmDataEngine {
   private static instance: SwarmDataEngine;
-  private listeners: Set<SwarmStateListener> = new Set();
-  private state: SwarmState;
+  public listeners: Set<SwarmStateListener> = new Set();
+  public state: SwarmState;
   private tickInterval: ReturnType<typeof setInterval> | null = null;
-  private unsubConnectionActivity: (() => void) | null = null;
   private unsubNotification: (() => void) | null = null;
+  private unsubActivity: (() => void) | null = null;
   private transcriptCache: Map<string, { mtimeMs: number; turns: TranscriptTurn[] }> = new Map();
-  private isSyncing = false;
-  private hasPendingSync = false;
+  public isSyncing = false;
+  public hasPendingSync = false;
 
   // Real token rate tracking (delta tokens over elapsed time, no mock rate)
   private lastTokenCheckTime = 0;
@@ -502,15 +502,6 @@ export class SwarmDataEngine {
 
     this.addTerminalLog('info', 'Swarm telemetry engine connected. Monitoring real agent sessions.');
 
-    // Connect to Soko connectionService for agent activity
-    try {
-      this.unsubConnectionActivity = connectionService.subscribeAgentActivity((activity: AgentActivityStatus) => {
-        this.handleExternalAgentActivity(activity);
-      });
-    } catch (err) {
-      console.warn('[SwarmDataEngine] ConnectionService subscription failed:', err);
-    }
-
     // Connect to Soko connectionService for notifications (completion, subagent events)
     try {
       this.unsubNotification = connectionService.onNotification((notif) => {
@@ -532,6 +523,15 @@ export class SwarmDataEngine {
       });
     } catch (err) {
       console.warn('[SwarmDataEngine] Notification subscription failed:', err);
+    }
+
+    // Connect to Soko connectionService for real-time agent activity stream
+    try {
+      this.unsubActivity = connectionService.subscribeAgentActivity((activity) => {
+        this.handleExternalAgentActivity(activity);
+      });
+    } catch (err) {
+      console.warn('[SwarmDataEngine] Activity subscription failed:', err);
     }
 
     // Trigger initial live telemetry sync
@@ -559,14 +559,14 @@ export class SwarmDataEngine {
       this.tickInterval = null;
     }
 
-    if (this.unsubConnectionActivity) {
-      this.unsubConnectionActivity();
-      this.unsubConnectionActivity = null;
-    }
-
     if (this.unsubNotification) {
       this.unsubNotification();
       this.unsubNotification = null;
+    }
+
+    if (this.unsubActivity) {
+      this.unsubActivity();
+      this.unsubActivity = null;
     }
 
     this.currentCalculatedTokenRate = 0;
@@ -656,8 +656,10 @@ export class SwarmDataEngine {
       };
 
       // 3. Find child subagents of this session
-      const childSessions = availableSessions.filter(
-        (s) => s.parentSessionId === sessionId || (!s.parentSessionId && s.isSubagent && s.sessionId !== sessionId)
+      const childSessions = this.collectDescendantSessions(
+        availableSessions,
+        sessionId,
+        activeSession.isSubagent !== true && availableSessions.filter((s) => !s.isSubagent).length === 1
       );
 
       // 4. Fetch transcripts for child subagents
@@ -685,9 +687,9 @@ export class SwarmDataEngine {
       );
 
       // 5. Build SwarmAgents from child sessions
-      const agents: SwarmAgent[] = childSessions.map((child, idx) => {
+      const agents: SwarmAgent[] = childSessions.map((child) => {
         const cTurns = childTranscripts.get(child.sessionId) || [];
-        return this.mapSessionToSwarmAgent(child, cTurns, idx);
+        return this.mapSessionToSwarmAgent(child, cTurns);
       });
 
       // 6. Dynamically group subagents into N clusters
@@ -707,8 +709,10 @@ export class SwarmDataEngine {
       const isSessionActive = Boolean(
         activeSession.isLocked ||
         activeSession.status === 'working' ||
+        activeSession.status === 'active' ||
         activeSession.status === 'thinking' ||
-        activeSession.status === 'waiting'
+        activeSession.status === 'waiting' ||
+        childSessions.some((child) => this.isSessionRecentlyActive(child))
       );
 
       const targetMode: 'live' | 'history' =
@@ -1168,6 +1172,7 @@ export class SwarmDataEngine {
           return {
             ...agent,
             status: 'working' as const,
+            progress: 25,
             rawReasoningSteps: updatedSteps,
             reasoningSteps: updatedSteps,
           };
@@ -1222,14 +1227,10 @@ export class SwarmDataEngine {
 
       const now = Date.now();
       // Identify active live sessions (locked or actively working within last 20m)
-      const activeSessions = availableSessions.filter((s) => {
-        if (s.isLocked) {
-          return (now - s.mtimeMs) < 20 * 60 * 1000;
-        }
-        return s.status === 'working' || s.status === 'thinking' || s.status === 'waiting';
-      });
-
-      const hasActive = activeSessions.length > 0;
+      const activeSessions = availableSessions.filter((session) => this.isSessionRecentlyActive(session, now));
+      const activeSessionIds = new Set(activeSessions.map((session) => session.sessionId));
+      const liveRoots = this.getLiveRootSessions(availableSessions, activeSessionIds);
+      const hasActive = liveRoots.length > 0;
 
       // Handle History Mode with Background Live Agent detection
       if (this.state.viewMode === 'history') {
@@ -1251,41 +1252,44 @@ export class SwarmDataEngine {
 
       // Live Mode: If no live agent is currently running, auto-load most recent completed session in history mode
       if (!hasActive) {
-        const rootConversations = availableSessions.filter((s) => !s.isSubagent);
-        rootConversations.sort((a, b) => b.mtimeMs - a.mtimeMs);
-        const mostRecent = rootConversations[0] || availableSessions[0];
-
-        if (mostRecent) {
-          await this.loadSession(mostRecent.sessionId, { mode: 'history' });
-          this.addTerminalLog(
-            'info',
-            'No active live agent detected. Loaded most recent conversation in History Mode.'
-          );
-        } else {
-          // Absolutely empty workspace
-          this.state = {
-            ...this.state,
-            clusters: [],
-            availableSessions: [],
-            viewMode: 'history',
+        this.currentCalculatedTokenRate = 0;
+        this.lastTotalTokens = 0;
+        this.lastTokenCheckTime = 0;
+        this.state = {
+          ...this.state,
+          clusters: [],
+          availableSessions,
+          selectedAgentId: null,
+          selectedAgent: null,
+          rootSessionId: null,
+          selectedSessionId: null,
+          activeSession: null,
+          turns: [],
+          activeTurnIndex: 0,
+          timeTravelCursorMs: 0,
+          maxTimeMs: 0,
+          viewMode: 'live',
+          isLiveSource: true,
+          hasBackgroundLiveAgent: false,
+          stats: {
+            ...this.state.stats,
+            totalParallel: 0,
+            activeClusters: 0,
+            tokenRate: 0,
+            timeTravelCursorMs: 0,
+            maxTimeMs: 0,
+            viewMode: 'live',
             hasBackgroundLiveAgent: false,
-            stats: {
-              ...this.state.stats,
-              totalParallel: 0,
-              activeClusters: 0,
-              tokenRate: 0,
-              viewMode: 'history',
-            },
-          };
-          this.notify();
-        }
+          },
+        };
+        this.notify();
         return;
       }
 
       // Live Active Sessions exist: stream telemetry
-      let rootSession = activeSessions.find((s) => !s.isSubagent && s.isLocked);
+      let rootSession = liveRoots.find((s) => s.isLocked);
       if (!rootSession) {
-        rootSession = activeSessions.find((s) => !s.isSubagent);
+        rootSession = liveRoots[0];
       }
       if (!rootSession) {
         rootSession = activeSessions[0];
@@ -1294,8 +1298,10 @@ export class SwarmDataEngine {
       const rootSessionId = rootSession.sessionId;
 
       // Child sub-agents
-      const childSessions = availableSessions.filter(
-        (s) => s.parentSessionId === rootSessionId || (!s.parentSessionId && s.isSubagent && s.sessionId !== rootSessionId)
+      const childSessions = this.collectDescendantSessions(
+        availableSessions,
+        rootSessionId,
+        liveRoots.length === 1
       );
 
       // Fetch transcripts for root and all active child sessions
@@ -1332,12 +1338,12 @@ export class SwarmDataEngine {
       });
 
       // Compute real token rate from delta tokens over elapsed seconds
-      const tokenRate = this.computeRealTokenRate(totalTokensNow, true);
+      this.computeRealTokenRate(totalTokensNow, true);
 
       // Build real SwarmAgents from discovered child sessions
-      const agents: SwarmAgent[] = childSessions.map((sess, idx) => {
+      const agents: SwarmAgent[] = childSessions.map((sess) => {
         const turns = transcriptMap.get(sess.sessionId) || [];
-        return this.mapSessionToSwarmAgent(sess, turns, idx, tokenRate);
+        return this.mapSessionToSwarmAgent(sess, turns);
       });
 
       // Group subagents dynamically into N clusters
@@ -1384,13 +1390,11 @@ export class SwarmDataEngine {
       if (!rawSessions || rawSessions.length === 0) return;
 
       const now = Date.now();
-      const hasLive = rawSessions.some((s: any) => {
-        if (s.isLocked) {
-          const mtime = s.mtimeMs || s.timestamp || 0;
-          return (now - mtime) < 20 * 60 * 1000;
-        }
-        return s.status === 'working' || s.status === 'thinking' || s.status === 'waiting';
-      });
+      const sessions = this.mapRawSessionsToSummaries(rawSessions);
+      const activeSessionIds = new Set(
+        sessions.filter((session) => this.isSessionRecentlyActive(session, now)).map((session) => session.sessionId)
+      );
+      const hasLive = this.getLiveRootSessions(sessions, activeSessionIds).length > 0;
 
       if (this.state.hasBackgroundLiveAgent !== hasLive) {
         this.state = {
@@ -1449,7 +1453,7 @@ export class SwarmDataEngine {
    * Supports 1, 2, 4, 6, 8+ arbitrary roles.
    * If 0 subagents, returns an empty cluster array for single-agent pipeline.
    */
-  private groupSubagentsIntoClusters(agents: SwarmAgent[]): AgentCluster[] {
+  public groupSubagentsIntoClusters(agents: SwarmAgent[]): AgentCluster[] {
     if (!agents || agents.length === 0) {
       return [];
     }
@@ -1476,7 +1480,7 @@ export class SwarmDataEngine {
     const clusters: AgentCluster[] = [];
     clusterMap.forEach((entry, key) => {
       const activeCount = entry.agents.filter(
-        (a) => a.status === 'working' || a.status === 'awaiting_approval' || a.status === 'thinking'
+        (a) => a.status === 'working' || a.status === 'active' || a.status === 'awaiting_approval' || a.status === 'thinking'
       ).length;
 
       const existingCluster = this.state?.clusters?.find((c) => c.id === key);
@@ -1498,23 +1502,75 @@ export class SwarmDataEngine {
     return clusters;
   }
 
+  private isSessionRecentlyActive(session: DiscoveredSessionSummary, now = Date.now()): boolean {
+    if (session.isLocked) {
+      return now - session.mtimeMs < 20 * 60 * 1000;
+    }
+    return ['working', 'active', 'thinking', 'waiting'].includes(session.status || '');
+  }
+
+  private getLiveRootSessions(
+    sessions: DiscoveredSessionSummary[],
+    activeSessionIds: Set<string>
+  ): DiscoveredSessionSummary[] {
+    return sessions.filter((session) =>
+      !session.isSubagent && (
+        activeSessionIds.has(session.sessionId) ||
+        this.collectDescendantSessions(sessions, session.sessionId, false)
+          .some((child) => activeSessionIds.has(child.sessionId))
+      )
+    );
+  }
+
+  /** Walk all discovered child-session links so nested swarms appear under their root. */
+  private collectDescendantSessions(
+    sessions: DiscoveredSessionSummary[],
+    rootSessionId: string,
+    attachUnlinkedSubagents: boolean
+  ): DiscoveredSessionSummary[] {
+    const descendants: DiscoveredSessionSummary[] = [];
+    const visited = new Set([rootSessionId]);
+    let frontier = [{ sessionId: rootSessionId, depth: 0 }];
+
+    while (frontier.length > 0) {
+      const next: typeof frontier = [];
+      for (const parent of frontier) {
+        const children = sessions.filter((session) =>
+          session.isSubagent &&
+          !visited.has(session.sessionId) &&
+          (session.parentSessionId === parent.sessionId ||
+            (attachUnlinkedSubagents && parent.depth === 0 && !session.parentSessionId))
+        );
+
+        for (const child of children) {
+          visited.add(child.sessionId);
+          descendants.push({ ...child, depth: parent.depth + 1 });
+          next.push({ sessionId: child.sessionId, depth: parent.depth + 1 });
+        }
+      }
+      frontier = next;
+    }
+
+    return descendants;
+  }
+
   /**
    * Maps a discovered session and its parsed transcript turns into a high-fidelity SwarmAgent.
    */
   private mapSessionToSwarmAgent(
     sess: DiscoveredSessionSummary | AgentSessionInfo,
-    turns: TranscriptTurn[],
-    index: number,
-    aggregateTokenRate: number = 0
+    turns: TranscriptTurn[]
   ): SwarmAgent {
     const agentId = sess.sessionId.slice(0, 8);
-    const { role: properRole, taskSummary: cleanTask } = extractSubagentRoleAndTask(sess, turns, index);
-    const roleName = properRole;
+    const { role: properRole, taskSummary: extractedTask } = extractSubagentRoleAndTask(sess, turns);
+    const cleanTask = extractedTask || sess.taskSummary || sess.detail || '';
 
     // Real status mapping
     let status: SwarmAgent['status'] = 'idle';
     if (sess.status === 'working') {
       status = 'working';
+    } else if (sess.status === 'active') {
+      status = 'active';
     } else if (sess.status === 'thinking') {
       status = 'thinking';
     } else if (sess.status === 'waiting') {
@@ -1527,9 +1583,8 @@ export class SwarmDataEngine {
 
     // Parse reasoning steps from turns
     const reasoningSteps: ReasoningStep[] = [];
-    const traceSpans: TraceSpan[] = [];
-    let stateDiff: StateDiff | undefined = undefined;
-    let actionRequired: SwarmAgent['actionRequired'] = undefined;
+    const traceSpans: SwarmAgent['traceSpans'] = [];
+    let actionRequired: SwarmAgent['actionRequired'];
 
     // Process turns (most recent turns up to 4)
     const recentTurns = turns.slice(-4);
@@ -1556,121 +1611,32 @@ export class SwarmDataEngine {
         });
       }
 
-      // 2. Tool calls: trace spans & state diffs
+      // Tool calls are shown as observed actions. We do not fabricate durations,
+      // completion states, or file diffs from a tool request payload.
       if (turn.toolCalls && turn.toolCalls.length > 0) {
         turn.toolCalls.forEach((tool, toolIdx) => {
-          let lane: TraceSpan['lane'] = 'tool_purple';
-          if (tool.name === 'read_file' || tool.name === 'view_file' || tool.name === 'list_directory') {
-            lane = 'tool_blue';
-          } else if (tool.name === 'edit_file' || tool.name === 'write_file' || tool.name === 'replace_file_content') {
-            lane = 'tool_orange';
-          }
-
-          traceSpans.push({
-            id: `sp-${turn.id || turn.stepIndex}-${toolIdx}`,
-            name: tool.summary || `Tool: ${tool.name}`,
-            lane,
-            startTimePercent: Math.min(85, 10 + toolIdx * 20),
-            widthPercent: Math.min(75, 30 + (toolIdx % 3) * 15),
-            durationMs: 1500 + (toolIdx % 4) * 500,
-            status: isLatestTurn && toolIdx === turn.toolCalls.length - 1 && turn.status === 'running' ? 'running' : 'success',
+          reasoningSteps.push({
+            id: `action-${turn.id || turn.stepIndex}-${toolIdx}`,
+            title: tool.summary || tool.name,
+            timestamp: turn.timestamp,
+            status: isLatestTurn && turn.status === 'running' ? 'running' : 'completed',
           });
-
-          // Extract real file diff from tool call
-          if (!stateDiff && (tool.name === 'edit_file' || tool.name === 'write_file')) {
-            const filePath = tool.args?.Path || tool.args?.TargetFile || tool.args?.path || 'source.ts';
-            const lines: StateDiff['lines'] = [];
-
-            if (tool.args?.Target && tool.args?.Replacement) {
-              const targetLines = String(tool.args.Target).split('\n');
-              const replLines = String(tool.args.Replacement).split('\n');
-
-              targetLines.slice(0, 6).forEach((line, lIdx) => {
-                lines.push({
-                  type: 'del',
-                  lineNumOld: lIdx + 1,
-                  content: line,
-                });
-              });
-
-              replLines.slice(0, 6).forEach((line, lIdx) => {
-                lines.push({
-                  type: 'add',
-                  lineNumNew: lIdx + 1,
-                  content: line,
-                });
-              });
-            } else if (tool.args?.Content) {
-              const contentLines = String(tool.args.Content).split('\n');
-              contentLines.slice(0, 8).forEach((line, lIdx) => {
-                lines.push({
-                  type: 'add',
-                  lineNumNew: lIdx + 1,
-                  content: line,
-                });
-              });
-            }
-
-            if (lines.length > 0) {
-              stateDiff = {
-                filename: filePath,
-                lines,
-              };
-            }
-          }
-
-          // Check if operator confirmation / approval is needed
-          if (tool.name === 'ask_question' || tool.name === 'confirm_action') {
-            status = 'awaiting_approval';
-            actionRequired = {
-              actionId: `act-${agentId}`,
-              label: tool.summary || 'Approve Tool Execution',
-              toolName: tool.name,
-              args: tool.args || {},
-            };
-          }
         });
       }
     });
 
-    // Fallback reasoning step if empty
-    if (reasoningSteps.length === 0) {
+    if (reasoningSteps.length === 0 && sess.detail) {
       reasoningSteps.push({
-        id: `rs-default-${agentId}`,
-        title: sess.taskSummary || `Executing ${roleName}`,
-        detail: 'Turn execution step',
-        timestamp: (sess as any).mtimeMs || (sess as any).timestamp || Date.now(),
-        status: status === 'working' ? 'running' : 'completed',
+        id: `observed-${agentId}`,
+        title: sess.detail,
+        timestamp: (sess as any).mtimeMs || (sess as any).timestamp || 0,
+        status: status === 'working' || status === 'thinking' ? 'running' : 'completed',
       });
     }
 
-    // Fallback trace span if empty
-    if (traceSpans.length === 0) {
-      traceSpans.push({
-        id: `sp-llm-${agentId}`,
-        name: 'LLM Generative Inference',
-        lane: 'llm',
-        startTimePercent: 10,
-        widthPercent: 70,
-        durationMs: 2800,
-        status: status === 'working' ? 'running' : 'success',
-      });
-    }
-
-    // Deterministic progress based on turn completion
-    let progress = 100;
-    if (status === 'working' || status === 'thinking') {
-      progress = Math.min(95, Math.max(15, turns.length * 20));
-    } else if (status === 'awaiting_approval') {
-      progress = Math.min(90, Math.max(25, turns.length * 20));
-    } else if (status === 'retrying') {
-      progress = 30;
-    }
-
-    const tokensUsed = sess.tokensUsed || (turns.length * 1800);
-    const tokensPerSec = (status === 'working' && aggregateTokenRate > 0)
-      ? Math.round(aggregateTokenRate / Math.max(1, index + 1))
-      : 0;
+    const tokensUsed = sess.tokensUsed || 0;
+    // Per-agent rates cannot be attributed accurately from aggregate provider data.
+    const tokensPerSec = 0;
 
     return {
       id: agentId,
@@ -1681,12 +1647,10 @@ export class SwarmDataEngine {
       taskSummary: cleanTask,
       task: cleanTask,
       status,
-      progress,
       tokensPerSec,
       totalTokens: tokensUsed,
       rawReasoningSteps: [...reasoningSteps],
       reasoningSteps,
-      stateDiff,
       rawTraceSpans: [...traceSpans],
       traceSpans,
       actionRequired,
@@ -1704,11 +1668,11 @@ export class SwarmDataEngine {
    * Transforms raw bridge session objects into standardized DiscoveredSessionSummary items.
    */
   private mapRawSessionsToSummaries(rawSessions: AgentSessionInfo[]): DiscoveredSessionSummary[] {
-    return rawSessions.map((s, idx) => {
+    return rawSessions.map((s) => {
       const isLocked = Boolean((s as any).isLocked);
-      const mtimeMs = (s as any).mtimeMs || s.timestamp || Date.now();
+      const mtimeMs = (s as any).mtimeMs || s.timestamp || 0;
       const status = s.status || (isLocked ? 'working' : 'completed');
-      const { role: resolvedRole, taskSummary: resolvedTask } = extractSubagentRoleAndTask(s, [], idx);
+      const { role: resolvedRole, taskSummary: resolvedTask } = extractSubagentRoleAndTask(s, []);
 
       const isSub = Boolean(s.isSubagent);
       const name = (s.name && s.name !== s.workspace && s.name !== s.workspaceName && s.name.toLowerCase() !== 'sub-agent')
@@ -1720,11 +1684,13 @@ export class SwarmDataEngine {
         rawTaskSummary.toLowerCase().startsWith('the following is a <system_message>') ||
         rawTaskSummary.startsWith('<SYSTEM_MESSAGE>') ||
         rawTaskSummary.startsWith('[Message]');
-      const safeTaskSummary = resolvedTask || (isPreamble ? (isSub ? `Executing ${resolvedRole} assignment` : name) : rawTaskSummary);
+      const safeTaskSummary = resolvedTask || (isPreamble ? '' : rawTaskSummary);
 
       return {
         sessionId: s.sessionId,
+        agent: s.agent,
         name,
+        detail: s.detail,
         workspaceName: s.workspaceName,
         workspace: s.workspace,
         mtimeMs,
@@ -1734,7 +1700,7 @@ export class SwarmDataEngine {
         tokensUsed: s.tokensUsed || 0,
         taskSummary: safeTaskSummary,
         status,
-        role: isSub ? resolvedRole : 'Orchestrator',
+        role: (s as any).role || (isSub ? resolvedRole : ''),
         subagentCount: (s as any).subagentCount || 0,
         totalTurns: (s as any).totalTurns || 0,
         activeTurnIndex: (s as any).activeTurnIndex || 0,
@@ -1745,9 +1711,30 @@ export class SwarmDataEngine {
   }
 
   /**
-   * Handle real agent activity updates from connectionService.
+   * Helper to append an entry to terminal logs.
    */
-  private handleExternalAgentActivity(activity: AgentActivityStatus): void {
+  private addTerminalLog(level: 'info' | 'warn' | 'error' | 'success', message: string, agentId?: string): void {
+    const entry: TerminalLogEntry = {
+      id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: Date.now(),
+      level,
+      message,
+      agentId,
+    };
+    const logs = [...this.state.terminalLogs, entry];
+    if (logs.length > 120) {
+      logs.splice(0, logs.length - 120);
+    }
+    this.state = {
+      ...this.state,
+      terminalLogs: logs,
+    };
+  }
+
+  /**
+   * Real-time handler for external agent activity emitted by bridge / WebSocket.
+   */
+  public handleExternalAgentActivity(activity: AgentActivityStatus): void {
     if (!activity || !this.state.isRunning) return;
 
     if (activity.detail) {
@@ -1844,30 +1831,9 @@ export class SwarmDataEngine {
   }
 
   /**
-   * Helper to append an entry to terminal logs.
-   */
-  private addTerminalLog(level: 'info' | 'warn' | 'error' | 'success', message: string, agentId?: string): void {
-    const entry: TerminalLogEntry = {
-      id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      timestamp: Date.now(),
-      level,
-      message,
-      agentId,
-    };
-    const logs = [...this.state.terminalLogs, entry];
-    if (logs.length > 120) {
-      logs.splice(0, logs.length - 120);
-    }
-    this.state = {
-      ...this.state,
-      terminalLogs: logs,
-    };
-  }
-
-  /**
    * Find an agent by ID across all clusters.
    */
-  private findAgent(agentId: string): SwarmAgent | null {
+  public findAgent(agentId: string): SwarmAgent | null {
     if (!agentId) return null;
     for (const cluster of this.state.clusters) {
       const found = cluster.agents.find(
@@ -1885,7 +1851,7 @@ export class SwarmDataEngine {
   /**
    * Recompute aggregate stats and notify subscribers.
    */
-  private updateStateAndRecomputeStats(patch: Partial<SwarmState>): void {
+  public updateStateAndRecomputeStats(patch: Partial<SwarmState>): void {
     const nextState = {
       ...this.state,
       ...patch,
@@ -1908,6 +1874,13 @@ export class SwarmDataEngine {
         tokenRate += agent.tokensPerSec;
       }
       cluster.activeCount = clusterActive;
+    }
+
+    if (nextState.clusters.length === 0) {
+      const rootStatus = nextState.activeSession?.status;
+      if (rootStatus && !['idle', 'completed'].includes(rootStatus)) {
+        totalParallel = 1;
+      }
     }
 
     let selectedAgent = nextState.selectedAgent;
@@ -1972,7 +1945,7 @@ export class SwarmDataEngine {
         isRunning: false,
         timeTravelCursorMs: 0,
         maxTimeMs: 0,
-        viewMode: 'history',
+        viewMode: 'live',
         hasBackgroundLiveAgent: false,
       },
       selectedAgentId: null,
@@ -1991,10 +1964,10 @@ export class SwarmDataEngine {
           message: 'Swarm visualizer initialized.',
         },
       ],
-      isLiveSource: false,
+      isLiveSource: true,
       rootSessionId: null,
       availableSessions: [],
-      viewMode: 'history',
+      viewMode: 'live',
       selectedSessionId: null,
       activeTurnIndex: 0,
       hasBackgroundLiveAgent: false,

@@ -13,9 +13,9 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "start": "electron .",
-    "dist:linux": "electron-builder --linux -c electron-builder.json",
-    "dist:win": "electron-builder --win -c electron-builder.json",
-    "dist:mac": "electron-builder --mac -c electron-builder.json",
+    "dist:linux": "npm run build && electron-builder --linux -c electron-builder.json",
+    "dist:win": "npm run build && electron-builder --win -c electron-builder.json",
+    "dist:mac": "npm run build && electron-builder --mac -c electron-builder.json",
     "dist": "npm run build && electron-builder --linux --win -c electron-builder.json"
   },
   "dependencies": {

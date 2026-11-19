@@ -6,6 +6,8 @@ export interface OrchestratorNodeProps {
   sessionId?: string;
   workspaceName?: string;
   model?: string;
+  agentName?: string;
+  agentStatus?: string;
   activeCount?: number;
   totalParallel?: number;
   isRunning?: boolean;
@@ -23,8 +25,10 @@ export interface OrchestratorNodeProps {
  */
 export const OrchestratorNode: React.FC<OrchestratorNodeProps> = ({
   sessionId,
-  workspaceName = 'workspace',
-  model = 'gemini-3.8-flash-high',
+  workspaceName,
+  model,
+  agentName,
+  agentStatus,
   activeCount = 0,
   totalParallel = 0,
   isRunning = true,
@@ -79,11 +83,11 @@ export const OrchestratorNode: React.FC<OrchestratorNodeProps> = ({
             <div className="flex flex-col min-w-0">
               <div className="flex items-center gap-2">
                 <span className="text-white font-semibold text-sm sm:text-base tracking-tight font-sans truncate">
-                  {statusText}
+                  {agentName || statusText}
                 </span>
                 <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">
                   <Sparkles className="w-2.5 h-2.5 text-purple-300" />
-                  PRIMARY
+                  {agentStatus || 'unknown'}
                 </span>
               </div>
               <div className="flex items-center gap-2 text-xs text-slate-400 mt-0.5 font-mono">
@@ -93,20 +97,19 @@ export const OrchestratorNode: React.FC<OrchestratorNodeProps> = ({
                       isRunning ? 'bg-emerald-400 shadow-[0_0_6px_#34D399]' : 'bg-slate-500'
                     }`}
                   />
-                  {isRunning ? 'Online & Dispatching' : 'Paused'}
+                  {agentStatus || 'Unknown status'}
                 </span>
                 <span className="text-slate-600">•</span>
                 <span className="text-slate-300 font-medium">
-                  {totalParallel || activeCount} Sub-Agents
+                  {totalParallel || activeCount} Child sessions
                 </span>
               </div>
             </div>
           </div>
 
-          {/* Parallel DAG chip */}
           <div className="hidden sm:flex items-center gap-1.5 pl-3 border-l border-white/10 text-xs text-slate-400 font-mono shrink-0">
-            <Activity className="w-3.5 h-3.5 text-teal-400 animate-pulse" />
-            <span className="text-teal-300 font-medium">Parallel DAG</span>
+            <Activity className={`w-3.5 h-3.5 ${isRunning ? 'text-teal-400 animate-pulse' : 'text-slate-500'}`} />
+            <span>{isRunning ? 'Active' : 'Inactive'}</span>
           </div>
         </div>
 
@@ -152,9 +155,6 @@ export const OrchestratorNode: React.FC<OrchestratorNodeProps> = ({
           title="Swarm DAG Output Pin"
         >
           <div className="w-1.5 h-1.5 rounded-full bg-purple-300 shadow-[0_0_6px_#C084FC]" />
-          {isRunning && (
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-60 pointer-events-none" />
-          )}
         </div>
       </div>
     </motion.div>
