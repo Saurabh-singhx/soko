@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { AgentSessionManager } = require('../packages/agent-remote/src');
+const { importTs } = require('./import_ts');
 
 globalThis.WebSocket = class { send() {} close() {} };
 globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
@@ -17,8 +18,8 @@ const write = (file, records) => {
 let passed = 0;
 async function test(name, fn) { await fn(); passed++; console.log(`✓ ${name}`); }
 async function main() {
-  const { SwarmDataEngine } = await import('../apps/desktop/src/features/swarm-visualizer/services/swarmDataEngine.ts');
-  const { connectionService } = await import('../apps/desktop/src/services/connection.ts');
+  const { SwarmDataEngine } = await importTs('../apps/desktop/src/features/swarm-visualizer/services/swarmDataEngine.ts', __dirname);
+  const { connectionService } = await importTs('../apps/desktop/src/services/connection.ts', __dirname);
   const manager = new AgentSessionManager({ brainDirs: [path.join(temp, 'brain')], presenceDirs: [],
     codexSessionDirs: [path.join(temp, 'codex')], claudeProjectDirs: [path.join(temp, 'claude')] });
   const codex = (id, cwd, parent) => [

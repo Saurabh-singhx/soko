@@ -11,6 +11,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const { importTs } = require('./import_ts');
 
 console.log('================================================================');
 console.log(' SOKO SWARM VISUALIZER & SUBAGENT CONTROLS TEST SUITE');
@@ -48,11 +49,11 @@ globalThis.WebSocket = class MockWebSocket {
 };
 
 async function main() {
-  // Dynamically import production swarmDataEngine
-  const engineModule = await import('../apps/desktop/src/features/swarm-visualizer/services/swarmDataEngine.ts');
+  // Dynamically import production swarmDataEngine (safely supporting all Node versions)
+  const engineModule = await importTs('../apps/desktop/src/features/swarm-visualizer/services/swarmDataEngine.ts', __dirname);
   const { extractSubagentRoleAndTask, resolveRoleVisuals, SwarmDataEngine } = engineModule;
 
-  const { connectionService } = await import('../apps/desktop/src/services/connection.ts');
+  const { connectionService } = await importTs('../apps/desktop/src/services/connection.ts', __dirname);
   connectionService.fetchDiscoveredAgentSessions = async () => [];
   connectionService.dispatchSessionPrompt = async () => true;
 
@@ -873,6 +874,7 @@ async function main() {
   console.log('\n================================================================');
   console.log(` RESULTS: ${passedTests} / ${totalTests} tests passed (100%)`);
   console.log('================================================================');
+  process.exit(0);
 }
 
 main().catch((err) => {
