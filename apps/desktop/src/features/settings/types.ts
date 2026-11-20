@@ -3,6 +3,7 @@ export type SettingsTabId =
   | 'pairing'
   | 'tokens'
   | 'cli'
+  | 'swarm'
   | 'files'
   | 'security'
   | 'mascot'

@@ -547,6 +547,7 @@ function openSettingsWindow(initialTab) {
     minHeight: 550,
     title: 'Soko Settings & Connection Hub',
     frame: true,
+    autoHideMenuBar: true,
     transparent: false,
     resizable: true,
     show: false,
@@ -559,6 +560,8 @@ function openSettingsWindow(initialTab) {
       nodeIntegration: false,
     },
   });
+
+  settingsWindow.removeMenu();
 
   settingsWindow.loadFile(DIST_PATH, { hash: 'settings' });
 
@@ -722,6 +725,7 @@ if (!gotTheLock) {
   });
 
   app.whenReady().then(async () => {
+    Menu.setApplicationMenu(null);
     await ensureBridgeServer();
     createIslandWindow();
     createTray();

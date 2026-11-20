@@ -1,84 +1,67 @@
-import React from 'react';
-import {
-  Sliders,
-  Smartphone,
-  Zap,
-  Terminal,
-  FolderDown,
-  ShieldCheck,
-  Sparkles,
-  RefreshCw,
-} from 'lucide-react';
+import React, { useState } from 'react';
+import { Sliders, Smartphone, Zap, Terminal, FolderDown, ShieldCheck, Sparkles, RefreshCw, Bot, Search, X, Power, Radio } from 'lucide-react';
 import { SettingsTabId } from '../types.ts';
+
+export const SETTINGS_NAVIGATION = [
+  { id: 'pairing', label: 'Devices & pairing', icon: Smartphone, group: 'Workspace', shortcut: '2', keywords: 'phone bluetooth wifi connect' },
+  { id: 'files', label: 'File transfers', icon: FolderDown, group: 'Workspace', shortcut: '5', keywords: 'storage downloads send apk' },
+  { id: 'cli', label: 'CLI & agents', icon: Terminal, group: 'Workspace', shortcut: '3', keywords: 'commands whitelist terminal' },
+  { id: 'swarm', label: 'Agent activity', icon: Bot, group: 'Workspace', shortcut: '4', keywords: 'swarm sub agents visualizer' },
+  { id: 'tokens', label: 'Token usage', icon: Zap, group: 'Workspace', shortcut: '9', keywords: 'ai telemetry tracker cost' },
+  { id: 'general', label: 'General', icon: Sliders, group: 'Preferences', shortcut: '1', keywords: 'startup system display' },
+  { id: 'mascot', label: 'Mascot & island', icon: Sparkles, group: 'Preferences', shortcut: '7', keywords: 'characters appearance idle' },
+  { id: 'security', label: 'Security', icon: ShieldCheck, group: 'Preferences', shortcut: '6', keywords: 'trust tunnel credentials' },
+  { id: 'updates', label: 'Updates', icon: RefreshCw, group: 'Preferences', shortcut: '8', keywords: 'version feed download' },
+] satisfies { id: SettingsTabId; label: string; icon: typeof Sliders; group: string; shortcut: string; keywords: string }[];
 
 interface SettingsSidebarProps {
   activeTab: SettingsTabId;
   onSelectTab: (tab: SettingsTabId) => void;
-  version?: string;
+  version: string;
+  isBridgeOnline: boolean;
+  deviceName?: string;
+  onQuit?: () => void;
 }
 
-export const SettingsSidebar: React.FC<SettingsSidebarProps> = ({
-  activeTab,
-  onSelectTab,
-  version = '1.0.3',
-}) => {
-  const tabs = [
-    { id: 'general' as const, label: 'General', icon: Sliders },
-    { id: 'pairing' as const, label: 'Device & Pairing', icon: Smartphone },
-    { id: 'tokens' as const, label: 'Token Telemetry', icon: Zap },
-    { id: 'cli' as const, label: 'CLI & Agents', icon: Terminal },
-    { id: 'files' as const, label: 'File Transfers', icon: FolderDown },
-    { id: 'security' as const, label: 'Zero-Trust Security', icon: ShieldCheck },
-    { id: 'mascot' as const, label: 'Mascot & Characters', icon: Sparkles },
-    { id: 'updates' as const, label: 'Updates', icon: RefreshCw },
-  ];
+export const SettingsSidebar: React.FC<SettingsSidebarProps> = ({ activeTab, onSelectTab, version, isBridgeOnline, deviceName, onQuit }) => {
+  const [query, setQuery] = useState('');
+  const matches = SETTINGS_NAVIGATION.filter(tab => `${tab.label} ${tab.keywords}`.toLowerCase().includes(query.trim().toLowerCase()));
 
   return (
-    <aside
-      className="w-56 shrink-0 bg-[#08090C] border-r border-white/[0.08] flex flex-col justify-between p-3 select-none"
-      role="tablist"
-      aria-orientation="vertical"
-      aria-label="Settings Navigation"
-    >
-      <div className="space-y-1">
-        <div className="px-2.5 py-2 mb-2 flex items-center gap-2">
-          <div className="w-6 h-6 rounded-lg bg-[#5E6AD2]/20 border border-[#5E6AD2]/40 flex items-center justify-center text-[#5E6AD2] shadow-[0_0_12px_rgba(94,106,210,0.3)]">
-            <Sparkles size={13} />
-          </div>
-          <div>
-            <span className="text-xs font-semibold text-white tracking-tight block">Soko Hub</span>
-            <span className="text-[10px] text-neutral-400 font-mono block">v{version}</span>
-          </div>
-        </div>
-
-        {tabs.map((tab) => {
-          const Icon = tab.icon;
-          const isActive = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              role="tab"
-              aria-selected={isActive}
-              tabIndex={isActive ? 0 : -1}
-              onClick={() => onSelectTab(tab.id)}
-              className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5E6AD2] ${
-                isActive
-                  ? 'bg-white/[0.08] text-white shadow-xs border border-white/[0.12]'
-                  : 'text-neutral-400 hover:text-white hover:bg-white/[0.04] border border-transparent'
-              }`}
-            >
-              <Icon
-                size={14}
-                className={isActive ? 'text-[#8A95FF]' : 'text-neutral-400'}
-              />
-              <span>{tab.label}</span>
-            </button>
-          );
-        })}
+    <aside className="settings-sidebar">
+      <div className="settings-brand">
+        <div className="settings-brand-mark" aria-hidden="true"><Sparkles size={22} /></div>
+        <div><span className="settings-brand-name">soko<span>.</span></span><p>Your connected workspace</p></div>
       </div>
-
-      <div className="p-2 border-t border-white/[0.06] text-[10px] text-neutral-400 font-mono">
-        <span>Desktop HUD Companion</span>
+      <div className="settings-search">
+        <Search size={16} aria-hidden="true" />
+        <input aria-label="Find a settings section" placeholder="Find a setting…" value={query} onChange={event => setQuery(event.target.value)} />
+        {query && <button onClick={() => setQuery('')} aria-label="Clear settings search"><X size={14} /></button>}
+      </div>
+      <nav className="settings-navigation" aria-label="Settings sections">
+        {['Workspace', 'Preferences'].map(group => {
+          const tabs = matches.filter(tab => tab.group === group);
+          if (!tabs.length) return null;
+          return <div className="settings-nav-group" key={group}>
+            <p className="settings-nav-label">{group}</p>
+            {tabs.map(({ id, label, icon: Icon, shortcut }) => (
+              <button key={id} className={`settings-nav-item ${activeTab === id ? 'is-active' : ''}`} aria-current={activeTab === id ? 'page' : undefined}
+                aria-controls="settings-content" onClick={() => onSelectTab(id)} title={`${label} · ${shortcut}`}>
+                <Icon size={18} aria-hidden="true" /><span>{label}</span><kbd>{shortcut}</kbd>
+              </button>
+            ))}
+          </div>;
+        })}
+        {!matches.length && <p className="settings-search-empty" role="status">No matching sections. Try “devices”, “files”, or “startup”.</p>}
+      </nav>
+      <div className="settings-sidebar-footer">
+        <button className="settings-connection" onClick={() => onSelectTab('pairing')} aria-label="View device connection">
+          <Radio size={18} className={isBridgeOnline ? 'text-emerald-400' : 'text-amber-300'} aria-hidden="true" />
+          <span><strong>{deviceName || (isBridgeOnline ? 'Ready to connect' : 'Bridge offline')}</strong><small>{deviceName ? 'Device connected' : (isBridgeOnline ? 'Pair your phone to get started' : 'Waiting for the local bridge')}</small></span>
+        </button>
+        <div className="settings-version"><span>Soko Desktop <span className="font-mono">v{version}</span></span>
+          {onQuit && <button onClick={onQuit} title="Quit Soko" aria-label="Quit Soko"><Power size={16} /></button>}
+        </div>
       </div>
     </aside>
   );

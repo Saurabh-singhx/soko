@@ -35,12 +35,13 @@ import {
   Cpu,
   Database,
   Layers,
-  Bot,
 } from 'lucide-react';
 import { connectionService } from '../../services/connection.ts';
 import { autoUpdateService, UpdateInfo, CURRENT_VERSION } from '../../services/updater.ts';
 import { ConnectionStatus, PairedDevice, DiscoveredDevice, FileTransferStatus, TransferHistoryItem, AiTokenSummary, AgentActivityStatus } from '../../types/index.ts';
 import { CharacterSelector } from '../../characters/CharacterSelector.tsx';
+import { SettingsSidebar, SETTINGS_NAVIGATION } from '../../features/settings/components/SettingsSidebar.tsx';
+import { SettingsTabId } from '../../features/settings/types.ts';
 import { SwarmVisualizerTab } from '../../features/swarm-visualizer/SwarmVisualizerTab.tsx';
 
 interface SettingsViewProps {
@@ -48,12 +49,12 @@ interface SettingsViewProps {
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
-  const [activeTab, setActiveTab] = useState<'general' | 'pairing' | 'tokens' | 'cli' | 'swarm' | 'files' | 'security' | 'mascot' | 'updates'>(() => {
+  const [activeTab, setActiveTab] = useState<SettingsTabId>(() => {
     try {
       const stored = localStorage.getItem('soko_settings_initial_tab');
       if (stored && ['general', 'pairing', 'tokens', 'cli', 'swarm', 'files', 'security', 'mascot', 'updates'].includes(stored)) {
         localStorage.removeItem('soko_settings_initial_tab');
-        return stored as any;
+        return stored as SettingsTabId;
       }
     } catch {}
     return 'pairing';
@@ -91,19 +92,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
         target &&
         (target.tagName === 'INPUT' ||
           target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
           target.isContentEditable)
       ) {
         return;
       }
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.key === '1') setActiveTab('general');
-      else if (e.key === '2') setActiveTab('pairing');
-      else if (e.key === '3') setActiveTab('cli');
-      else if (e.key === '4') setActiveTab('swarm');
-      else if (e.key === '5') setActiveTab('files');
-      else if (e.key === '6') setActiveTab('security');
-      else if (e.key === '7') setActiveTab('mascot');
-      else if (e.key === '8') setActiveTab('updates');
+      const section = SETTINGS_NAVIGATION.find(tab => tab.shortcut === e.key);
+      if (section) {
+        e.preventDefault();
+        setActiveTab(section.id);
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -156,6 +155,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
   const [pairingPin, setPairingPin] = useState(connectionService.getSasPin());
   const [copiedMobileUrl, setCopiedMobileUrl] = useState(false);
   const [isBridgeOnline, setIsBridgeOnline] = useState(connectionService.isBridgeOnline());
+  const [localIps, setLocalIps] = useState<string[]>(connectionService.getLocalIps());
   const [activeClients, setActiveClients] = useState(connectionService.getActiveClients());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeTransfer, setActiveTransfer] = useState<FileTransferStatus | null>(
@@ -316,9 +316,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
       setPairingPin(connectionService.getSasPin());
     });
 
-    const unsubBridge = connectionService.subscribeBridge((online, count) => {
+    const unsubBridge = connectionService.subscribeBridge((online, count, ips) => {
       setIsBridgeOnline(online);
       setActiveClients(count);
+      setLocalIps(ips);
     });
 
     const unsubTransfer = connectionService.onTransfer((transfer) => {
@@ -414,201 +415,45 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
 
   const [downloadDir, setDownloadDir] = useState('~/Downloads/SokoFiles');
 
+  const contentRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    contentRef.current?.scrollTo({ top: 0 });
+  }, [activeTab]);
+
+  const mobileIp = localIps[0];
+  const mobileUrl = isBridgeOnline && mobileIp ? `http://${mobileIp}:8766` : null;
+  const [copyUrlError, setCopyUrlError] = useState(false);
+  const section = SETTINGS_NAVIGATION.find(tab => tab.id === activeTab)!;
+
   return (
-    <div className="flex h-screen w-screen bg-[#08090A] text-linear-text-primary font-sans select-none overflow-hidden antialiased">
-      {/* Linear.app Sidebar Navigation */}
-      <aside className="w-60 bg-[#0C0D0E] border-r border-white/5 flex flex-col justify-between p-3.5">
-        <div>
-          {/* Header & Logo */}
-          <div className="flex items-center justify-between mb-5 px-2 pt-1">
-            <div className="flex items-center gap-2.5">
-              <div className="w-5 h-5 rounded-md bg-[#5E6AD2] flex items-center justify-center font-bold text-white text-[11px] shadow-sm">
-                S
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs font-semibold text-linear-text-primary tracking-tight">SOKO</span>
-                <span className="text-[10px] font-mono text-linear-text-tertiary">v0.1.0</span>
-              </div>
-            </div>
+    <div className="settings-shell">
+      <SettingsSidebar
+        activeTab={activeTab}
+        onSelectTab={(tab) => {
+          setActiveTab(tab);
+          if (tab === 'updates' && !updateInfo && !isCheckingUpdate) {
+            setIsCheckingUpdate(true);
+            autoUpdateService.checkForUpdates()
+              .then(setUpdateInfo)
+              .finally(() => setIsCheckingUpdate(false));
+          }
+        }}
+        version={CURRENT_VERSION}
+        isBridgeOnline={isBridgeOnline}
+        deviceName={connectionStatus === 'connected' ? pairedDevice?.name : undefined}
+        onQuit={window.electronAPI?.quitApp ? () => window.electronAPI?.quitApp?.() : undefined}
+      />
+      <div className="settings-workspace">
+        <header className="settings-topbar">
+          <div className="settings-breadcrumb"><span>Settings</span><span aria-hidden="true">/</span><strong>{section.label}</strong></div>
+          <div className="settings-topbar-actions">
+            <span className={`settings-bridge-status ${isBridgeOnline ? 'is-online' : ''}`} role="status">
+              <span aria-hidden="true" />{isBridgeOnline ? 'Bridge online' : 'Bridge offline'}
+            </span>
+            {onClose && <button onClick={onClose} className="settings-close" title="Close settings" aria-label="Close settings"><X size={18} /></button>}
           </div>
-
-          {/* Nav Categories */}
-          <div className="px-2 mb-1.5 text-[10px] font-medium tracking-wider text-linear-text-tertiary uppercase">
-            Workspace
-          </div>
-
-          <nav className="flex flex-col gap-0.5">
-            <button
-              onClick={() => setActiveTab('general')}
-              className={`flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs font-medium tracking-tight transition-colors ${
-                activeTab === 'general'
-                  ? 'bg-white/[0.08] text-white shadow-hairline'
-                  : 'text-linear-text-secondary hover:text-white hover:bg-white/[0.04]'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <Sliders size={14} className={activeTab === 'general' ? 'text-[#5E6AD2]' : 'text-linear-text-tertiary'} />
-                <span>General & Startup</span>
-              </div>
-              <span className="linear-kbd">1</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('pairing')}
-              className={`flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs font-medium tracking-tight transition-colors ${
-                activeTab === 'pairing'
-                  ? 'bg-white/[0.08] text-white shadow-hairline'
-                  : 'text-linear-text-secondary hover:text-white hover:bg-white/[0.04]'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <Smartphone size={14} className={activeTab === 'pairing' ? 'text-[#5E6AD2]' : 'text-linear-text-tertiary'} />
-                <span>Device Pairing</span>
-              </div>
-              <span className="linear-kbd">2</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('tokens')}
-              className={`flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs font-medium tracking-tight transition-colors ${
-                activeTab === 'tokens'
-                  ? 'bg-white/[0.08] text-white shadow-hairline'
-                  : 'text-linear-text-secondary hover:text-white hover:bg-white/[0.04]'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <Zap size={14} className={activeTab === 'tokens' ? 'text-amber-400' : 'text-linear-text-tertiary'} />
-                <span>AI Token Tracker</span>
-              </div>
-              <span className="text-[10px] font-mono text-emerald-400 font-semibold px-1 rounded bg-emerald-500/10 border border-emerald-500/20">Native</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('cli')}
-              className={`flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs font-medium tracking-tight transition-colors ${
-                activeTab === 'cli'
-                  ? 'bg-white/[0.08] text-white shadow-hairline'
-                  : 'text-linear-text-secondary hover:text-white hover:bg-white/[0.04]'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <Terminal size={14} className={activeTab === 'cli' ? 'text-[#5E6AD2]' : 'text-linear-text-tertiary'} />
-                <span>CLI Whitelist</span>
-              </div>
-              <span className="linear-kbd">3</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('swarm')}
-              className={`flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs font-medium tracking-tight transition-colors ${
-                activeTab === 'swarm'
-                  ? 'bg-white/[0.08] text-white shadow-hairline'
-                  : 'text-linear-text-secondary hover:text-white hover:bg-white/[0.04]'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <Bot size={14} className={activeTab === 'swarm' ? 'text-[#2DD4BF]' : 'text-linear-text-tertiary'} />
-                <span>Swarm & Sub-Agents</span>
-              </div>
-              <span className="linear-kbd">4</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('files')}
-              className={`flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs font-medium tracking-tight transition-colors ${
-                activeTab === 'files'
-                  ? 'bg-white/[0.08] text-white shadow-hairline'
-                  : 'text-linear-text-secondary hover:text-white hover:bg-white/[0.04]'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <FolderDown size={14} className={activeTab === 'files' ? 'text-[#5E6AD2]' : 'text-linear-text-tertiary'} />
-                <span>File Storage</span>
-              </div>
-              <span className="linear-kbd">5</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('security')}
-              className={`flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs font-medium tracking-tight transition-colors ${
-                activeTab === 'security'
-                  ? 'bg-white/[0.08] text-white shadow-hairline'
-                  : 'text-linear-text-secondary hover:text-white hover:bg-white/[0.04]'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <ShieldCheck size={14} className={activeTab === 'security' ? 'text-[#5E6AD2]' : 'text-linear-text-tertiary'} />
-                <span>Security & Tunnel</span>
-              </div>
-              <span className="linear-kbd">6</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('mascot')}
-              className={`flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs font-medium tracking-tight transition-colors ${
-                activeTab === 'mascot'
-                  ? 'bg-white/[0.08] text-white shadow-hairline'
-                  : 'text-linear-text-secondary hover:text-white hover:bg-white/[0.04]'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <Sparkles size={14} className={activeTab === 'mascot' ? 'text-[#5E6AD2]' : 'text-linear-text-tertiary'} />
-                <span>Mascot & Island</span>
-              </div>
-              <span className="linear-kbd">7</span>
-            </button>
-
-            <button
-              onClick={() => {
-                setActiveTab('updates');
-                if (!updateInfo) {
-                  setIsCheckingUpdate(true);
-                  autoUpdateService.checkForUpdates().then((res) => {
-                    setUpdateInfo(res);
-                    setIsCheckingUpdate(false);
-                  });
-                }
-              }}
-              className={`flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs font-medium tracking-tight transition-colors ${
-                activeTab === 'updates'
-                  ? 'bg-white/[0.08] text-white shadow-hairline'
-                  : 'text-linear-text-secondary hover:text-white hover:bg-white/[0.04]'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <RefreshCw size={14} className={activeTab === 'updates' ? 'text-[#5E6AD2]' : 'text-linear-text-tertiary'} />
-                <span>Auto-Updates & Feed</span>
-              </div>
-              <span className="linear-kbd">8</span>
-            </button>
-          </nav>
-        </div>
-
-        {/* Footer Link / Hardware Status */}
-        <div className="bg-[#121417] border border-white/5 rounded-lg p-2.5 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-linear-green animate-pulse" />
-            <div className="flex flex-col text-[10px]">
-              <span className="font-medium text-linear-text-primary tracking-tight">BLE Connected</span>
-              <span className="text-linear-text-tertiary font-mono">192.168.43.1 Ready</span>
-            </div>
-          </div>
-          <Sliders size={12} className="text-linear-text-tertiary" />
-        </div>
-
-        {/* Sidebar In-App Quit Button */}
-        <button
-          onClick={() => (window as any).electronAPI?.quitApp?.()}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/25 transition-all text-xs font-semibold active:scale-[0.98] shadow-sm"
-          title="Quit Soko Application"
-        >
-          <Power size={13} />
-          <span>Quit Soko App</span>
-        </button>
-      </aside>
-
-      {/* Main Content View */}
-      <main className={`flex-1 relative bg-[#08090A] ${activeTab === 'swarm' ? 'p-0 overflow-hidden flex flex-col h-full' : 'overflow-y-auto p-9'}`}>
+        </header>
+        <main id="settings-content" aria-label={section.label} ref={contentRef} className={`settings-content ${activeTab === 'swarm' ? 'settings-content-swarm' : ''}`}>
         {/* Globally Available Hidden File Input (Mounts for all tabs including Pairing Quick Actions) */}
         <input
           ref={fileInputRef}
@@ -616,21 +461,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
           className="hidden"
           onChange={handleFileSelect}
         />
-        {onClose && (
-          <button
-            onClick={onClose}
-            className={`absolute z-30 p-1.5 rounded-md hover:bg-white/5 text-linear-text-secondary hover:text-white transition-colors ${
-              activeTab === 'swarm' ? 'top-3 right-4 bg-[#141824]/80 border border-white/10 backdrop-blur-sm' : 'top-6 right-6'
-            }`}
-            title="Close Settings"
-          >
-            <X size={16} />
-          </button>
-        )}
-
         {/* General & Startup Tab */}
         {activeTab === 'general' && (
-          <div className="max-w-xl flex flex-col gap-6">
+          <div className="settings-page flex flex-col gap-6">
             <div>
               <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">System & Startup</h2>
               <p className="text-xs text-linear-text-secondary mt-1">
@@ -662,6 +495,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                     autoStartEnabled ? 'bg-[#5E6AD2]' : 'bg-white/10'
                   }`}
                   role="switch"
+                  aria-label="Launch Soko on system startup"
                   aria-checked={autoStartEnabled}
                 >
                   <span
@@ -746,32 +580,41 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
 
         {/* Device Pairing Tab */}
         {activeTab === 'pairing' && (
-          <div className="max-w-xl flex flex-col gap-6">
+          <div className="settings-page flex flex-col gap-6">
             <div>
-              <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">Device Pairing & Link Status</h2>
+              <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">Bring your devices together</h2>
               <p className="text-xs text-linear-text-secondary mt-1">
-                Pair your mobile phone using Bluetooth Low Energy and local network discovery. Verify connection authenticity via the 6-digit confirmation code.
+                Connect your phone to share files, mirror notifications, and control your workspace. Everything stays on your local network.
               </p>
             </div>
 
+            {connectionStatus !== 'connected' && (
+              <ol className="settings-pairing-steps" aria-label="How to pair your phone">
+                <li><Wifi size={19} aria-hidden="true" /><div><strong>Join the same network</strong><span>Use Wi-Fi or a mobile hotspot.</span></div></li>
+                <li><Smartphone size={19} aria-hidden="true" /><div><strong>Open Soko on your phone</strong><span>Use the app or the browser link below.</span></div></li>
+                <li><ShieldCheck size={19} aria-hidden="true" /><div><strong>Verify your pairing code</strong><span>Check that both devices match.</span></div></li>
+              </ol>
+            )}
+
             {/* Confirmation Code Card */}
-            <div className="linear-card rounded-lg p-6 flex flex-col items-center justify-center gap-3">
-              <span className="text-[10px] font-medium text-linear-text-tertiary uppercase tracking-wider font-mono">
-                Short Authentication String (SAS PIN)
+            <div className="linear-card settings-pairing-code rounded-lg p-6 flex flex-col items-center justify-center gap-3">
+              <span className="text-xs font-medium text-linear-text-tertiary uppercase tracking-wider font-mono">
+                Your pairing code
               </span>
               <div className="flex items-center gap-3">
-                <div className="text-2xl font-mono font-medium tracking-widest text-linear-text-primary bg-[#08090A] px-6 py-2.5 rounded-md border border-white/10 shadow-inner">
+                <div className="text-3xl font-mono font-medium tracking-[0.25em] select-all text-linear-text-primary bg-[#08090A] px-6 py-2.5 rounded-md border border-white/10 shadow-inner">
                   {pairingPin}
                 </div>
                 <button
                   onClick={() => setPairingPin(connectionService.regeneratePin())}
-                  title="Regenerate Pairing PIN"
+                  title="Generate a new pairing code"
+                  aria-label="Generate a new pairing code"
                   className="p-2.5 rounded-md bg-white/5 hover:bg-white/10 text-linear-text-secondary hover:text-white border border-white/10 transition-colors"
                 >
                   <RefreshCw size={14} />
                 </button>
               </div>
-              <p className="text-[11px] text-linear-text-secondary text-center max-w-sm">
+              <p className="text-[13px] text-linear-text-secondary text-center max-w-sm">
                 Confirm that this 6-digit number matches the PIN displayed in the Soko mobile companion app.
               </p>
             </div>
@@ -789,7 +632,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                         <h3 className="text-xs font-semibold text-linear-text-primary tracking-tight">
                           {pairedDevice.name}
                         </h3>
-                        <div className="flex items-center gap-2 text-[11px] text-linear-text-secondary mt-0.5 font-mono">
+                        <div className="flex items-center gap-2 text-[13px] text-linear-text-secondary mt-0.5 font-mono">
                           <span className="text-linear-green flex items-center gap-1 font-medium">
                             <CheckCircle2 size={11} /> Paired & Authenticated
                           </span>
@@ -829,7 +672,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                         <span className="text-xs font-semibold text-white">Other Nearby Devices</span>
                         <button
                           onClick={() => setShowDiscoveredWhileConnected(false)}
-                          className="text-[11px] text-linear-text-tertiary hover:text-white"
+                          className="text-[13px] text-linear-text-tertiary hover:text-white"
                         >
                           Hide
                         </button>
@@ -857,12 +700,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                                   Open Soko Mobile
                                 </span>
-                                <span className="text-[10px] text-linear-text-tertiary font-mono">({dev.model || (dev.transport === 'wifi' ? 'Wi-Fi LAN' : dev.transport)})</span>
-                                <span className="text-[10px] text-linear-text-tertiary font-mono">{dev.rssi} dBm</span>
+                                <span className="text-xs text-linear-text-tertiary font-mono">({dev.model || (dev.transport === 'wifi' ? 'Wi-Fi LAN' : dev.transport)})</span>
+                                <span className="text-xs text-linear-text-tertiary font-mono">{dev.rssi} dBm</span>
                               </div>
                               <button
                                 onClick={() => setSelectedDeviceToPair(dev)}
-                                className="px-2.5 py-0.5 rounded bg-[#5E6AD2]/25 hover:bg-[#5E6AD2] text-white text-[11px] font-medium transition-colors"
+                                className="px-2.5 py-0.5 rounded bg-[#5E6AD2]/25 hover:bg-[#5E6AD2] text-white text-[13px] font-medium transition-colors"
                               >
                                 Pair
                               </button>
@@ -871,7 +714,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                         </div>
                       ) : (
                         <div className="py-2 text-center text-xs text-linear-text-tertiary">
-                          No Soko Mobile devices open nearby. Open Soko Mobile on your phone to connect.
+                          Open Soko Mobile on your phone and make sure both devices are on the same Wi-Fi network. Then scan again.
                         </div>
                       )}
                     </div>
@@ -890,7 +733,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                       <ArrowLeft size={13} />
                       <span>Back to available devices</span>
                     </button>
-                    <span className="text-[10px] font-mono font-medium text-amber-400 bg-amber-500/15 px-2 py-0.5 rounded border border-amber-500/30">
+                    <span className="text-xs font-mono font-medium text-amber-400 bg-amber-500/15 px-2 py-0.5 rounded border border-amber-500/30">
                       SAS Pair Verification
                     </span>
                   </div>
@@ -919,7 +762,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                             Open Soko Mobile
                           </span>
                         </div>
-                        <span className="text-[11px] text-linear-text-secondary font-mono">
+                        <span className="text-[13px] text-linear-text-secondary font-mono">
                           {selectedDeviceToPair.model || (selectedDeviceToPair.transport === 'wifi' ? 'Wi-Fi LAN' : selectedDeviceToPair.transport)}
                         </span>
                       </div>
@@ -956,13 +799,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
 
                   {/* 6-Digit PIN Display Card */}
                   <div className="bg-black/50 border border-white/[0.08] rounded-xl p-3 flex flex-col items-center justify-center gap-1 text-center">
-                    <span className="text-[10px] uppercase font-mono tracking-wider text-linear-text-tertiary flex items-center gap-1">
+                    <span className="text-xs uppercase font-mono tracking-wider text-linear-text-tertiary flex items-center gap-1">
                       <ShieldCheck size={12} className="text-emerald-400" /> Verify SAS Pairing PIN
                     </span>
                     <span className="text-lg font-mono font-bold tracking-widest text-emerald-400 bg-emerald-500/10 px-4 py-1 rounded-lg border border-emerald-500/25 my-0.5">
                       {pairingPin}
                     </span>
-                    <span className="text-[11px] text-linear-text-secondary">
+                    <span className="text-[13px] text-linear-text-secondary">
                       Enter this 6-digit PIN on your phone in the Soko Mobile companion app
                     </span>
                   </div>
@@ -993,7 +836,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                   <div className="flex items-center justify-between pb-2 border-b border-white/[0.06]">
                     <div className="flex items-center gap-2">
                       <h4 className="text-xs font-semibold text-white tracking-tight">Available Devices</h4>
-                      <span className="text-[10px] font-mono text-linear-text-tertiary">
+                      <span className="text-xs font-mono text-linear-text-tertiary">
                         ({discoveredDevices.length} found)
                       </span>
                     </div>
@@ -1011,7 +854,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                     <div className="flex flex-col items-center justify-center py-8 gap-2 text-center">
                       <RefreshCw size={20} className="text-[#5E6AD2] animate-spin" />
                       <span className="text-xs font-medium text-white">Scanning for Soko Mobile devices...</span>
-                      <span className="text-[11px] text-linear-text-tertiary">
+                      <span className="text-[13px] text-linear-text-tertiary">
                         Looking for devices with Soko Mobile companion open on local Wi-Fi
                       </span>
                     </div>
@@ -1071,9 +914,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                         <Smartphone size={18} />
                       </div>
                       <div className="max-w-[340px]">
-                        <h5 className="text-xs font-semibold text-white">No Soko Mobile devices open nearby</h5>
-                        <p className="text-[11px] text-linear-text-secondary mt-1">
-                          No Soko Mobile devices open nearby. Open Soko Mobile on your phone to connect.
+                        <h5 className="text-xs font-semibold text-white">Your phone will appear here</h5>
+                        <p className="text-[13px] text-linear-text-secondary mt-1">
+                          Open Soko Mobile on your phone and make sure both devices are on the same Wi-Fi network. Then scan again.
                         </p>
                       </div>
                       <button
@@ -1097,26 +940,34 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                   <div className={`w-2 h-2 rounded-full ${isBridgeOnline ? 'bg-linear-green animate-pulse' : 'bg-linear-red'}`} />
                   <Globe size={14} className="text-[#5E6AD2]" />
                   <h3 className="text-xs font-semibold text-white tracking-tight">
-                    Universal Connection Bridge (Node.js)
+                    Connect from your browser
                   </h3>
                 </div>
-                <span className="text-[10px] font-mono text-linear-text-secondary bg-white/[0.04] px-2 py-0.5 rounded border border-white/5">
+                <span className="text-xs font-mono text-linear-text-secondary bg-white/[0.04] px-2 py-0.5 rounded border border-white/5">
                   Port 8766 • {activeClients} Client{activeClients !== 1 ? 's' : ''} Active
                 </span>
               </div>
 
-              <p className="text-[11px] text-linear-text-secondary">
-                To test from your Android phone on local Wi-Fi, open this URL in your mobile browser or enter it into the Soko Mobile Companion APK:
+              <p className="text-[13px] text-linear-text-secondary">
+                Open this address on your phone while connected to the same network. No app installation needed.
               </p>
 
               <div className="flex items-center justify-between bg-black/50 px-3 py-2 rounded-md border border-white/10 font-mono text-xs">
-                <span className="text-white select-all">http://{connectionService.getLocalIps()[0] || '192.168.31.210'}:8766</span>
+                <span className="text-white select-all break-all">{mobileUrl || 'Waiting for a local network address…'}</span>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => {
-                      navigator.clipboard?.writeText(`http://${connectionService.getLocalIps()[0] || '192.168.31.210'}:8766`);
-                      setCopiedMobileUrl(true);
-                      setTimeout(() => setCopiedMobileUrl(false), 2000);
+                    disabled={!mobileUrl}
+                    aria-label={copiedMobileUrl ? 'Address copied' : 'Copy companion address'}
+                    onClick={async () => {
+                      if (!mobileUrl) return;
+                      try {
+                        await navigator.clipboard.writeText(mobileUrl);
+                        setCopiedMobileUrl(true);
+                        setCopyUrlError(false);
+                        setTimeout(() => setCopiedMobileUrl(false), 2000);
+                      } catch {
+                        setCopyUrlError(true);
+                      }
                     }}
                     className="p-1 rounded hover:bg-white/10 text-linear-text-tertiary hover:text-white transition-colors"
                     title="Copy URL"
@@ -1124,30 +975,35 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                     {copiedMobileUrl ? <Check size={13} className="text-linear-green" /> : <Copy size={13} />}
                   </button>
                   <button
-                    onClick={() => window.open(`http://${connectionService.getLocalIps()[0] || '192.168.31.210'}:8766`, '_blank')}
-                    className="flex items-center gap-1 text-[11px] text-linear-brand hover:underline font-mono"
+                    disabled={!mobileUrl}
+                    onClick={() => mobileUrl && window.open(mobileUrl, '_blank', 'noopener,noreferrer')}
+                    className="flex items-center gap-1 text-[13px] text-linear-brand hover:underline font-mono"
                   >
                     Open App <ExternalLink size={10} />
                   </button>
                 </div>
               </div>
 
+              <p className="text-xs text-linear-text-secondary" role="status">
+                {copyUrlError ? 'Could not copy. Select the address above and copy it manually.' : copiedMobileUrl ? 'Address copied. Open it in your phone’s browser.' : !mobileUrl ? 'The address will appear when the local bridge is available.' : ''}
+              </p>
+
               {/* Quick Workstation Controls */}
               <div className="pt-2 border-t border-white/5 flex flex-col gap-2">
-                <span className="text-[10px] font-mono uppercase tracking-wider text-linear-text-tertiary">
+                <span className="text-xs font-mono uppercase tracking-wider text-linear-text-tertiary">
                   Quick Workstation Actions
                 </span>
                 <div className="grid grid-cols-3 gap-2">
                   <button
                     onClick={() => connectionService.executeCliCommand('sysinfo')}
-                    className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded bg-white/5 hover:bg-white/10 text-[11px] text-white border border-white/5 transition-colors"
+                    className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded bg-white/5 hover:bg-white/10 text-[13px] text-white border border-white/5 transition-colors"
                     title="Run system telemetry diagnostics"
                   >
                     <Terminal size={12} className="text-linear-brand" /> System Specs
                   </button>
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded bg-white/5 hover:bg-white/10 text-[11px] text-white border border-white/5 transition-colors"
+                    className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded bg-white/5 hover:bg-white/10 text-[13px] text-white border border-white/5 transition-colors"
                     title="Select and send any file to mobile device"
                   >
                     <FolderDown size={12} className="text-linear-green" /> Send File
@@ -1155,7 +1011,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                   <button
                     onClick={() => connectionService.sendTestTransfer('soko-v1.0.0-release.apk')}
                     title="Transmit companion APK package to mobile device"
-                    className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded bg-white/5 hover:bg-white/10 text-[11px] text-white border border-white/5 transition-colors"
+                    className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded bg-white/5 hover:bg-white/10 text-[13px] text-white border border-white/5 transition-colors"
                   >
                     <Smartphone size={12} className="text-linear-brand" /> Send APK
                   </button>
@@ -1169,7 +1025,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                         <FolderDown size={13} className="text-linear-green shrink-0" />
                         <span className="font-mono text-white truncate">{activeTransfer.filename}</span>
                       </div>
-                      <span className="font-mono text-[11px] text-linear-text-secondary">
+                      <span className="font-mono text-[13px] text-linear-text-secondary">
                         {activeTransfer.status === 'active'
                           ? `${Math.round((activeTransfer.bytesDownloaded / Math.max(activeTransfer.totalBytes, 1)) * 100)}%`
                           : activeTransfer.status.toUpperCase()}
@@ -1189,7 +1045,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                         }}
                       />
                     </div>
-                    <div className="flex items-center justify-between text-[10px] text-linear-text-tertiary font-mono">
+                    <div className="flex items-center justify-between text-xs text-linear-text-tertiary font-mono">
                       <span>{(activeTransfer.bytesDownloaded / 1_048_576).toFixed(1)} / {(activeTransfer.totalBytes / 1_048_576).toFixed(1)} MB</span>
                       {activeTransfer.status === 'active' && (
                         <button
@@ -1209,12 +1065,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
 
         {/* AI Token Tracker Tab (100% Native) */}
         {activeTab === 'tokens' && (
-          <div className="max-w-2xl flex flex-col gap-6">
+          <div className="settings-page flex flex-col gap-6">
             <div className="flex items-center justify-between">
               <div>
                 <div className="flex items-center gap-2">
                   <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">AI Token Tracker</h2>
-                  <span className="text-[10px] font-mono font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/25 px-2 py-0.5 rounded-full">
+                  <span className="text-xs font-mono font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/25 px-2 py-0.5 rounded-full">
                     100% Native
                   </span>
                 </div>
@@ -1237,7 +1093,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
             <div className="grid grid-cols-4 gap-3">
               <div className="linear-card rounded-lg p-3.5 flex flex-col gap-1 border border-amber-500/20 bg-amber-500/[0.03]">
                 <div className="flex items-center justify-between text-amber-400">
-                  <span className="text-[10px] uppercase font-mono tracking-wider font-semibold">Today's Tokens</span>
+                  <span className="text-xs uppercase font-mono tracking-wider font-semibold">Today's Tokens</span>
                   <Zap size={14} />
                 </div>
                 <span className="text-xl font-bold font-mono tracking-tight text-white mt-1">
@@ -1249,7 +1105,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                       : tokenSummary.todayTokens.toLocaleString()
                   ) : '...'}
                 </span>
-                <span className="text-[10px] text-linear-text-tertiary">
+                <span className="text-xs text-linear-text-tertiary">
                   {tokenSummary?.todayFreshTokens !== undefined
                     ? `${(tokenSummary.todayFreshTokens / 1000000).toFixed(1)}M fresh • ${(tokenSummary.todayCachedTokens! / 1000000).toFixed(1)}M cached`
                     : 'Active coding today'}
@@ -1258,7 +1114,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
 
               <div className="linear-card rounded-lg p-3.5 flex flex-col gap-1 border border-indigo-500/20 bg-indigo-500/[0.03]">
                 <div className="flex items-center justify-between text-[#7C88E8]">
-                  <span className="text-[10px] uppercase font-mono tracking-wider font-semibold">All-Time Total</span>
+                  <span className="text-xs uppercase font-mono tracking-wider font-semibold">All-Time Total</span>
                   <Cpu size={14} />
                 </div>
                 <span className="text-xl font-bold font-mono tracking-tight text-white mt-1">
@@ -1268,7 +1124,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                       : `${(tokenSummary.totalTokens / 1000000).toFixed(1)}M`
                   ) : '...'}
                 </span>
-                <span className="text-[10px] text-linear-text-tertiary">
+                <span className="text-xs text-linear-text-tertiary">
                   {tokenSummary?.freshTokens !== undefined
                     ? `${(tokenSummary.freshTokens / 1000000).toFixed(1)}M net interactive`
                     : 'Total lifetime context'}
@@ -1277,7 +1133,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
 
               <div className="linear-card rounded-lg p-3.5 flex flex-col gap-1 border border-emerald-500/20 bg-emerald-500/[0.03]">
                 <div className="flex items-center justify-between text-emerald-400">
-                  <span className="text-[10px] uppercase font-mono tracking-wider font-semibold">Context Cached</span>
+                  <span className="text-xs uppercase font-mono tracking-wider font-semibold">Context Cached</span>
                   <Database size={14} />
                 </div>
                 <span className="text-xl font-bold font-mono tracking-tight text-white mt-1">
@@ -1292,20 +1148,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                     })()
                   ) : '...'}
                 </span>
-                <span className="text-[10px] text-emerald-400/90 font-mono flex items-center gap-1">
+                <span className="text-xs text-emerald-400/90 font-mono flex items-center gap-1">
                   {tokenSummary?.cacheHitRate !== undefined ? `${tokenSummary.cacheHitRate}% cache hit efficiency` : 'Context cache reads'}
                 </span>
               </div>
 
               <div className="linear-card rounded-lg p-3.5 flex flex-col gap-1 border border-purple-500/20 bg-purple-500/[0.03]">
                 <div className="flex items-center justify-between text-purple-400">
-                  <span className="text-[10px] uppercase font-mono tracking-wider font-semibold">Total Sessions</span>
+                  <span className="text-xs uppercase font-mono tracking-wider font-semibold">Total Sessions</span>
                   <Layers size={14} />
                 </div>
                 <span className="text-xl font-bold font-mono tracking-tight text-white mt-1">
                   {tokenSummary ? (tokenSummary.totalSessions || tokenSummary.assistants.reduce((acc, a) => acc + (a.sessionsCount || 0), 0)) : '...'}
                 </span>
-                <span className="text-[10px] text-linear-text-tertiary">Across all assistants</span>
+                <span className="text-xs text-linear-text-tertiary">Across all assistants</span>
               </div>
             </div>
 
@@ -1330,7 +1186,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                         </span>
                       )}
                     </h3>
-                    <p className="text-[11px] text-linear-text-secondary mt-0.5">
+                    <p className="text-[13px] text-linear-text-secondary mt-0.5">
                       Monitors active CLI agent turns and dynamically morphs Soko bot eyes with distinctive colors and animations.
                     </p>
                   </div>
@@ -1354,19 +1210,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                     <span className="text-white font-semibold">{agentActivity.name}:</span>
                     <span className="text-linear-text-secondary">{agentActivity.detail || 'Working...'}</span>
                   </div>
-                  <span className="text-[10px] text-linear-text-tertiary">Live Detection</span>
+                  <span className="text-xs text-linear-text-tertiary">Live Detection</span>
                 </div>
               )}
 
               {/* Interactive Test & Preview Controls */}
               <div className="pt-2 border-t border-white/[0.06] flex flex-col gap-2">
-                <span className="text-[10px] uppercase font-mono tracking-wider text-linear-text-tertiary font-semibold">
+                <span className="text-xs uppercase font-mono tracking-wider text-linear-text-tertiary font-semibold">
                   Test & Preview Eye Animations
                 </span>
                 <div className="grid grid-cols-4 gap-2">
                   <button
                     onClick={() => connectionService.simulateAgentActivity('antigravity', 'Analyzing AST & running tools', 7000)}
-                    className="px-2.5 py-1.5 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/25 text-[11px] font-semibold flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-sm"
+                    className="px-2.5 py-1.5 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/25 text-[13px] font-semibold flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-sm"
                   >
                     <span className="w-2 h-2 rounded-full bg-sky-400" />
                     <span>Antigravity Eyes</span>
@@ -1374,7 +1230,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
 
                   <button
                     onClick={() => connectionService.simulateAgentActivity('codex', 'Streaming code generation', 7000)}
-                    className="px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/25 text-[11px] font-semibold flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-sm"
+                    className="px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/25 text-[13px] font-semibold flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-sm"
                   >
                     <span className="w-2 h-2 rounded-full bg-emerald-400" />
                     <span>Codex Eyes</span>
@@ -1382,7 +1238,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
 
                   <button
                     onClick={() => connectionService.simulateAgentActivity('claude', 'Reasoning & contemplation', 7000)}
-                    className="px-2.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/25 text-[11px] font-semibold flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-sm"
+                    className="px-2.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/25 text-[13px] font-semibold flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-sm"
                   >
                     <span className="w-2 h-2 rounded-full bg-amber-400" />
                     <span>Claude Eyes</span>
@@ -1390,7 +1246,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
 
                   <button
                     onClick={() => connectionService.simulateAgentActivity(null, '', 0)}
-                    className="px-2.5 py-1.5 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] text-linear-text-secondary hover:text-white border border-white/[0.08] text-[11px] font-medium flex items-center justify-center gap-1 active:scale-95 transition-all"
+                    className="px-2.5 py-1.5 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] text-linear-text-secondary hover:text-white border border-white/[0.08] text-[13px] font-medium flex items-center justify-center gap-1 active:scale-95 transition-all"
                   >
                     <RotateCcw size={11} />
                     <span>Reset Eyes</span>
@@ -1425,7 +1281,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                             {assistant.cacheHitRate}% cached
                           </span>
                         )}
-                        <span className="text-[10px] font-mono text-linear-text-secondary bg-white/[0.05] px-2 py-0.5 rounded border border-white/5">
+                        <span className="text-xs font-mono text-linear-text-secondary bg-white/[0.05] px-2 py-0.5 rounded border border-white/5">
                           {assistant.sessionsCount} session{assistant.sessionsCount !== 1 ? 's' : ''}
                         </span>
                       </div>
@@ -1453,7 +1309,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                       />
                     </div>
 
-                    <div className="grid grid-cols-3 gap-2 pt-1 text-[10px] font-mono text-linear-text-secondary">
+                    <div className="grid grid-cols-3 gap-2 pt-1 text-xs font-mono text-linear-text-secondary">
                       <div className="bg-black/40 p-2 rounded border border-white/[0.04]">
                         <span className="text-linear-text-tertiary block text-[9px]">INPUTS</span>
                         <span className="text-white font-medium">
@@ -1506,7 +1362,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                             <h5 className="text-xs font-semibold text-white truncate max-w-[360px]">
                               {session.summary}
                             </h5>
-                            <div className="flex items-center gap-2 text-[10px] text-linear-text-tertiary font-mono mt-0.5">
+                            <div className="flex items-center gap-2 text-xs text-linear-text-tertiary font-mono mt-0.5">
                               <span>{session.assistant}</span>
                               <span>•</span>
                               <span>{session.model || 'AI Model'}</span>
@@ -1534,7 +1390,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
 
         {/* CLI Whitelist Tab */}
         {activeTab === 'cli' && (
-          <div className="max-w-2xl flex flex-col gap-6">
+          <div className="settings-page flex flex-col gap-6">
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">CLI Agent Whitelist</h2>
@@ -1562,11 +1418,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <h3 className="text-xs font-medium text-linear-text-primary tracking-tight truncate">{cmd.title}</h3>
-                        <span className="text-[10px] font-mono text-linear-text-tertiary bg-white/[0.04] px-1.5 py-0.5 rounded border border-white/5">
+                        <span className="text-xs font-mono text-linear-text-tertiary bg-white/[0.04] px-1.5 py-0.5 rounded border border-white/5">
                           {cmd.id}
                         </span>
                       </div>
-                      <div className="text-[11px] font-mono text-linear-text-secondary truncate mt-0.5">
+                      <div className="text-[13px] font-mono text-linear-text-secondary truncate mt-0.5">
                         $ {cmd.program} {cmd.args}
                       </div>
                     </div>
@@ -1582,7 +1438,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                         )
                       }
                       title="Toggle Biometric Requirement"
-                      className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border transition-colors ${
+                      className={`flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium border transition-colors ${
                         cmd.requiresBiometrics
                           ? 'bg-[#5E6AD2]/10 border-[#5E6AD2]/30 text-[#8B95EC]'
                           : 'bg-white/[0.04] border-white/10 text-linear-text-tertiary hover:text-white'
@@ -1614,11 +1470,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
 
         {/* File Storage Tab */}
         {activeTab === 'files' && (
-          <div className="max-w-xl flex flex-col gap-6">
+          <div className="settings-page flex flex-col gap-6">
             <div>
-              <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">Hotspot File Conduit & Transmit</h2>
+              <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">File transfers</h2>
               <p className="text-xs text-linear-text-secondary mt-1">
-                Select or drag APKs and project files to transmit to the Mobile Companion over local Wi-Fi / Hotspot LAN at up to 42 MB/s.
+                Send files directly to your phone over Wi-Fi or a hotspot. Choose a file below or drop it into the transfer area.
               </p>
             </div>
 
@@ -1649,7 +1505,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 Click to browse or drag & drop files here
               </h3>
               <p className="text-xs text-linear-text-secondary mt-1 max-w-sm">
-                Select any <span className="font-mono text-white">.apk</span> or binary payload from your desktop filesystem to transmit to your phone.
+                Share documents, photos, videos, or apps with your connected phone.
               </p>
 
               <div className="flex items-center gap-3 mt-4" onClick={(e) => e.stopPropagation()}>
@@ -1690,7 +1546,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                       <span className="text-xs font-semibold text-white font-mono truncate max-w-xs">
                         {activeTransfer.filename}
                       </span>
-                      <span className="text-[10px] text-linear-text-secondary font-mono">
+                      <span className="text-xs text-linear-text-secondary font-mono">
                         {(activeTransfer.bytesDownloaded / 1_048_576).toFixed(1)} MB / {(activeTransfer.totalBytes / 1_048_576).toFixed(1)} MB
                         {activeTransfer.status === 'active' && ` • ${(activeTransfer.speedBytesPerSec / 1_048_576).toFixed(1)} MB/s`}
                       </span>
@@ -1713,7 +1569,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                     )}
                     {(activeTransfer.status === 'cancelled' || activeTransfer.status === 'failed') && (
                       <div className="flex items-center gap-2">
-                        <span className={`flex items-center gap-1 text-[11px] font-mono px-2 py-0.5 rounded ${
+                        <span className={`flex items-center gap-1 text-[13px] font-mono px-2 py-0.5 rounded ${
                           activeTransfer.status === 'cancelled'
                             ? 'text-linear-amber bg-linear-amber/10 border border-linear-amber/20'
                             : 'text-linear-red bg-linear-red/10 border border-linear-red/20'
@@ -1760,7 +1616,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 <div className="flex items-center gap-2">
                   <History size={16} className="text-[#5E6AD2]" />
                   <h3 className="text-xs font-semibold text-white tracking-tight">Transfer History</h3>
-                  <span className="text-[10px] font-mono text-linear-text-secondary bg-white/[0.04] px-1.5 py-0.5 rounded border border-white/5">
+                  <span className="text-xs font-mono text-linear-text-secondary bg-white/[0.04] px-1.5 py-0.5 rounded border border-white/5">
                     {transferHistory.length} {transferHistory.length === 1 ? 'file' : 'files'}
                   </span>
                 </div>
@@ -1768,7 +1624,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => connectionService.openTransfersFolder()}
-                    className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-linear-text-secondary hover:text-white bg-white/5 hover:bg-white/10 border border-white/5 transition-colors"
+                    className="flex items-center gap-1.5 px-2 py-1 rounded text-[13px] text-linear-text-secondary hover:text-white bg-white/5 hover:bg-white/10 border border-white/5 transition-colors"
                     title="Open transfers folder in file manager"
                   >
                     <FolderDown size={12} className="text-linear-green" />
@@ -1781,7 +1637,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                         setHistoryNotice('Transfer history cleared. All physical files remain safely on disk.');
                         setTimeout(() => setHistoryNotice(null), 4000);
                       }}
-                      className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-linear-text-tertiary hover:text-linear-red hover:bg-linear-red/10 border border-transparent hover:border-linear-red/20 transition-colors"
+                      className="flex items-center gap-1.5 px-2 py-1 rounded text-[13px] text-linear-text-tertiary hover:text-linear-red hover:bg-linear-red/10 border border-transparent hover:border-linear-red/20 transition-colors"
                       title="Clear history list (Files on disk will NOT be deleted)"
                     >
                       <Trash2 size={12} />
@@ -1792,9 +1648,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
               </div>
 
               {/* Explanatory Safety Notice Banner */}
-              <div className="flex items-center justify-between bg-black/40 px-3 py-2 rounded-md border border-white/5 text-[11px] text-linear-text-tertiary">
+              <div className="flex items-center justify-between bg-black/40 px-3 py-2 rounded-md border border-white/5 text-[13px] text-linear-text-tertiary">
                 <span>Deleting history only removes the log record. Underlying files on disk are preserved.</span>
-                <span className="text-[10px] font-mono text-linear-green bg-linear-green/10 px-1.5 py-0.5 rounded border border-linear-green/20">
+                <span className="text-xs font-mono text-linear-green bg-linear-green/10 px-1.5 py-0.5 rounded border border-linear-green/20">
                   Zero Data Loss
                 </span>
               </div>
@@ -1811,7 +1667,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 <div className="flex flex-col items-center justify-center py-6 text-center text-linear-text-tertiary gap-1">
                   <Clock size={20} className="opacity-40 mb-1" />
                   <span className="text-xs font-medium text-linear-text-secondary">No transfer history yet</span>
-                  <span className="text-[11px]">Transfers completed with mobile companion will appear here.</span>
+                  <span className="text-[13px]">Transfers completed with mobile companion will appear here.</span>
                 </div>
               ) : (
                 <div className="flex flex-col gap-2 max-h-72 overflow-y-auto pr-1">
@@ -1837,7 +1693,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                               {item.direction === 'sent' ? 'Sent to Phone' : 'Received from Phone'}
                             </span>
                           </div>
-                          <div className="flex items-center gap-2 text-[10px] text-linear-text-tertiary font-mono mt-0.5">
+                          <div className="flex items-center gap-2 text-xs text-linear-text-tertiary font-mono mt-0.5">
                             <span>{(item.totalBytes / 1_048_576).toFixed(2)} MB</span>
                             <span>•</span>
                             <span>{new Date(item.completedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
@@ -1854,7 +1710,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                       <div className="flex items-center gap-1.5 shrink-0">
                         <button
                           onClick={() => connectionService.openTransferredFile(item.filename)}
-                          className="flex items-center gap-1 px-2 py-1 rounded bg-[#5E6AD2]/15 hover:bg-[#5E6AD2]/25 text-[#5E6AD2] border border-[#5E6AD2]/30 text-[10px] font-medium transition-colors"
+                          className="flex items-center gap-1 px-2 py-1 rounded bg-[#5E6AD2]/15 hover:bg-[#5E6AD2]/25 text-[#5E6AD2] border border-[#5E6AD2]/30 text-xs font-medium transition-colors"
                           title="Open file in default desktop app"
                         >
                           <ExternalLink size={10} /> Open
@@ -1904,7 +1760,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                   Browse
                 </button>
               </div>
-              <p className="text-[11px] text-linear-text-tertiary">
+              <p className="text-[13px] text-linear-text-tertiary">
                 Incoming files are strictly constrained to this directory with automatic path traversal defenses.
               </p>
             </div>
@@ -1913,7 +1769,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
 
         {/* Security Tab */}
         {activeTab === 'security' && (
-          <div className="max-w-xl flex flex-col gap-6">
+          <div className="settings-page flex flex-col gap-6">
             <div>
               <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">Security & Zero-Trust Hardening</h2>
               <p className="text-xs text-linear-text-secondary mt-1">
@@ -1935,17 +1791,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                   <Lock size={15} className="text-emerald-400" />
                   <h3 className="text-xs font-semibold text-white">Transport Layer Security (TLS / HTTPS & WSS)</h3>
                 </div>
-                <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                <span className="px-2 py-0.5 rounded text-xs font-mono font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
                   Active (Strict)
                 </span>
               </div>
-              <p className="text-[11px] text-linear-text-secondary">
+              <p className="text-[13px] text-linear-text-secondary">
                 Ephemeral local X.509 certificate generated on initialization. Protects all REST queries, audio streams, and WebSocket frames against LAN packet sniffers.
               </p>
               <div className="bg-black/40 border border-white/5 rounded-lg p-2.5 flex items-center justify-between gap-2">
                 <div className="flex flex-col gap-0.5 overflow-hidden">
-                  <span className="text-[10px] font-mono uppercase text-linear-text-tertiary">SHA-256 Certificate Fingerprint</span>
-                  <span className="text-[11px] font-mono text-linear-text-primary truncate">
+                  <span className="text-xs font-mono uppercase text-linear-text-tertiary">SHA-256 Certificate Fingerprint</span>
+                  <span className="text-[13px] font-mono text-linear-text-primary truncate">
                     {certFingerprint || 'Calculating on bridge startup...'}
                   </span>
                 </div>
@@ -1969,7 +1825,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
             <div className="linear-card rounded-lg p-4 flex flex-col gap-2.5 text-xs">
               <div className="flex justify-between py-1.5 border-b border-white/5">
                 <span className="text-linear-text-secondary">OS Trust Store Path</span>
-                <span className="font-mono text-linear-text-primary text-[11px]">~/.config/soko/trust_store.json (0600)</span>
+                <span className="font-mono text-linear-text-primary text-[13px]">~/.config/soko/trust_store.json (0600)</span>
               </div>
               <div className="flex justify-between py-1.5 border-b border-white/5">
                 <span className="text-linear-text-secondary">PIN Brute-Force Defense</span>
@@ -1998,7 +1854,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-xs font-semibold text-rose-300">Revoke All Paired Sessions</h3>
-                  <p className="text-[11px] text-linear-text-secondary mt-0.5">
+                  <p className="text-[13px] text-linear-text-secondary mt-0.5">
                     Wipes all stored credentials, disconnects active companions, regenerates SAS PIN, and terminates all bearer tokens immediately.
                   </p>
                 </div>
@@ -2037,7 +1893,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
 
         {/* Mascot & Island Tab */}
         {activeTab === 'mascot' && (
-          <div className="max-w-xl flex flex-col gap-6">
+          <div className="settings-page flex flex-col gap-6">
             <div>
               <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">Mascot & Dynamic Island</h2>
               <p className="text-xs text-linear-text-secondary mt-1">
@@ -2054,7 +1910,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
               <div className="flex items-center justify-between pb-3 border-b border-white/5">
                 <div>
                   <h3 className="text-xs font-semibold text-white">Idle Mascot Orb Mode</h3>
-                  <p className="text-[11px] text-linear-text-tertiary mt-0.5">
+                  <p className="text-[13px] text-linear-text-tertiary mt-0.5">
                     When inactive, removes controls and leaves an enlarged, living Soko mascot orb.
                   </p>
                 </div>
@@ -2089,7 +1945,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                         localStorage.setItem('soko_idle_timeout', String(opt.val));
                         window.dispatchEvent(new Event('soko:idle-settings-changed'));
                       }}
-                      className={`py-2 px-2 rounded-lg text-center font-mono text-[11px] transition-all border ${
+                      className={`py-2 px-2 rounded-lg text-center font-mono text-[13px] transition-all border ${
                         mascotIdleTimeout === opt.val
                           ? 'bg-[#5E6AD2] text-white font-semibold border-[#5E6AD2] shadow-[0_0_12px_rgba(94,106,210,0.4)]'
                           : 'bg-white/[0.03] hover:bg-white/[0.08] text-white/70 hover:text-white border-white/[0.08]'
@@ -2105,7 +1961,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
               <div className="pt-3 border-t border-white/5 flex items-center justify-between">
                 <div>
                   <h3 className="text-xs font-semibold text-white">Interactive Eye Cursor Tracking</h3>
-                  <p className="text-[11px] text-linear-text-tertiary mt-0.5">
+                  <p className="text-[13px] text-linear-text-tertiary mt-0.5">
                     Soko's eyes and head organically follow your cursor as you move across the Island HUD.
                   </p>
                 </div>
@@ -2116,6 +1972,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                     cursorTrackingEnabled ? 'bg-[#5E6AD2]' : 'bg-white/10'
                   }`}
                   role="switch"
+                  aria-label="Interactive eye cursor tracking"
                   aria-checked={cursorTrackingEnabled}
                   title="Toggle reactive cursor eye tracking"
                 >
@@ -2128,7 +1985,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 </button>
               </div>
 
-              <div className="bg-white/[0.02] border border-white/5 rounded-lg p-3 text-[11px] text-linear-text-tertiary flex flex-col gap-1.5 font-mono">
+              <div className="bg-white/[0.02] border border-white/5 rounded-lg p-3 text-[13px] text-linear-text-tertiary flex flex-col gap-1.5 font-mono">
                 <div className="flex items-center gap-1.5 text-white/90 font-sans font-medium">
                   <Sparkles size={12} className="text-emerald-400" />
                   <span>How Ambient Idle Mode Works:</span>
@@ -2144,7 +2001,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
 
         {/* Auto-Updates & Gist Feed Tab */}
         {activeTab === 'updates' && (
-          <div className="max-w-xl flex flex-col gap-6">
+          <div className="settings-page flex flex-col gap-6">
             <div>
               <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">Auto-Updates & Version Feed</h2>
               <p className="text-xs text-linear-text-secondary mt-1">
@@ -2162,7 +2019,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-semibold text-white tracking-tight">Soko Desktop</span>
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                      <span className="px-2 py-0.5 rounded-full text-xs font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                         v{CURRENT_VERSION}
                       </span>
                     </div>
@@ -2201,14 +2058,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                           <span>New Update Available: <b>v{updateInfo.latestVersion}</b></span>
                         </div>
                         {updateInfo.releaseDate && (
-                          <span className="text-[10px] text-linear-text-tertiary font-mono">
+                          <span className="text-xs text-linear-text-tertiary font-mono">
                             {new Date(updateInfo.releaseDate).toLocaleDateString()}
                           </span>
                         )}
                       </div>
 
                       {updateInfo.releaseNotes && (
-                        <p className="text-xs text-white/80 whitespace-pre-line bg-black/30 p-2.5 rounded border border-white/5 font-mono text-[11px]">
+                        <p className="text-xs text-white/80 whitespace-pre-line bg-black/30 p-2.5 rounded border border-white/5 font-mono text-[13px]">
                           {updateInfo.releaseNotes}
                         </p>
                       )}
@@ -2245,7 +2102,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                         <div className="mt-2 flex flex-col gap-2 p-2.5 rounded bg-black/40 border border-white/10">
                           {nativeUpdateStatus.status === 'downloading' && (
                             <div className="flex flex-col gap-1.5">
-                              <div className="flex justify-between text-[11px] font-mono text-linear-text-secondary">
+                              <div className="flex justify-between text-[13px] font-mono text-linear-text-secondary">
                                 <span>Downloading Background Delta Update...</span>
                                 <span>{nativeUpdateStatus.percent || 0}%</span>
                               </div>
@@ -2331,7 +2188,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 </div>
               </div>
 
-              <div className="bg-black/30 border border-white/5 rounded-lg p-3 text-[11px] text-linear-text-tertiary flex flex-col gap-1.5 font-mono">
+              <div className="bg-black/30 border border-white/5 rounded-lg p-3 text-[13px] text-linear-text-tertiary flex flex-col gap-1.5 font-mono">
                 <span className="text-white/80 font-medium font-sans">How Gist Secrets Work:</span>
                 <p>1. In GitHub repo Settings &gt; Secrets, add <span className="text-linear-brand">GIST_SECRET</span> (a Personal Access Token with gist scope).</p>
                 <p>2. On every build, GitHub Actions automatically updates the Gist with new binary links.</p>
@@ -2340,7 +2197,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
             </div>
           </div>
         )}
-      </main>
+        </main>
+      </div>
     </div>
   );
 };
