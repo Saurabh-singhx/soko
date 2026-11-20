@@ -372,10 +372,11 @@ class AgentSessionManager {
           const sourceId = provider === 'claude' && subagentParent
             ? path.basename(entry.name, '.jsonl')
             : rawId;
-          const sessionId = `${provider}-${sourceId}`;
+          const sessionId = provider === 'claude' && subagentParent
+            ? `${subagentParent}-${sourceId}` : `${provider}-${sourceId}`;
           if (seen.has(sessionId)) continue;
           seen.add(sessionId);
-          const isLocked = !meta.isComplete && ageMs <= 60000;
+          const isLocked = !meta.isComplete && ageMs <= 20 * 60 * 1000;
           const status = isLocked ? 'working' : 'completed';
           const workspace = meta.workspace || '';
           const workspaceName = workspace ? path.basename(workspace) : '';
@@ -401,6 +402,7 @@ class AgentSessionManager {
             isSubagent,
             parentSessionId: normalizedParentId,
             role,
+            model: meta.model,
           };
           this.discoveredFiles.set(sessionId, { provider, transcriptPath: full, rawId: sourceId });
           sessions.push(session);
@@ -447,6 +449,7 @@ class AgentSessionManager {
       let isSubagent = false;
       let tokensUsed;
       let isComplete = false;
+      let model;
 
       for (const item of records) {
         const payload = item.payload || item.data || {};
@@ -456,16 +459,18 @@ class AgentSessionManager {
           if (item.type === 'session_meta') {
             sessionId = payload.id || sessionId;
             workspace = payload.cwd || workspace;
-            parentSessionId = payload.parent_session_id || payload.parentSessionId || parentSessionId;
+            const spawn = payload.source?.subagent?.thread_spawn;
+            parentSessionId = payload.parent_session_id || payload.parentSessionId || spawn?.parent_thread_id || parentSessionId;
             isSubagent = Boolean(payload.is_subagent || payload.isSubagent || parentSessionId);
-            role = payload.role || payload.agent_role || role;
+            role = payload.role || payload.agent_role || spawn?.agent_role || role;
           }
+          model = payload.model || model;
           workspace = workspace || payload.cwd || '';
           if (payload.parent_session_id || payload.parentSessionId) {
             parentSessionId = payload.parent_session_id || payload.parentSessionId;
             isSubagent = true;
           }
-          if (item.type === 'token_count') {
+          if (item.type === 'token_count' || (item.type === 'event_msg' && payload.type === 'token_count')) {
             const usage = payload.info?.total_token_usage || payload.usage || {};
             if (Number.isFinite(usage.total_tokens)) tokensUsed = usage.total_tokens;
           }
@@ -489,7 +494,8 @@ class AgentSessionManager {
           sessionId = item.sessionId || item.session_id || sessionId;
           workspace = item.cwd || workspace;
           parentSessionId = item.parentSessionId || item.parent_session_id || parentSessionId;
-          isSubagent = Boolean(item.isSidechain || item.isSubagent || item.agentId || parentSessionId);
+          isSubagent = isSubagent || Boolean(item.isSidechain || item.isSubagent || item.agentId || parentSessionId);
+          model = message.model || model;
           role = item.agentName || item.role || role;
           if (message.usage) {
             const input = Number(message.usage.input_tokens || 0);
@@ -513,7 +519,7 @@ class AgentSessionManager {
           }
         }
       }
-      const data = { sessionId, workspace, taskSummary, detail, role, parentSessionId, isSubagent, tokensUsed, isComplete };
+      const data = { sessionId, workspace, taskSummary, detail, role, parentSessionId, isSubagent, tokensUsed, isComplete, model };
       this.jsonlMetadataCache.set(filePath, { mtimeMs: stat.mtimeMs, size: stat.size, data });
       return data;
     } catch {
@@ -973,17 +979,17 @@ class AgentSessionManager {
             }
           }
         }
+        const metadata = this._peekJsonlMetadata(paths.transcriptPath, stat, paths.provider);
+        const isWorking = !metadata.isComplete && Date.now() - stat.mtimeMs <= 20 * 60 * 1000;
         if (current) {
-          const stat = fs.statSync(paths.transcriptPath);
-          current.status = Date.now() - stat.mtimeMs <= 15000 ? 'running' : 'completed';
+          current.status = isWorking ? 'running' : 'completed';
           turns.push(current);
         }
-        const stat = fs.statSync(paths.transcriptPath);
         return {
           success: true,
           sessionId,
           totalTurns: turns.length,
-          isWorking: Date.now() - stat.mtimeMs <= 15000,
+          isWorking,
           isWaiting: false,
           turns: turns.slice(-30),
         };
@@ -1218,6 +1224,10 @@ class AgentSessionManager {
     const paths = this.resolveSessionPaths(sessionId);
     if (!paths) {
       throw new Error(`Cannot dispatch prompt: Session '${sessionId}' not found.`);
+    }
+
+    if (paths.provider === 'codex' || paths.provider === 'claude') {
+      throw new Error(`${paths.provider} sessions are observation-only. Continue in the original terminal.`);
     }
 
     // Edge Case: If another command execution for this session is active, queue it

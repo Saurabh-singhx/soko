@@ -5,7 +5,6 @@ import {
   Check,
   Trash2,
   Terminal,
-  Bot,
   Play,
 } from 'lucide-react';
 import { SwarmState, SwarmAgent } from './types';
@@ -14,6 +13,8 @@ import { TopBarControls } from './components/TopBarControls';
 import { SwarmCanvas } from './components/SwarmCanvas';
 import { InspectorPanel } from './components/InspectorPanel';
 import { TraceWaterfall } from './components/TraceWaterfall';
+import { ActivityBoard } from './components/ActivityBoard';
+import './activity.css';
 
 export interface SwarmVisualizerTabProps {
   className?: string;
@@ -37,11 +38,31 @@ export const SwarmVisualizerTab: React.FC<SwarmVisualizerTabProps> = ({
   // Swarm Engine telemetry state
   const [state, setState] = useState<SwarmState>(() => swarmDataEngine.getState());
   const [filterQuery, setFilterQuery] = useState('');
-  const [isWaterfallCollapsed, setIsWaterfallCollapsed] = useState(false);
+  const [isWaterfallCollapsed, setIsWaterfallCollapsed] = useState(true);
   const [showTerminalLogs, setShowTerminalLogs] = useState(false);
   const [isMobileInspectorOpen, setIsMobileInspectorOpen] = useState(false);
   const [copiedLogs, setCopiedLogs] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
+  const drawerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const drawer = drawerRef.current;
+    if (!isMobileInspectorOpen || !drawer || !drawer.getClientRects().length) return;
+    const previous = document.activeElement as HTMLElement | null;
+    drawer.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { setIsMobileInspectorOpen(false); swarmDataEngine.selectAgent(null); }
+      if (event.key === 'Tab') {
+        const items = [...drawer.querySelectorAll<HTMLElement>('button:not(:disabled), input, select, textarea, [tabindex="0"]')]
+          .filter(el => el.getClientRects().length > 0);
+        const first = items[0], last = items[items.length - 1];
+        if (event.shiftKey && (document.activeElement === first || document.activeElement === drawer)) {
+          event.preventDefault(); last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }
+    };
+    drawer.addEventListener('keydown', onKey);
+    return () => { drawer.removeEventListener('keydown', onKey); previous?.focus(); };
+  }, [isMobileInspectorOpen]);
 
   // Auto-scroll logs when open and new logs arrive
   useEffect(() => {
@@ -111,7 +132,7 @@ export const SwarmVisualizerTab: React.FC<SwarmVisualizerTabProps> = ({
 
   return (
     <div
-      className={`w-full h-full flex flex-col bg-[#08090A] text-slate-100 select-none overflow-hidden relative ${className}`}
+      className={`agent-activity w-full h-full flex flex-col bg-[#08090A] text-slate-100 select-none overflow-hidden relative ${className}`}
     >
       {/* Top Bar Controls & Telemetry Stats */}
       <TopBarControls
@@ -132,20 +153,23 @@ export const SwarmVisualizerTab: React.FC<SwarmVisualizerTabProps> = ({
         onToggleLogsModal={() => setShowTerminalLogs((prev) => !prev)}
         sessions={state.availableSessions}
         activeSessionId={state.selectedSessionId || state.activeSession?.sessionId || null}
-        onSelectSession={(sessionId) => swarmDataEngine.loadSession(sessionId)}
+        onSelectSession={(sessionId) => swarmDataEngine.loadSession(sessionId, { mode: 'history' })}
         viewMode={state.viewMode}
         hasBackgroundLiveAgent={state.hasBackgroundLiveAgent}
         onSwitchToLive={() => swarmDataEngine.setViewMode('live')}
         onToggleViewMode={(mode) => swarmDataEngine.setViewMode(mode)}
       />
 
+      {state.telemetryError && <div className="activity-connection-error" role="status">{state.telemetryError}</div>}
       {/* Main Workspace Layout */}
       <div className="flex-1 flex flex-col min-h-0 relative overflow-hidden">
         {/* Workspace Upper Region: Canvas & Inspector */}
         <div className="flex-1 flex min-h-0 relative overflow-hidden">
           {/* Central Multi-Agent Graph Canvas */}
           <div className="flex-1 min-w-0 h-full relative overflow-hidden bg-[#0A0D14]">
-            <SwarmCanvas
+            {state.viewMode === 'live' ? <ActivityBoard agents={allAgents} selectedAgentId={activeAgent?.id || null}
+              onSelectAgent={handleSelectAgent} query={filterQuery} onClearSearch={() => handleFilterChange('')}
+              isRunning={state.isRunning} isLoading={!state.lastSyncedAt} error={state.telemetryError} /> : <SwarmCanvas
               clusters={state.clusters}
               stats={state.stats}
               selectedAgentId={activeAgent?.id || null}
@@ -164,30 +188,7 @@ export const SwarmVisualizerTab: React.FC<SwarmVisualizerTabProps> = ({
               viewMode={state.viewMode}
               onToggleClusterCollapse={(clusterId) => swarmDataEngine.toggleClusterCollapse(clusterId)}
               className="w-full h-full"
-            />
-
-            {/* Mobile / Compact Inspector Toggle Floating Button */}
-            <div className="xl:hidden absolute bottom-4 right-4 z-20">
-              <button
-                type="button"
-                onClick={() => {
-                  if (isMobileInspectorOpen) {
-                    setIsMobileInspectorOpen(false);
-                  } else {
-                    if (!activeAgent && allAgents[0]) {
-                      swarmDataEngine.selectAgent(allAgents[0].id);
-                    }
-                    setIsMobileInspectorOpen(true);
-                  }
-                }}
-                disabled={allAgents.length === 0}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#5E6AD2] hover:bg-[#6875E8] text-white shadow-lg text-xs font-medium transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
-                title={allAgents.length === 0 ? 'No agents are available to inspect' : 'Open the agent inspector'}
-              >
-                <Bot size={14} />
-                <span>{isMobileInspectorOpen ? 'Hide Inspector' : 'Show Inspector'}</span>
-              </button>
-            </div>
+            />}
 
             {/* Live Paused Overlay Banner if user explicitly paused live monitoring */}
             {!state.isRunning && state.viewMode === 'live' && (
@@ -207,7 +208,7 @@ export const SwarmVisualizerTab: React.FC<SwarmVisualizerTabProps> = ({
           </div>
 
           {/* Desktop Right Inspector Panel (docked on screens >= lg) */}
-          <div className="hidden xl:block w-80 2xl:w-96 shrink-0 min-w-0 h-full border-l border-white/[0.08] bg-[#0E121B] overflow-y-auto">
+          {activeAgent && <div className="activity-inspector-dock w-80 shrink-0 min-w-0 h-full border-l border-white/[0.08] bg-[#0E121B] overflow-y-auto">
             <InspectorPanel
               agent={activeAgent}
               allAgents={allAgents}
@@ -220,31 +221,18 @@ export const SwarmVisualizerTab: React.FC<SwarmVisualizerTabProps> = ({
               viewMode={state.viewMode}
               className="h-full border-none"
             />
-          </div>
+          </div>}
 
           {/* Compact Slide-Over Inspector Drawer (screens < xl) */}
           {isMobileInspectorOpen && (
-            <div className="xl:hidden fixed inset-0 z-40 flex justify-end">
+            <div className="activity-inspector-overlay fixed inset-0 z-[60] flex justify-end">
               {/* Backdrop */}
               <div
                 className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
                 onClick={handleCloseInspector}
               />
               {/* Drawer Container */}
-              <div className="relative w-full max-w-md h-full bg-[#0E121B] shadow-2xl z-50 flex flex-col border-l border-white/10">
-                <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-[#141824]">
-                  <div className="flex items-center gap-2 text-xs font-semibold text-white">
-                    <Bot size={15} className="text-[#2DD4BF]" />
-                    <span>Agent Inspector</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleCloseInspector}
-                    className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-white/5"
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
+              <div ref={drawerRef} role="dialog" aria-modal="true" aria-label="Agent inspector" tabIndex={-1} className="relative w-full max-w-md h-full bg-[#0E121B] shadow-2xl z-50 flex flex-col border-l border-white/10">
                 <div className="flex-1 overflow-y-auto">
                   <InspectorPanel
                     agent={activeAgent}
@@ -265,7 +253,7 @@ export const SwarmVisualizerTab: React.FC<SwarmVisualizerTabProps> = ({
         </div>
 
         {/* Workspace Bottom Region: Trace Waterfall Timeline */}
-        <div className="shrink-0 border-t border-white/[0.08] bg-[#0E121B] z-10">
+        {state.viewMode === 'history' && <div className="shrink-0 border-t border-white/[0.08] bg-[#0E121B] z-10">
           <TraceWaterfall
             cursorMs={state.timeTravelCursorMs}
             maxTimeMs={state.maxTimeMs}
@@ -278,7 +266,7 @@ export const SwarmVisualizerTab: React.FC<SwarmVisualizerTabProps> = ({
             onToggleCollapse={() => setIsWaterfallCollapsed((prev) => !prev)}
             className="w-full"
           />
-        </div>
+        </div>}
       </div>
 
       {/* Raw Terminal Logs Viewer Modal / Drawer */}

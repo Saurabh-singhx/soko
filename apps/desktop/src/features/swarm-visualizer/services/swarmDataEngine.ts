@@ -440,10 +440,12 @@ export class SwarmDataEngine {
   private unsubNotification: (() => void) | null = null;
   private unsubActivity: (() => void) | null = null;
   private transcriptCache: Map<string, { mtimeMs: number; turns: TranscriptTurn[] }> = new Map();
+  private revision = 0;
   public isSyncing = false;
   public hasPendingSync = false;
 
   // Real token rate tracking (delta tokens over elapsed time, no mock rate)
+  private tokenSessionKey = '';
   private lastTokenCheckTime = 0;
   private lastTotalTokens = 0;
   private currentCalculatedTokenRate = 0;
@@ -569,6 +571,8 @@ export class SwarmDataEngine {
       this.unsubActivity = null;
     }
 
+    this.revision++;
+    this.hasPendingSync = false;
     this.currentCalculatedTokenRate = 0;
 
     this.state = {
@@ -591,6 +595,7 @@ export class SwarmDataEngine {
   public setViewMode(mode: 'live' | 'history'): void {
     if (this.state.viewMode === mode && this.state.isLiveSource === (mode === 'live')) return;
 
+    this.revision++;
     if (mode === 'live') {
       this.state = {
         ...this.state,
@@ -631,6 +636,11 @@ export class SwarmDataEngine {
    * Load any discovered session (root or subagent) for detailed inspection and replay.
    */
   public async loadSession(sessionId: string, options: { mode?: 'live' | 'history' } = {}): Promise<void> {
+    const revision = ++this.revision;
+    if (options.mode) {
+      this.state = { ...this.state, viewMode: options.mode, isLiveSource: options.mode === 'live' };
+      this.notify();
+    }
     try {
       // 1. Fetch transcript for targeted session
       const transcriptRes = await connectionService.fetchSessionTranscript(sessionId);
@@ -659,7 +669,7 @@ export class SwarmDataEngine {
       const childSessions = this.collectDescendantSessions(
         availableSessions,
         sessionId,
-        activeSession.isSubagent !== true && availableSessions.filter((s) => !s.isSubagent).length === 1
+        false
       );
 
       // 4. Fetch transcripts for child subagents
@@ -668,7 +678,7 @@ export class SwarmDataEngine {
         childSessions.map(async (child) => {
           try {
             const cached = this.transcriptCache.get(child.sessionId);
-            if (cached && cached.mtimeMs === child.mtimeMs && cached.turns.length > 0) {
+            if (cached && cached.mtimeMs === child.mtimeMs) {
               childTranscripts.set(child.sessionId, cached.turns);
               return;
             }
@@ -687,10 +697,11 @@ export class SwarmDataEngine {
       );
 
       // 5. Build SwarmAgents from child sessions
-      const agents: SwarmAgent[] = childSessions.map((child) => {
+      if (revision !== this.revision) return;
+      const agents: SwarmAgent[] = [this.mapSessionToSwarmAgent(activeSession, turns), ...childSessions.map((child) => {
         const cTurns = childTranscripts.get(child.sessionId) || [];
         return this.mapSessionToSwarmAgent(child, cTurns);
-      });
+      })];
 
       // 6. Dynamically group subagents into N clusters
       const clusters = this.groupSubagentsIntoClusters(agents);
@@ -858,8 +869,13 @@ export class SwarmDataEngine {
 
     this.state = {
       ...this.state,
-      selectedAgentId: agentId,
+      selectedAgentId: selectedAgent?.id || null,
       selectedAgent,
+      ...(this.state.viewMode === 'live' && selectedAgent?.sessionId ? {
+        activeSession: this.state.availableSessions.find(s => s.sessionId === selectedAgent.sessionId),
+        selectedSessionId: selectedAgent.sessionId,
+        turns: this.transcriptCache.get(selectedAgent.sessionId)?.turns || [],
+      } : {}),
     };
     this.notify();
   }
@@ -1220,9 +1236,11 @@ export class SwarmDataEngine {
       return;
     }
     this.isSyncing = true;
+    const revision = this.revision;
 
     try {
-      const rawSessions = await connectionService.fetchDiscoveredAgentSessions();
+      const rawSessions = await connectionService.fetchDiscoveredAgentSessions(true);
+      if (revision !== this.revision) return;
       const availableSessions = this.mapRawSessionsToSummaries(rawSessions || []);
 
       const now = Date.now();
@@ -1230,34 +1248,28 @@ export class SwarmDataEngine {
       const activeSessions = availableSessions.filter((session) => this.isSessionRecentlyActive(session, now));
       const activeSessionIds = new Set(activeSessions.map((session) => session.sessionId));
       const liveRoots = this.getLiveRootSessions(availableSessions, activeSessionIds);
-      const hasActive = liveRoots.length > 0;
+      const hasActive = activeSessions.length > 0;
 
-      // Handle History Mode with Background Live Agent detection
       if (this.state.viewMode === 'history') {
-        const hasBackgroundLiveAgent = hasActive;
-        if (this.state.hasBackgroundLiveAgent !== hasBackgroundLiveAgent) {
-          this.state = {
-            ...this.state,
-            availableSessions,
-            hasBackgroundLiveAgent,
-            stats: {
-              ...this.state.stats,
-              hasBackgroundLiveAgent,
-            },
-          };
-          this.notify();
-        }
+        this.updateStateAndRecomputeStats({ availableSessions, hasBackgroundLiveAgent: hasActive,
+          telemetryError: null, lastSyncedAt: now });
         return;
       }
 
-      // Live Mode: If no live agent is currently running, auto-load most recent completed session in history mode
-      if (!hasActive) {
+      // Keep just-finished sessions briefly so completion does not make a card vanish.
+      const previouslyVisible = new Set(this.state.clusters.flatMap(c => c.agents.map(a => a.sessionId)));
+      const recentCompletions = availableSessions.filter(s => previouslyVisible.has(s.sessionId)
+        && s.status === 'completed' && now - s.mtimeMs < 120000);
+      // Keep an empty live overview when all observed sessions have finished.
+      if (!hasActive && recentCompletions.length === 0) {
         this.currentCalculatedTokenRate = 0;
         this.lastTotalTokens = 0;
         this.lastTokenCheckTime = 0;
         this.state = {
           ...this.state,
           clusters: [],
+          telemetryError: null,
+          lastSyncedAt: now,
           availableSessions,
           selectedAgentId: null,
           selectedAgent: null,
@@ -1274,6 +1286,7 @@ export class SwarmDataEngine {
           stats: {
             ...this.state.stats,
             totalParallel: 0,
+            awaitingApproval: 0,
             activeClusters: 0,
             tokenRate: 0,
             timeTravelCursorMs: 0,
@@ -1286,79 +1299,75 @@ export class SwarmDataEngine {
         return;
       }
 
-      // Live Active Sessions exist: stream telemetry
-      let rootSession = liveRoots.find((s) => s.isLocked);
-      if (!rootSession) {
-        rootSession = liveRoots[0];
+      // Every live root, its descendants, and unlinked live workers remain visible.
+      // Never infer ownership from sharing a workspace or being the only root.
+      const visible = new Map<string, DiscoveredSessionSummary>();
+      for (const root of liveRoots) {
+        visible.set(root.sessionId, root);
+        for (const child of this.collectDescendantSessions(availableSessions, root.sessionId, false)) {
+          visible.set(child.sessionId, { ...child, workspace: child.workspace || root.workspace,
+            workspaceName: child.workspaceName || root.workspaceName });
+        }
       }
-      if (!rootSession) {
-        rootSession = activeSessions[0];
+      for (const session of [...activeSessions, ...recentCompletions]) {
+        if (!visible.has(session.sessionId)) visible.set(session.sessionId, session);
       }
-
-      const rootSessionId = rootSession.sessionId;
-
-      // Child sub-agents
-      const childSessions = this.collectDescendantSessions(
-        availableSessions,
-        rootSessionId,
-        liveRoots.length === 1
-      );
-
-      // Fetch transcripts for root and all active child sessions
-      const sessionsToFetch = [rootSession, ...childSessions];
+      const sessionsToFetch = [...visible.values()];
       const transcriptMap = new Map<string, TranscriptTurn[]>();
 
-      await Promise.all(
-        sessionsToFetch.map(async (sess) => {
-          try {
-            const cached = this.transcriptCache.get(sess.sessionId);
-            if (cached && cached.mtimeMs === sess.mtimeMs && cached.turns.length > 0) {
-              transcriptMap.set(sess.sessionId, cached.turns);
-              return;
+      // Bound concurrent transcript reads for large teams. Metadata still includes every agent.
+      for (let offset = 0; offset < sessionsToFetch.length; offset += 6) {
+        if (revision !== this.revision) return;
+        await Promise.all(
+          sessionsToFetch.slice(offset, offset + 6).map(async (sess) => {
+            try {
+              const cached = this.transcriptCache.get(sess.sessionId);
+              if (cached && cached.mtimeMs === sess.mtimeMs) {
+                transcriptMap.set(sess.sessionId, cached.turns);
+                return;
+              }
+
+              const data = await connectionService.fetchSessionTranscript(sess.sessionId);
+              if (data && data.success && Array.isArray(data.turns)) {
+                this.transcriptCache.set(sess.sessionId, {
+                  mtimeMs: sess.mtimeMs,
+                  turns: data.turns,
+                });
+                transcriptMap.set(sess.sessionId, data.turns);
+              }
+            } catch {
+              // Transcript fetch failure fallback
             }
-
-            const data = await connectionService.fetchSessionTranscript(sess.sessionId);
-            if (data && data.success && Array.isArray(data.turns)) {
-              this.transcriptCache.set(sess.sessionId, {
-                mtimeMs: sess.mtimeMs,
-                turns: data.turns,
-              });
-              transcriptMap.set(sess.sessionId, data.turns);
-            }
-          } catch {
-            // Transcript fetch failure fallback
-          }
-        })
-      );
-
-      // Total tokens used across active agents for rate calculation
-      let totalTokensNow = rootSession.tokensUsed || 0;
-      childSessions.forEach((c) => {
-        totalTokensNow += c.tokensUsed || 0;
-      });
-
-      // Compute real token rate from delta tokens over elapsed seconds
-      this.computeRealTokenRate(totalTokensNow, true);
-
-      // Build real SwarmAgents from discovered child sessions
-      const agents: SwarmAgent[] = childSessions.map((sess) => {
-        const turns = transcriptMap.get(sess.sessionId) || [];
-        return this.mapSessionToSwarmAgent(sess, turns);
-      });
+          })
+        );
+      }
+      if (revision !== this.revision) return;
+      const tokenSessionKey = sessionsToFetch.map(s => s.sessionId).sort().join('|');
+      if (tokenSessionKey !== this.tokenSessionKey) {
+        this.tokenSessionKey = tokenSessionKey;
+        this.lastTokenCheckTime = 0;
+      }
+      this.computeRealTokenRate(sessionsToFetch.reduce((sum, s) => sum + (s.tokensUsed || 0), 0), hasActive);
+      const agents = sessionsToFetch.map(sess =>
+        this.mapSessionToSwarmAgent(sess, transcriptMap.get(sess.sessionId) || []));
 
       // Group subagents dynamically into N clusters
       const clusters = this.groupSubagentsIntoClusters(agents);
 
-      // Retain or select the first agent
+      // Preserve an explicit selection without opening the inspector automatically.
       let selectedAgentId = this.state.selectedAgentId;
       if (!selectedAgentId || !agents.some((a) => a.id === selectedAgentId)) {
-        selectedAgentId = agents[0]?.id || null;
+        selectedAgentId = null;
       }
-
+      const rootSession = sessionsToFetch.find(s => s.sessionId === selectedAgentId)
+        || sessionsToFetch.find(s => s.sessionId === this.state.selectedSessionId) || sessionsToFetch[0];
+      const rootSessionId = rootSession.sessionId;
       const rootTurns = transcriptMap.get(rootSessionId) || [];
 
       this.updateStateAndRecomputeStats({
         clusters,
+        telemetryError: null,
+        lastSyncedAt: now,
         rootSessionId,
         selectedSessionId: rootSessionId,
         activeSession: rootSession,
@@ -1370,12 +1379,16 @@ export class SwarmDataEngine {
         hasBackgroundLiveAgent: false,
         isLiveSource: true,
       });
+    } catch {
+      if (revision === this.revision) this.updateStateAndRecomputeStats({
+        telemetryError: 'Cannot reach the local bridge. Reconnecting automatically; showing the last received activity.',
+      });
     } finally {
       this.isSyncing = false;
       if (this.hasPendingSync) {
         this.hasPendingSync = false;
         setTimeout(() => {
-          this.syncLiveTelemetry().catch(() => {});
+          if (revision === this.revision) this.syncLiveTelemetry().catch(() => {});
         }, 50);
       }
     }
@@ -1385,31 +1398,7 @@ export class SwarmDataEngine {
    * Check if a live session starts while the user is browsing historical transcripts.
    */
   private async checkBackgroundLiveAgentStatus(): Promise<void> {
-    try {
-      const rawSessions = await connectionService.fetchDiscoveredAgentSessions();
-      if (!rawSessions || rawSessions.length === 0) return;
-
-      const now = Date.now();
-      const sessions = this.mapRawSessionsToSummaries(rawSessions);
-      const activeSessionIds = new Set(
-        sessions.filter((session) => this.isSessionRecentlyActive(session, now)).map((session) => session.sessionId)
-      );
-      const hasLive = this.getLiveRootSessions(sessions, activeSessionIds).length > 0;
-
-      if (this.state.hasBackgroundLiveAgent !== hasLive) {
-        this.state = {
-          ...this.state,
-          hasBackgroundLiveAgent: hasLive,
-          stats: {
-            ...this.state.stats,
-            hasBackgroundLiveAgent: hasLive,
-          },
-        };
-        this.notify();
-      }
-    } catch {
-      // Ignore background check failure
-    }
+    await this.syncLiveTelemetry();
   }
 
   /**
@@ -1506,7 +1495,8 @@ export class SwarmDataEngine {
     if (session.isLocked) {
       return now - session.mtimeMs < 20 * 60 * 1000;
     }
-    return ['working', 'active', 'thinking', 'waiting'].includes(session.status || '');
+    return now - session.mtimeMs < 20 * 60 * 1000 &&
+      ['working', 'active', 'thinking', 'waiting', 'awaiting_approval', 'retrying'].includes(session.status || '');
   }
 
   private getLiveRootSessions(
@@ -1561,7 +1551,7 @@ export class SwarmDataEngine {
     sess: DiscoveredSessionSummary | AgentSessionInfo,
     turns: TranscriptTurn[]
   ): SwarmAgent {
-    const agentId = sess.sessionId.slice(0, 8);
+    const agentId = sess.sessionId;
     const { role: properRole, taskSummary: extractedTask } = extractSubagentRoleAndTask(sess, turns);
     const cleanTask = extractedTask || sess.taskSummary || sess.detail || '';
 
@@ -1573,7 +1563,7 @@ export class SwarmDataEngine {
       status = 'active';
     } else if (sess.status === 'thinking') {
       status = 'thinking';
-    } else if (sess.status === 'waiting') {
+    } else if (sess.status === 'waiting' || sess.status === 'awaiting_approval') {
       status = 'awaiting_approval';
     } else if (sess.status === 'completed') {
       status = 'completed';
@@ -1640,6 +1630,9 @@ export class SwarmDataEngine {
 
     return {
       id: agentId,
+      provider: sess.agent,
+      model: (sess as DiscoveredSessionSummary).model,
+      lastModified: (sess as DiscoveredSessionSummary).mtimeMs,
       name: properRole || sess.name || agentId,
       clusterId: 'backend',
       clusterName: 'Backend Core Workers',
@@ -1741,32 +1734,17 @@ export class SwarmDataEngine {
       this.addTerminalLog('info', `[${activity.name || activity.agent || 'CLI Agent'}] ${activity.detail}`, activity.sessionId?.slice(0, 8));
     }
 
-    if (activity.tokensUsed && activity.tokensUsed > 0 && this.state.viewMode === 'live') {
-      const computedRate = this.computeRealTokenRate(activity.tokensUsed, true);
-      this.state.stats.tokenRate = computedRate;
+    // Historical inspection must not be changed by unrelated live events.
+    if (this.state.viewMode === 'history') {
+      this.checkBackgroundLiveAgentStatus().catch(() => {});
+      return;
     }
 
     // Direct in-memory update for instant visual feedback on emitted agent state change
     let stateChanged = false;
     if (activity.sessionId) {
       const sessId = activity.sessionId;
-      const agentId = sessId.slice(0, 8);
-      let agent = this.findAgent(agentId) || this.findAgent(sessId);
-      if (!agent) {
-        for (const cluster of this.state.clusters) {
-          const found = cluster.agents.find(
-            (a) =>
-              a.id === sessId ||
-              a.sessionId === sessId ||
-              (a.sessionId && (sessId.startsWith(a.sessionId) || a.sessionId.startsWith(sessId))) ||
-              (a.id && (sessId.startsWith(a.id) || a.id.startsWith(sessId)))
-          );
-          if (found) {
-            agent = found;
-            break;
-          }
-        }
-      }
+      const agent = this.findAgent(sessId);
       if (agent) {
         const rawStatus = String(activity.status);
         if (['working', 'thinking', 'waiting', 'completed', 'idle', 'retrying', 'running', 'failed'].includes(rawStatus)) {
@@ -1835,17 +1813,12 @@ export class SwarmDataEngine {
    */
   public findAgent(agentId: string): SwarmAgent | null {
     if (!agentId) return null;
-    for (const cluster of this.state.clusters) {
-      const found = cluster.agents.find(
-        (a) =>
-          a.id === agentId ||
-          a.sessionId === agentId ||
-          (a.sessionId && (agentId.startsWith(a.sessionId) || a.sessionId.startsWith(agentId))) ||
-          (a.id && (agentId.startsWith(a.id) || a.id.startsWith(agentId)))
-      );
-      if (found) return found;
-    }
-    return null;
+    const agents = this.state.clusters.flatMap(cluster => cluster.agents);
+    const exact = agents.find(a => a.id === agentId || a.sessionId === agentId);
+    if (exact) return exact;
+    // Compatibility with legacy short IDs only when the prefix is unambiguous.
+    const matches = agents.filter(a => a.sessionId?.startsWith(agentId) || a.id.startsWith(agentId));
+    return matches.length === 1 ? matches[0] : null;
   }
 
   /**

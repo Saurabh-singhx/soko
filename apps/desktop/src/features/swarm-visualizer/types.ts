@@ -108,6 +108,7 @@ export interface AgentTranscriptResponse {
 
 export interface SwarmAgent {
   id: string;
+  provider?: 'antigravity' | 'codex' | 'claude' | null;
   name: string;
   clusterId: SwarmClusterId;
   clusterName: string;
@@ -203,6 +204,8 @@ export interface DiscoveredSessionSummary {
 }
 
 export interface SwarmState {
+  telemetryError?: string | null;
+  lastSyncedAt?: number;
   clusters: AgentCluster[];
   stats: SwarmStats;
   selectedAgentId: string | null;

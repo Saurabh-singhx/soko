@@ -52,6 +52,10 @@ async function main() {
   const engineModule = await import('../apps/desktop/src/features/swarm-visualizer/services/swarmDataEngine.ts');
   const { extractSubagentRoleAndTask, resolveRoleVisuals, SwarmDataEngine } = engineModule;
 
+  const { connectionService } = await import('../apps/desktop/src/services/connection.ts');
+  connectionService.fetchDiscoveredAgentSessions = async () => [];
+  connectionService.dispatchSessionPrompt = async () => true;
+
   // --------------------------------------------------------------------------
   // SUITE 1: Subagent Role & Task Extraction Guardrails
   // --------------------------------------------------------------------------
@@ -819,10 +823,10 @@ async function main() {
   await it('TopBarControls.tsx has interactive LIVE/ARCHIVE buttons, stat filter toggles, and view mode handler', () => {
     const topBarSrc = fs.readFileSync(path.join(desktopSrc, 'features/swarm-visualizer/components/TopBarControls.tsx'), 'utf8');
     assert.ok(topBarSrc.includes('onToggleViewMode'), 'TopBarControls supports onToggleViewMode');
-    assert.ok(topBarSrc.includes('title="Current mode: Live Telemetry. Click to toggle Historical Archive mode."'), 'LIVE pill is interactive button');
-    assert.ok(topBarSrc.includes('title="Current mode: Historical Archive. Click to switch to Live Telemetry."'), 'ARCHIVE pill is interactive button');
-    assert.ok(topBarSrc.includes('Click to reset filter and show all subagents'), 'Total Parallel chip is interactive filter reset button');
-    assert.ok(topBarSrc.includes('Click to filter subagents awaiting approval'), 'Awaiting approval chip is interactive filter toggle button');
+    assert.ok(topBarSrc.includes('onSwitchToLive?.()'), 'Live overview button is wired');
+    assert.ok(topBarSrc.includes("onToggleViewMode?.('history')"), 'History button is wired');
+    assert.ok(topBarSrc.includes('Clear agent search'), 'Search can be cleared');
+    assert.ok(topBarSrc.includes('aria-label="Session history"'), 'History sessions can be selected');
   });
 
   await it('TraceWaterfall.tsx has Synchronized toggle button, clickable trace spans, and isCollapsed sync', () => {

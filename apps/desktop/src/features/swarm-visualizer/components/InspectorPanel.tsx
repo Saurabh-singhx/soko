@@ -174,7 +174,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
 
   // CLI subagents are observational sessions. Keep their inspector visual and
   // status-focused instead of exposing raw transcript, tool, or terminal text.
-  if (activeAgent.isSubagent) {
+  if (activeAgent.isSubagent || activeAgent.provider) {
     const isActive = ['working', 'active', 'thinking'].includes(activeAgent.status);
     const isComplete = activeAgent.status === 'completed';
     const childCount = allAgents.filter((candidate) => candidate.parentSessionId === activeAgent.sessionId).length;
@@ -189,7 +189,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
         <div className="flex items-center justify-between px-4 py-3 border-b border-[#1A2234] bg-[#0E1322]/80 shrink-0">
           <div className="flex items-center gap-2">
             <Activity className="w-4 h-4 text-cyan-300" />
-            <h2 className="text-sm font-semibold text-slate-100">Agent visual</h2>
+            <h2 className="text-sm font-semibold text-slate-100">Session details</h2>
           </div>
           {onClose && (
             <button type="button" onClick={onClose} className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-slate-800/60" title="Close inspector">
@@ -211,27 +211,41 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               </h3>
               <span className={`mt-2 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-medium capitalize ${statusTone}`}>
                 <span className={`h-1.5 w-1.5 rounded-full ${isComplete ? 'bg-emerald-400' : isActive ? 'bg-cyan-300' : 'bg-slate-400'}`} />
-                {activeAgent.status}
+                {activeAgent.status === 'awaiting_approval' ? 'Needs attention' : activeAgent.status}
               </span>
 
               <div className="mt-6 flex w-full items-center justify-center gap-3">
                 <div className="min-w-0 rounded-lg border border-white/10 bg-black/20 px-3 py-2">
                   <div className="text-[9px] uppercase tracking-wider text-slate-500">Parent</div>
                   <div className="mt-1 max-w-24 truncate font-mono text-[10px] text-slate-300" title={activeAgent.parentSessionId || ''}>
-                    {activeAgent.parentSessionId?.slice(0, 8) || 'Root'}
+                    {activeAgent.parentSessionId?.replace(/^(codex|claude)-/, '').slice(-8) || (activeAgent.isSubagent ? 'Unknown' : 'Root')}
                   </div>
                 </div>
                 <div className="h-px w-8 bg-gradient-to-r from-indigo-400/40 to-cyan-300/80" />
                 <div className="min-w-0 rounded-lg border border-cyan-400/20 bg-cyan-400/[0.06] px-3 py-2">
                   <div className="text-[9px] uppercase tracking-wider text-cyan-200/60">Agent</div>
                   <div className="mt-1 max-w-24 truncate font-mono text-[10px] text-cyan-100" title={activeAgent.sessionId || activeAgent.id}>
-                    {activeAgent.sessionId?.slice(0, 8) || activeAgent.id}
+                    {activeAgent.sessionId?.replace(/^(codex|claude)-/, '').slice(-8) || activeAgent.id}
                   </div>
                 </div>
               </div>
             </div>
           </div>
 
+          <div className="space-y-3">
+            <div className="flex items-center justify-between text-xs text-slate-400">
+              <span className="capitalize">{activeAgent.provider || 'CLI agent'}{activeAgent.model ? ` · ${activeAgent.model}` : ''}</span>
+              <button type="button" onClick={handleCopyId} className="p-1.5 rounded hover:bg-white/10" aria-label="Copy full session ID">
+                {copiedId ? <Check size={14} /> : <Copy size={14} />}
+              </button>
+            </div>
+            <h3 className="text-[11px] uppercase tracking-wider text-slate-400">Associated Task</h3>
+            <p className="text-sm leading-relaxed text-slate-200 break-words">{activeAgent.taskSummary || activeAgent.task || 'No task summary available yet.'}</p>
+            {activeAgent.parentSessionId && allAgents.some(a => a.sessionId === activeAgent.parentSessionId) && <button
+              type="button" className="text-xs text-indigo-300 hover:text-indigo-100" onClick={() => onSelectAgent?.(activeAgent.parentSessionId!)}>
+              View parent agent →
+            </button>}
+          </div>
           <div className="grid grid-cols-2 gap-2">
             {activeAgent.depth !== undefined && (
               <div className="rounded-xl border border-white/[0.08] bg-white/[0.025] p-3">
@@ -262,12 +276,16 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
           {activeAgent.workspaceName && (
             <div className="rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-2">
               <div className="text-[9px] uppercase tracking-wider text-slate-500">Workspace</div>
-              <div className="mt-1 truncate text-xs text-slate-300">{activeAgent.workspaceName}</div>
+              <div className="mt-1 truncate text-xs text-slate-300">{activeAgent.workspace || activeAgent.workspaceName}</div>
             </div>
           )}
 
+          {activeAgent.reasoningSteps.length > 0 && <section className="space-y-3">
+            <h3 className="text-[11px] uppercase tracking-wider text-slate-400">Recent activity</h3>
+            <ReasoningStepsViewer steps={activeAgent.reasoningSteps.slice(-12)} isLive={!isHistoryMode} />
+          </section>}
           <div className="rounded-xl border border-white/[0.06] bg-black/15 p-3 text-center text-[11px] text-slate-500">
-            Select another node on the canvas to view its status.
+            Select another agent card to follow its activity.
           </div>
         </div>
       </aside>

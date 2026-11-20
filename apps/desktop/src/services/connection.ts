@@ -54,7 +54,7 @@ class ConnectionManager {
   private discoveredDevices: DiscoveredDevice[] = [];
   private sasPin: string = '482 195';
   private bridgeUrl: string = 'ws://127.0.0.1:8766';
-  private localIps: string[] = ['192.168.31.210'];
+  private localIps: string[] = [];
   private activeClients: number = 0;
   private isBridgeConnected: boolean = false;
   private lastPingSentAt: number = 0;
@@ -498,17 +498,19 @@ class ConnectionManager {
     });
   }
 
-  public async fetchDiscoveredAgentSessions(): Promise<AgentSessionInfo[]> {
+  public async fetchDiscoveredAgentSessions(strict = false): Promise<AgentSessionInfo[]> {
     const httpBase = this.bridgeUrl.replace(/^ws/, 'http');
     try {
-      const res = await fetch(`${httpBase}/api/agent/sessions`);
+      const res = await fetch(`${httpBase}/api/agent/sessions`, { signal: AbortSignal.timeout(10000) });
       if (res.ok) {
         const data = await res.json();
         if (data.success && Array.isArray(data.sessions)) {
           return data.sessions;
         }
       }
+      if (strict) throw new Error('Agent discovery is unavailable');
     } catch (err) {
+      if (strict) throw err;
       console.warn('[ConnectionManager] Failed to fetch discovered agent sessions:', err);
     }
     return [];
@@ -517,7 +519,7 @@ class ConnectionManager {
   public async fetchSessionTranscript(sessionId: string): Promise<AgentTranscriptResponse> {
     const httpBase = this.bridgeUrl.replace(/^ws/, 'http');
     try {
-      const res = await fetch(`${httpBase}/api/agent/transcript?sessionId=${encodeURIComponent(sessionId)}`);
+      const res = await fetch(`${httpBase}/api/agent/transcript?sessionId=${encodeURIComponent(sessionId)}`, { signal: AbortSignal.timeout(10000) });
       if (res.ok) {
         return await res.json();
       }
@@ -939,7 +941,7 @@ class ConnectionManager {
           if (packet.payload.certFingerprint) {
             this.certFingerprint = packet.payload.certFingerprint;
           }
-          if (Array.isArray(packet.payload.localIps) && packet.payload.localIps.length > 0) {
+          if (Array.isArray(packet.payload.localIps)) {
             this.localIps = packet.payload.localIps;
           }
           if (packet.payload.sasPin) {
