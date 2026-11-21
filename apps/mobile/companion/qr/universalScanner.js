@@ -181,6 +181,7 @@
       let alts = [];
       let name = null;
       let isExpired = false;
+      let tls = false;
 
       try {
         if (str.startsWith('soko://pair')) {
@@ -192,6 +193,7 @@
           name = url.searchParams.get('name');
           if (url.searchParams.has('exp')) exp = parseInt(url.searchParams.get('exp'), 10);
           if (url.searchParams.has('alts')) alts = url.searchParams.get('alts').split(',').map((s) => s.trim()).filter(Boolean);
+          tls = url.searchParams.get('tls') === '1';
         } else if (str.startsWith('http://') || str.startsWith('https://')) {
           const url = new URL(str);
           host = url.searchParams.get('host') || url.hostname;
@@ -201,6 +203,7 @@
           name = url.searchParams.get('name');
           if (url.searchParams.has('exp')) exp = parseInt(url.searchParams.get('exp'), 10);
           if (url.searchParams.has('alts')) alts = url.searchParams.get('alts').split(',').map((s) => s.trim()).filter(Boolean);
+          tls = url.searchParams.has('tls') ? url.searchParams.get('tls') === '1' : url.protocol === 'https:';
         } else if (str.includes('pin=') || str.includes('pair=')) {
           const params = new URLSearchParams(str.startsWith('?') ? str.slice(1) : str);
           host = params.get('host');
@@ -210,6 +213,7 @@
           name = params.get('name');
           if (params.has('exp')) exp = parseInt(params.get('exp'), 10);
           if (params.has('alts')) alts = params.get('alts').split(',').map((s) => s.trim()).filter(Boolean);
+          tls = params.get('tls') === '1';
         } else if (/^\d{3}\s?\d{3}$/.test(str)) {
           pin = str.replace(/\s+/g, '');
         }
@@ -226,7 +230,7 @@
 
       if (!pin) return null;
 
-      const candidateIps = host ? [host, ...alts] : alts;
+      const candidateIps = [...new Set((host ? [host, ...alts] : alts).filter(Boolean))];
 
       return {
         host,
@@ -238,6 +242,7 @@
         exp,
         isExpired,
         alts,
+        tls,
         candidateIps,
         raw: str,
       };
@@ -254,27 +259,31 @@
       const cleanPort = parseInt(String(port), 10);
       if (isNaN(cleanPort) || cleanPort < 1 || cleanPort > 65535) return null;
 
-      for (const ip of candidateIps) {
+      const candidates = [...new Set(candidateIps)].filter((ip) => {
         const cleanIp = String(ip || '').trim();
-        // Ensure IP is a valid IPv4 address or safe alphanumeric hostname
-        if (!/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$|^[a-zA-Z0-9\.\-]+$/.test(cleanIp)) continue;
-
+        return /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$|^[a-zA-Z0-9\.\-]+$/.test(cleanIp) && cleanIp !== '127.0.0.1';
+      });
+      const probes = candidates.map(async (ip) => {
+        const cleanIp = String(ip || '').trim();
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 1800);
         try {
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 1200);
           const res = await fetch(`http://${cleanIp}:${cleanPort}/api/discovery`, {
             signal: controller.signal,
           });
-          clearTimeout(timer);
           if (res.ok) {
-            console.log(`[UniversalScanner] Verified reachable Soko host: ${cleanIp}:${cleanPort}`);
-            return cleanIp;
+            const metadata = await res.json();
+            if (metadata.service === 'soko') return cleanIp;
           }
         } catch {
-          // Continue to next alternative IP
+          // Try another interface.
+        } finally {
+          clearTimeout(timer);
         }
-      }
-      return null;
+        return null;
+      });
+      const results = await Promise.all(probes);
+      return results.find(Boolean) || null;
     },
 
     /**

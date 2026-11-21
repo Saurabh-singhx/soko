@@ -352,6 +352,8 @@ import android.os.Bundle;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebChromeClient;
 import android.webkit.PermissionRequest;
 import android.webkit.DownloadListener;
@@ -394,6 +396,7 @@ public class MainActivity extends Activity {
     private static final String MEDIA_CHANNEL_ID = "soko_media_playback";
     private static final int MEDIA_NOTIF_ID = 9001;
     private ValueCallback<Uri[]> uploadMessage = null;
+    private PermissionRequest pendingCameraRequest = null;
     private WebView webView;
     private MediaSession mediaSession;
     private Bitmap currentCoverBitmap = null;
@@ -1057,6 +1060,9 @@ public class MainActivity extends Activity {
         settings.setAllowContentAccess(true);
         settings.setAllowFileAccessFromFileURLs(true);
         settings.setAllowUniversalAccessFromFileURLs(true);
+        // The bundled page uses a trustworthy HTTPS origin so getUserMedia can open the camera.
+        // The desktop bridge still uses local HTTP/WS during pairing.
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(true);
         settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
@@ -1067,6 +1073,30 @@ public class MainActivity extends Activity {
         webView.addJavascriptInterface(new SokoNativeBridge(), "SokoNative");
 
         webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                Uri uri = request.getUrl();
+                if (!"https".equalsIgnoreCase(uri.getScheme()) ||
+                    !"appassets.androidplatform.net".equalsIgnoreCase(uri.getHost())) return null;
+                String path = uri.getPath();
+                if (path == null || !path.startsWith("/assets/")) return null;
+                String assetPath = path.substring("/assets/".length());
+                if (assetPath.isEmpty() || assetPath.contains("..") || assetPath.startsWith("/")) return null;
+                String mime = "application/octet-stream";
+                if (assetPath.endsWith(".html")) mime = "text/html";
+                else if (assetPath.endsWith(".js")) mime = "application/javascript";
+                else if (assetPath.endsWith(".css")) mime = "text/css";
+                else if (assetPath.endsWith(".png")) mime = "image/png";
+                else if (assetPath.endsWith(".svg")) mime = "image/svg+xml";
+                else if (assetPath.endsWith(".json")) mime = "application/json";
+                try {
+                    return new WebResourceResponse(mime, "UTF-8", getAssets().open(assetPath));
+                } catch (Exception e) {
+                    Log.e("SokoApp", "Bundled asset unavailable: " + assetPath, e);
+                    return null;
+                }
+            }
+
             @Override
             public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
                 Log.e("SokoApp", "Resource error on " + failingUrl + ": " + description);
@@ -1131,7 +1161,8 @@ public class MainActivity extends Activity {
                             } else if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
                                 String host = originUri.getHost();
                                 if (host != null) {
-                                    if (host.equals("localhost") || host.equals("127.0.0.1") || host.equals("::1") || host.equals("[::1]")) {
+                                    if (host.equals("localhost") || host.equals("127.0.0.1") || host.equals("::1") || host.equals("[::1]") ||
+                                        ("https".equalsIgnoreCase(scheme) && host.equals("appassets.androidplatform.net"))) {
                                         isAllowedOrigin = true;
                                     } else {
                                         int firstDot = host.indexOf('.');
@@ -1161,7 +1192,16 @@ public class MainActivity extends Activity {
                             }
                         }
                         if (isAllowedOrigin) {
-                            request.grant(request.getResources());
+                            boolean needsCamera = false;
+                            for (String resource : request.getResources()) {
+                                if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)) needsCamera = true;
+                            }
+                            if (needsCamera && checkSelfPermission(android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                pendingCameraRequest = request;
+                                requestPermissions(new String[]{android.Manifest.permission.CAMERA}, 102);
+                            } else {
+                                request.grant(request.getResources());
+                            }
                         } else {
                             request.deny();
                         }
@@ -1237,26 +1277,22 @@ public class MainActivity extends Activity {
             }
         });
 
-        try {
-            InputStream is = getAssets().open("index.html");
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            byte[] buf = new byte[4096];
-            int read;
-            while ((read = is.read(buf)) != -1) {
-                baos.write(buf, 0, read);
-            }
-            is.close();
-            String htmlContent = baos.toString("UTF-8");
-            webView.loadDataWithBaseURL("file:///android_asset/", htmlContent, "text/html", "UTF-8", null);
-        } catch (Exception e) {
-            webView.loadUrl("file:///android_asset/index.html");
-        }
+        webView.loadUrl("https://appassets.androidplatform.net/assets/index.html");
 
         setContentView(webView);
 
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-            if (checkSelfPermission(android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(new String[]{android.Manifest.permission.CAMERA}, 102);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == 102 && pendingCameraRequest != null) {
+            PermissionRequest request = pendingCameraRequest;
+            pendingCameraRequest = null;
+            if (grantResults.length > 0 && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                request.grant(request.getResources());
+            } else {
+                request.deny();
             }
         }
     }

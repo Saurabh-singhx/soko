@@ -86,7 +86,8 @@ class CorsHardener {
       cleanOrigin.startsWith('file://') ||
       cleanOrigin === 'tauri://localhost' ||
       cleanOrigin === 'http://tauri.localhost' ||
-      cleanOrigin === 'https://tauri.localhost'
+      cleanOrigin === 'https://tauri.localhost' ||
+      cleanOrigin === 'https://appassets.androidplatform.net'
     ) {
       return true;
     }

@@ -89,6 +89,8 @@ export const UniversalQrCard: React.FC<UniversalQrCardProps> = ({
     params.set('pair', '1');
     params.set('pin', cleanPin);
     params.set('exp', String(expirationTimestamp));
+    const alts = localIps.filter((ip) => ip !== selectedIp && ip !== '127.0.0.1');
+    if (alts.length > 0) params.set('alts', alts.join(','));
 
     const web = `${scheme}://${selectedIp}:${port}/?${params.toString()}`;
 
@@ -98,6 +100,7 @@ export const UniversalQrCard: React.FC<UniversalQrCardProps> = ({
     nParams.set('pin', cleanPin);
     nParams.set('tls', '0');
     nParams.set('exp', String(expirationTimestamp));
+    if (alts.length > 0) nParams.set('alts', alts.join(','));
 
     const native = `soko://pair?${nParams.toString()}`;
 
@@ -106,7 +109,7 @@ export const UniversalQrCard: React.FC<UniversalQrCardProps> = ({
       nativeUri: native,
       activePayload: mode === 'native' ? native : web,
     };
-  }, [selectedIp, port, cleanPin, expirationTimestamp, mode]);
+  }, [selectedIp, localIps.join(','), port, cleanPin, expirationTimestamp, mode]);
 
   // Generate SVG QR matrix
   const qrSvg = useMemo(() => {

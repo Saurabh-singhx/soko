@@ -1031,15 +1031,8 @@
 
         <label class="input-label">Desktop IP & Port</label>
         <div class="ip-row">
-          <input type="text" id="bridgeIpInput" class="ip-input" placeholder="e.g. 192.168.31.210:8766" spellcheck="false" autocomplete="off" />
+          <input type="text" id="bridgeIpInput" class="ip-input" placeholder="Scan QR to fill automatically" spellcheck="false" autocomplete="off" />
           <button class="btn" id="btnConnect" onclick="toggleConnection()">Connect</button>
-        </div>
-
-        <!-- Quick IP Presets -->
-        <div style="display: flex; gap: 8px; margin-bottom: 12px; overflow-x: auto; padding-bottom: 4px;">
-          <button class="badge" style="cursor: pointer;" onclick="setPresetIp('192.168.31.210:8766')">Wi-Fi IP</button>
-          <button class="badge" style="cursor: pointer;" onclick="setPresetIp('192.168.43.1:8766')">Hotspot IP</button>
-          <button class="badge" style="cursor: pointer;" onclick="setPresetIp('127.0.0.1:8766')">Localhost</button>
         </div>
 
         <!-- Zero-Configuration Network Discovery Card -->
@@ -1810,23 +1803,17 @@
     window.SOKO_BRIDGE_DEFAULT_IP = "";
 
     function getDefaultTarget() {
-      if (window.location.host && !window.location.host.startsWith('file') && !window.location.host.includes('localhost') && !window.location.host.includes('127.0.0.1')) {
+      if (window.location.host && window.location.hostname !== 'appassets.androidplatform.net' && !window.location.host.startsWith('file') && !window.location.host.includes('localhost') && !window.location.host.includes('127.0.0.1')) {
         return window.location.host;
       }
       const saved = localStorage.getItem('soko_last_ip');
       if (saved && !saved.startsWith('127.0.0.1') && !saved.startsWith('localhost')) {
         return saved;
       }
-      return window.SOKO_BRIDGE_DEFAULT_IP || '192.168.31.210:8766';
+      return window.SOKO_BRIDGE_DEFAULT_IP || '';
     }
 
     ipInput.value = getDefaultTarget();
-
-    function setPresetIp(ip) {
-      ipInput.value = ip;
-      showToast(`Selected IP: ${ip}`, 'info');
-      connectWs();
-    }
 
     // ============================================================
     // ZERO-CONFIG DISCOVERY & QR CODE PAIRING ENGINE
@@ -1878,7 +1865,26 @@
       return { host, port, pin, fp };
     }
 
-    function checkUrlPairingParams() {
+    async function connectPairingPayload(payload) {
+      const candidates = payload.candidateIps || (payload.host ? [payload.host] : []);
+      const host = window.SokoUniversalScanner && candidates.length
+        ? await window.SokoUniversalScanner.probeReachableHost(candidates, payload.port || DEFAULT_PORT)
+        : payload.host;
+      if (!host) {
+        showToast('Desktop unreachable. Connect both devices to the same Wi-Fi or hotspot, then scan again.', 'error');
+        updatePairingUI('rejected', 'No desktop address in this QR code is reachable. Check the Wi-Fi or hotspot connection and scan again.');
+        return false;
+      }
+      localStorage.setItem('soko_tls_enabled', payload.tls ? '1' : '0');
+      ipInput.value = `${host}:${payload.port || DEFAULT_PORT}`;
+      const pinInput = document.getElementById('sasPinInput');
+      if (pinInput) pinInput.value = `${payload.pin.slice(0, 3)} ${payload.pin.slice(3, 6)}`;
+      connectWs();
+      await requestPairing();
+      return true;
+    }
+
+    async function checkUrlPairingParams() {
       const search = window.location.search || '';
       const hash = window.location.hash || '';
       const payload = (window.SokoUniversalScanner && window.SokoUniversalScanner.parsePayload(search || hash.replace(/^#/, ''))) ||
@@ -1889,23 +1895,8 @@
           showToast('Pairing QR code has expired. Please refresh code on your desktop screen.', 'amber');
           return;
         }
-        if (payload.tls) {
-          localStorage.setItem('soko_tls_enabled', '1');
-        } else {
-          localStorage.setItem('soko_tls_enabled', '0');
-        }
-        if (payload.host) {
-          ipInput.value = `${payload.host}:${payload.port || DEFAULT_PORT}`;
-        }
-        const pinInput = document.getElementById('sasPinInput');
-        if (pinInput) {
-          pinInput.value = `${payload.pin.slice(0, 3)} ${payload.pin.slice(3, 6)}`;
-        }
-        showToast('Instant Universal QR Pairing detected! Connecting...', 'success');
-        connectWs();
-        setTimeout(() => {
-          requestPairing();
-        }, 400);
+        showToast('QR detected. Finding your desktop...', 'info');
+        await connectPairingPayload(payload);
       }
     }
 
@@ -1924,13 +1915,10 @@
 
       const candidateTargets = new Set();
       // 1. Current origin host
-      if (window.location.host && !window.location.host.includes('localhost') && !window.location.host.startsWith('file')) {
+      if (window.location.host && !window.location.host.includes('localhost') && window.location.hostname !== 'appassets.androidplatform.net' && !window.location.host.startsWith('file')) {
         candidateTargets.add(window.location.host);
       }
       // 2. Default preset IPs
-      candidateTargets.add('192.168.31.210:8766');
-      candidateTargets.add('192.168.43.1:8766');
-      candidateTargets.add('127.0.0.1:8766');
       candidateTargets.add('10.0.2.2:8766'); // Android Emulator Loopback
       // 3. User input target
       if (ipInput && ipInput.value.trim()) {
@@ -1940,7 +1928,7 @@
       const results = [];
       await Promise.allSettled(Array.from(candidateTargets).map(async (target) => {
         try {
-          const proto = window.location.protocol === 'https:' ? 'https:' : 'http:';
+          const proto = window.location.hostname === 'appassets.androidplatform.net' ? 'http:' : window.location.protocol;
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 1200);
           const res = await fetch(`${proto}//${target}/api/discovery`, { signal: controller.signal });
@@ -2177,7 +2165,7 @@
       }
     }
 
-    function handleQrScanPayload(text) {
+    async function handleQrScanPayload(text) {
       if (!text || qrHandling) return;
 
       const payload = (window.SokoUniversalScanner && window.SokoUniversalScanner.parsePayload(text)) || parsePairingPayload(text);
@@ -2191,18 +2179,13 @@
           return;
         }
         qrHandling = true;
-        closeQrScanner();
-        if (navigator.vibrate) navigator.vibrate(40);
-        if (payload.host) {
-          ipInput.value = `${payload.host}:${payload.port || DEFAULT_PORT}`;
+        showToast('Code scanned. Finding your desktop...', 'info');
+        const connected = await connectPairingPayload(payload);
+        if (connected) {
+          closeQrScanner();
+          if (navigator.vibrate) navigator.vibrate(40);
         }
-        const pinInput = document.getElementById('sasPinInput');
-        if (pinInput) {
-          pinInput.value = `${payload.pin.slice(0, 3)} ${payload.pin.slice(3, 6)}`;
-        }
-        showToast('Code scanned. Waiting for desktop approval...', 'success');
-        connectWs();
-        requestPairing();
+        qrHandling = false;
       } else {
         if (text !== lastRejectedQr || Date.now() - lastRejectedQrAt > 4000) {
           showToast('This is not a Soko pairing code. Try the QR shown in Connection Hub.', 'amber');
@@ -2693,7 +2676,7 @@
     }
 
     function isTlsActive() {
-      if (window.location.protocol === 'https:') return true;
+      if (window.location.protocol === 'https:' && window.location.hostname !== 'appassets.androidplatform.net') return true;
       try {
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.get('tls') === '1' || urlParams.get('tls') === 'true') return true;
@@ -4364,12 +4347,13 @@
       });
 
       // 1. Check for instant pairing URL parameters (e.g. from camera QR code scan)
-      checkUrlPairingParams();
+      const hasPairingQr = new URLSearchParams(window.location.search).has('pin');
+      if (hasPairingQr) checkUrlPairingParams();
 
       // 2. Discover running Soko desktops on local Wi-Fi via /api/discovery
       discoverDesktops();
 
-      connectWs();
+      if (!hasPairingQr && ipInput.value.trim()) connectWs();
       if (getPairToken()) {
         fetchMobileTokenStats();
       }

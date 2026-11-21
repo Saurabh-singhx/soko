@@ -936,6 +936,12 @@ class ConnectionManager {
     }
 
     switch (packet.packetType as string) {
+      case 'NETWORK_INTERFACES':
+        if (Array.isArray(packet.payload?.localIps)) {
+          this.localIps = packet.payload.localIps;
+          this.notifyBridge();
+        }
+        break;
       case 'BRIDGE_STATUS':
         if (packet.payload) {
           if (packet.payload.certFingerprint) {

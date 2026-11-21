@@ -227,6 +227,7 @@ try {
     assert.strictEqual(cors.isOriginAllowed('http://localhost:5173'), true);
     assert.strictEqual(cors.isOriginAllowed('http://127.0.0.1:8766'), true);
     assert.strictEqual(cors.isOriginAllowed('tauri://localhost'), true);
+    assert.strictEqual(cors.isOriginAllowed('https://appassets.androidplatform.net'), true);
     assert.strictEqual(cors.isOriginAllowed('http://192.168.31.210:8766'), true);
     assert.strictEqual(cors.isOriginAllowed('null'), true);
 

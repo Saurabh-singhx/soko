@@ -76,6 +76,7 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
   const [isPairingInFlight, setIsPairingInFlight] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
   const [activeView, setActiveView] = useState<'connection' | 'quick'>('connection');
+  const [localIps, setLocalIps] = useState<string[]>(() => connectionService.getLocalIps());
 
   const isMountedRef = useRef(true);
   const hasAutoScannedRef = useRef(false);
@@ -83,10 +84,11 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
   const qrSectionRef = useRef<HTMLDivElement>(null);
   const isConnected = status === 'connected' && Boolean(device?.isAuthorized);
   const isScanning = isScanningDevices || (!isConnected && status === 'scanning') || status === 'connecting';
-  const localIps = connectionService.getLocalIps();
   const primaryIp = localIps[0] || '';
   const bridgePort = Number(new URL(connectionService.getBridgeUrl()).port) || 8766;
   const mobileUrl = primaryIp ? `http://${primaryIp}:${bridgePort}` : '';
+
+  React.useEffect(() => connectionService.subscribeBridge((_online, _count, ips) => setLocalIps(ips)), []);
 
   React.useEffect(() => {
     if (showQrModal) {

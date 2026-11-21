@@ -78,6 +78,7 @@ const {
   createPairingPayload,
   parsePairingPayload,
   generateQrSvg,
+  resolveNetworkInterfaces,
 } = require(path.resolve(__dirname, '../packages/discovery'));
 
 let mdnsAdvertiser = null;
@@ -151,17 +152,24 @@ let PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8766;
 
 // Find local IP addresses for easy mobile pairing
 function getLocalIps() {
-  const interfaces = os.networkInterfaces();
-  const addresses = [];
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name]) {
-      if (iface.family === 'IPv4' && !iface.internal) {
-        addresses.push(iface.address);
-      }
-    }
-  }
-  return addresses;
+  return resolveNetworkInterfaces().candidateIps;
 }
+
+let lastNetworkIps = getLocalIps().join(',');
+setInterval(() => {
+  const localIps = getLocalIps();
+  const key = localIps.join(',');
+  if (key === lastNetworkIps) return;
+  lastNetworkIps = key;
+  broadcastPacket({
+    magic: 'SK',
+    version: 1,
+    packetId: Date.now(),
+    timestamp: Date.now(),
+    packetType: 'NETWORK_INTERFACES',
+    payload: { localIps },
+  });
+}, 5000);
 
 function normalizeIp(ip) {
   if (!ip) return '';
