@@ -5,7 +5,6 @@ import {
   Copy,
   Check,
   Globe,
-  Wifi,
   RefreshCw,
   ShieldCheck,
   Smartphone,
@@ -14,50 +13,33 @@ import {
 } from 'lucide-react';
 import { generateQrSvg } from '../../../utils/qrCode.ts';
 
-export type PairingTabMode = 'web' | 'native' | 'wifi';
+export type PairingTabMode = 'web' | 'native';
 
 interface UniversalQrCardProps {
   sasPin: string;
   localIps: string[];
   port?: number;
-  certFingerprint?: string | null;
-  workstationName?: string;
-  tlsEnabled?: boolean;
   onRegeneratePin: () => void;
   onClose?: () => void;
 }
 
 /**
- * UniversalQrCard (Option 3 Dedicated Hybrid QR Pairing Component)
- *
- * Provides a multi-mode, time-sensitive pairing interface:
- * 1. Phone Camera (Universal Web): Scanned by default iOS Camera, Android Google Lens,
- *    or Samsung Camera to immediately launch Soko Web Companion and auto-pair.
- * 2. Soko App (Native URI): Direct deep link for the native Flutter companion app.
- * 3. Hotspot Wi-Fi: Standard WIFI:S:... schema to bridge devices on isolated networks.
- *
- * Edge cases handled:
- * - Multi-interface selection (Wi-Fi vs Ethernet).
- * - 5-minute countdown expiration with auto-refresh to thwart replay attacks.
- * - Alternative candidate IP addresses ('alts') passed for fallback routing.
- * - One-click clipboard copy with animated visual feedback.
+ * Pairing QR for the Soko mobile scanner or the phone camera. The user approves
+ * the resulting request on desktop before the link is established.
  */
 export const UniversalQrCard: React.FC<UniversalQrCardProps> = ({
   sasPin,
   localIps,
   port = 8766,
-  certFingerprint = null,
-  workstationName = 'Soko Workstation',
-  tlsEnabled = false,
   onRegeneratePin,
 }) => {
-  const [mode, setMode] = useState<PairingTabMode>('web');
-  const [selectedIp, setSelectedIp] = useState<string>(() => localIps[0] || '192.168.31.210');
+  const [mode, setMode] = useState<PairingTabMode>('native');
+  const [selectedIp, setSelectedIp] = useState<string>(() => localIps[0] || '');
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedPin, setCopiedPin] = useState(false);
-  const [secondsRemaining, setSecondsRemaining] = useState(300); // 5 minutes TTL
-  const wifiSsid = 'Soko-Hotspot';
-  const wifiPassword = 'soko-connect-123';
+  const [expiresAt, setExpiresAt] = useState(() => Date.now() + 300000);
+  const [secondsRemaining, setSecondsRemaining] = useState(300);
+  const refreshRequestedRef = React.useRef(false);
 
   // Keep selectedIp synced if localIps array updates
   useEffect(() => {
@@ -66,23 +48,25 @@ export const UniversalQrCard: React.FC<UniversalQrCardProps> = ({
     }
   }, [localIps, selectedIp]);
 
-  // 5-minute expiration timer loop
+  // Keep the QR payload fixed while the visible countdown updates.
   useEffect(() => {
     const timer = setInterval(() => {
-      setSecondsRemaining((prev) => {
-        if (prev <= 1) {
-          onRegeneratePin();
-          return 300;
-        }
-        return prev - 1;
-      });
+      setSecondsRemaining(Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000)));
     }, 1000);
-
     return () => clearInterval(timer);
-  }, [onRegeneratePin]);
+  }, [expiresAt]);
+
+  useEffect(() => {
+    if (secondsRemaining === 0 && !refreshRequestedRef.current) {
+      refreshRequestedRef.current = true;
+      onRegeneratePin();
+    }
+  }, [secondsRemaining, onRegeneratePin]);
 
   // Reset timer whenever PIN changes
   useEffect(() => {
+    refreshRequestedRef.current = false;
+    setExpiresAt(Date.now() + 300000);
     setSecondsRemaining(300);
   }, [sasPin]);
 
@@ -94,26 +78,17 @@ export const UniversalQrCard: React.FC<UniversalQrCardProps> = ({
     return sasPin;
   }, [cleanPin, sasPin]);
 
-  // Candidate alternative IPs (all interfaces except the currently selected one)
-  const alts = useMemo(() => {
-    return localIps.filter((ip) => ip !== selectedIp).join(',');
-  }, [localIps, selectedIp]);
-
-  const expirationTimestamp = useMemo(() => {
-    return Math.floor(Date.now() / 1000) + secondsRemaining;
-  }, [secondsRemaining]);
+  const expirationTimestamp = Math.floor(expiresAt / 1000);
 
   // Build payloads for each mode
-  const { webUrl, nativeUri, wifiString, activePayload } = useMemo(() => {
-    const scheme = tlsEnabled ? 'https' : 'http';
+  const { webUrl, nativeUri, activePayload } = useMemo(() => {
+    // First pairing must use the bridge's HTTP listener: the phone has not yet
+    // stored the desktop's self-signed certificate fingerprint.
+    const scheme = 'http';
     const params = new URLSearchParams();
     params.set('pair', '1');
     params.set('pin', cleanPin);
-    if (certFingerprint) params.set('fp', certFingerprint);
-    if (workstationName) params.set('name', workstationName);
     params.set('exp', String(expirationTimestamp));
-    if (alts) params.set('alts', alts);
-    params.set('v', '1');
 
     const web = `${scheme}://${selectedIp}:${port}/?${params.toString()}`;
 
@@ -121,37 +96,25 @@ export const UniversalQrCard: React.FC<UniversalQrCardProps> = ({
     nParams.set('host', selectedIp);
     nParams.set('port', String(port));
     nParams.set('pin', cleanPin);
-    if (certFingerprint) nParams.set('fp', certFingerprint);
-    if (workstationName) nParams.set('name', workstationName);
-    nParams.set('tls', tlsEnabled ? '1' : '0');
+    nParams.set('tls', '0');
     nParams.set('exp', String(expirationTimestamp));
-    if (alts) nParams.set('alts', alts);
-    nParams.set('v', '1');
 
     const native = `soko://pair?${nParams.toString()}`;
-
-    const escapedSsid = wifiSsid.replace(/([\\;,":])/g, '\\$1');
-    const escapedPass = wifiPassword.replace(/([\\;,":])/g, '\\$1');
-    const wifi = `WIFI:S:${escapedSsid};T:WPA;P:${escapedPass};;`;
-
-    let active = web;
-    if (mode === 'native') active = native;
-    if (mode === 'wifi') active = wifi;
 
     return {
       webUrl: web,
       nativeUri: native,
-      wifiString: wifi,
-      activePayload: active,
+      activePayload: mode === 'native' ? native : web,
     };
-  }, [selectedIp, port, cleanPin, certFingerprint, workstationName, tlsEnabled, alts, expirationTimestamp, mode, wifiSsid, wifiPassword]);
+  }, [selectedIp, port, cleanPin, expirationTimestamp, mode]);
 
   // Generate SVG QR matrix
   const qrSvg = useMemo(() => {
+    if (!selectedIp || cleanPin.length !== 6) return '';
     try {
       return generateQrSvg(activePayload, {
-        size: 156,
-        margin: 2,
+        size: 232,
+        margin: 4,
         darkColor: '#07080D',
         lightColor: '#FFFFFF',
         ecLevel: activePayload.length > 200 ? 'L' : 'M',
@@ -160,11 +123,12 @@ export const UniversalQrCard: React.FC<UniversalQrCardProps> = ({
       console.warn('[UniversalQrCard] Failed to generate QR SVG:', e);
       return '';
     }
-  }, [activePayload]);
+  }, [activePayload, selectedIp, cleanPin]);
 
   const copyLinkToClipboard = async () => {
     try {
-      const textToCopy = mode === 'native' ? nativeUri : (mode === 'wifi' ? wifiString : webUrl);
+      if (!selectedIp) return;
+      const textToCopy = mode === 'native' ? nativeUri : webUrl;
       await navigator.clipboard.writeText(textToCopy);
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2000);
@@ -195,7 +159,7 @@ export const UniversalQrCard: React.FC<UniversalQrCardProps> = ({
       <div className="flex items-center justify-between w-full pb-1.5 border-b border-white/[0.08]">
         <span className="text-[11px] font-semibold text-white/95 flex items-center gap-1.5">
           <QrCode size={13} className="text-[#818cf8]" />
-          Instant QR Pairing
+          Pair with QR code
         </span>
         <div className="flex items-center gap-1.5 text-[9px] font-mono text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/25">
           <Clock size={10} />
@@ -204,7 +168,7 @@ export const UniversalQrCard: React.FC<UniversalQrCardProps> = ({
       </div>
 
       {/* Mode Selector Tabs (Option 3 Universal Hybrid) */}
-      <div className="grid grid-cols-3 gap-1 w-full bg-white/[0.04] p-1 rounded-lg border border-white/[0.06]">
+      <div className="grid grid-cols-2 gap-1 w-full bg-white/[0.04] p-1 rounded-lg border border-white/[0.06]">
         <button
           onClick={() => setMode('web')}
           className={`flex items-center justify-center gap-1 py-1 rounded text-[10px] font-medium transition-all ${
@@ -215,7 +179,7 @@ export const UniversalQrCard: React.FC<UniversalQrCardProps> = ({
           title="Scan with default phone camera (iOS / Android)"
         >
           <Smartphone size={11} />
-          <span>Phone Cam</span>
+          <span>Phone camera</span>
         </button>
 
         <button
@@ -228,25 +192,12 @@ export const UniversalQrCard: React.FC<UniversalQrCardProps> = ({
           title="Scan with Soko Mobile Companion App"
         >
           <Radio size={11} />
-          <span>Soko App</span>
-        </button>
-
-        <button
-          onClick={() => setMode('wifi')}
-          className={`flex items-center justify-center gap-1 py-1 rounded text-[10px] font-medium transition-all ${
-            mode === 'wifi'
-              ? 'bg-[#5E6AD2] text-white shadow-[0_0_8px_rgba(94,106,210,0.5)] font-semibold'
-              : 'text-linear-text-secondary hover:text-white hover:bg-white/[0.05]'
-          }`}
-          title="Direct Hotspot connection (bypasses isolated Wi-Fi)"
-        >
-          <Wifi size={11} />
-          <span>Hotspot</span>
+          <span>Soko app scanner</span>
         </button>
       </div>
 
       {/* Multi-Interface Dropdown (Edge Case: Multi-Homed Workstation) */}
-      {localIps.length > 1 && mode !== 'wifi' && (
+      {localIps.length > 1 && (
         <div className="flex items-center justify-between w-full text-[10px] px-1 text-linear-text-secondary">
           <span className="flex items-center gap-1">
             <Globe size={10} className="text-[#818cf8]" />
@@ -267,24 +218,27 @@ export const UniversalQrCard: React.FC<UniversalQrCardProps> = ({
       )}
 
       {/* Rendered SVG QR code with visual container */}
-      <div
-        className="p-2.5 bg-white rounded-xl shadow-[0_0_24px_rgba(255,255,255,0.18)] flex items-center justify-center cursor-pointer hover:scale-[1.02] active:scale-[0.99] transition-transform"
-        title="Scan with phone camera or companion app"
-        onClick={copyLinkToClipboard}
-        dangerouslySetInnerHTML={{ __html: qrSvg }}
-      />
+      {qrSvg ? (
+        <div
+          className="p-2 bg-white rounded-xl flex items-center justify-center"
+          role="img"
+          aria-label="Soko pairing QR code"
+          dangerouslySetInnerHTML={{ __html: qrSvg }}
+        />
+      ) : (
+        <div className="w-full rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-4 text-[11px] text-amber-200">
+          Waiting for this desktop's local network address. Connect to Wi-Fi, then reopen pairing.
+        </div>
+      )}
 
       {/* Mode Description & Instruction */}
       <div className="flex flex-col items-center gap-0.5">
         <span className="text-[10px] text-white/90 font-medium">
-          {mode === 'web' && 'Point phone camera at screen to open & auto-pair'}
-          {mode === 'native' && 'Scan from Soko Mobile Companion scanner tab'}
-          {mode === 'wifi' && 'Join workstation hotspot directly without typing password'}
+          {mode === 'web' && 'Scan with your phone camera to open Soko on your phone'}
+          {mode === 'native' && 'In Soko Mobile, tap Scan QR Code and point at this screen'}
         </span>
         <span className="text-[9px] text-linear-text-tertiary">
-          {mode === 'web' && 'No app installation required • Instant browser companion'}
-          {mode === 'native' && 'Native soko://pair cryptographic deep link handshake'}
-          {mode === 'wifi' && 'Guaranteed 1-to-1 link when router blocks peer-to-peer'}
+          Scan, then approve the pairing request on this desktop. Both devices must share a network.
         </span>
       </div>
 

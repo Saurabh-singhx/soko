@@ -248,6 +248,7 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
   const [leftEarTwitch, setLeftEarTwitch] = useState(false);
   const [rightEarTwitch, setRightEarTwitch] = useState(false);
   const [spinAngle, setSpinAngle] = useState(0);
+  const lastNotificationReactionRef = useRef(0);
   const [isSleeping, setIsSleeping] = useState(false);
   const [microSaccade, setMicroSaccade] = useState({ x: 0, y: 0 });
 
@@ -538,8 +539,12 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
 
     clearNotificationTimers();
 
-    // Pick 1 of 4 distinct notification reaction choreographies
-    const variant = Math.floor(Math.random() * 4);
+    // During a burst, keep the gaze response but avoid stacking full spins.
+    const now = Date.now();
+    const variant = now - lastNotificationReactionRef.current < 5000
+      ? 3
+      : Math.floor(Math.random() * 4);
+    lastNotificationReactionRef.current = now;
 
     if (variant === 0) {
       // VARIETY A: 360 Spin Roll -> Snap Watch Right (reading text) -> Check Left -> Settle
@@ -1388,8 +1393,8 @@ export const CharacterAvatar: React.FC<CharacterAvatarProps> = ({
 
   const headSpring = {
     type: 'spring',
-    stiffness: 350,
-    damping: 22,
+    stiffness: 280,
+    damping: 32,
     mass: 0.7,
   };
 

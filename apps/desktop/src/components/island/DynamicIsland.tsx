@@ -65,6 +65,8 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
 
   // Active state payloads
   const [activeNotification, setActiveNotification] = useState<MirroredNotification | null>(null);
+  const activeNotificationRef = useRef<MirroredNotification | null>(null);
+  const notificationQueueRef = useRef<MirroredNotification[]>([]);
   const [activeCli, setActiveCli] = useState<CliProcessStatus | null>(null);
   const [activeTransfer, setActiveTransfer] = useState<FileTransferStatus | null>(null);
   const [pendingPair, setPendingPair] = useState<PairRequestPending | null>(null);
@@ -382,6 +384,21 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     wakeToNormalMode();
   };
 
+  const showNextNotification = () => {
+    const next = notificationQueueRef.current.shift() || null;
+    activeNotificationRef.current = next;
+    setActiveNotification(next);
+    setIsBotClicked(false);
+    if (next) {
+      wakeToNormalMode();
+      setMood('alert');
+      setMode('notification');
+    } else {
+      setMode('compact');
+      setMood('idle');
+    }
+  };
+
   // Subscribe to live CLI Agent watcher status (Subscribed once on mount)
   useEffect(() => {
     const unsubAgent = connectionService.subscribeAgentActivity((status) => {
@@ -583,6 +600,21 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
         return;
       }
 
+      const isDuplicate = (item: MirroredNotification) =>
+        item.id === notif.id ||
+        (item.packageName === notif.packageName && item.title === notif.title &&
+          item.body === notif.body && Math.abs(item.timestamp - notif.timestamp) < 1500);
+      if ((activeNotificationRef.current && isDuplicate(activeNotificationRef.current)) ||
+          notificationQueueRef.current.some(isDuplicate)) return;
+
+      // Preserve arrivals during an open card instead of replacing its text mid-read.
+      if (activeNotificationRef.current) {
+        notificationQueueRef.current.push(notif);
+        if (notificationQueueRef.current.length > 20) notificationQueueRef.current.shift();
+        return;
+      }
+      activeNotificationRef.current = notif;
+
       startTransition(() => {
         wakeToNormalMode();
         setActiveNotification(notif);
@@ -594,6 +626,8 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
 
     const unsubCli = connectionService.onCli((cli) => {
       startTransition(() => {
+        activeNotificationRef.current = null;
+        setActiveNotification(null);
         wakeToNormalMode();
         setActiveCli(cli);
         setMood(cli.status === 'running' ? 'working' : 'happy');
@@ -604,6 +638,8 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
 
     const unsubTransfer = connectionService.onTransfer((transfer) => {
       startTransition(() => {
+        activeNotificationRef.current = null;
+        setActiveNotification(null);
         wakeToNormalMode();
         setActiveTransfer(transfer);
         setMood(transfer.status === 'active' ? 'working' : 'happy');
@@ -614,6 +650,8 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
 
     const unsubPair = connectionService.onPendingPair((pairReq) => {
       startTransition(() => {
+        activeNotificationRef.current = null;
+        setActiveNotification(null);
         wakeToNormalMode();
         setPendingPair(pairReq);
         setMood('alert');
@@ -658,13 +696,18 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
       // Generous reading duration: 8s for short, 12s for medium, 18s for long messages
       const readDelay = bodyLen > 180 ? 18000 : bodyLen > 80 ? 12000 : 8000;
       const timer = setTimeout(() => {
-        setMode('compact');
-        setMood('idle');
-        setIsBotClicked(false);
+        showNextNotification();
       }, readDelay);
       return () => clearTimeout(timer);
     }
   }, [mode, isHovered, activeNotification]);
+
+  // Resume queued phone notifications after a CLI, transfer, or pairing card closes.
+  useEffect(() => {
+    if (mode === 'compact' && !activeNotificationRef.current && notificationQueueRef.current.length > 0) {
+      showNextNotification();
+    }
+  }, [mode]);
 
   // Auto-collapse completed, cancelled, or failed file transfer and clear activeTransfer
   useEffect(() => {
@@ -714,9 +757,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     const handleGlobalClick = (e: MouseEvent) => {
       if (islandRef.current && !islandRef.current.contains(e.target as Node)) {
         if (modeRef.current === 'notification') {
-          setMode('compact');
-          setMood('idle');
-          setIsBotClicked(false);
+          showNextNotification();
         }
         setIsConnectionPopoverOpen(false);
       }
@@ -725,9 +766,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (modeRef.current === 'notification') {
-          setMode('compact');
-          setMood('idle');
-          setIsBotClicked(false);
+          showNextNotification();
         }
         setIsConnectionPopoverOpen(false);
       }
@@ -846,9 +885,10 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
 
         if (isAgentRunning && currentSession && currentSession.agent) {
           const detailLen = (currentSession.detail || currentSession.message || '').length;
+          const workspaceLen = (currentSession.workspaceName || '').length;
           const hasWorkspace = Boolean(currentSession.workspaceName);
           let width = hasWorkspace ? 380 : 330;
-          if (detailLen > 30) {
+          if (detailLen > 30 || workspaceLen > 14 || isMultiSession) {
             width = 420;
           } else if (detailLen > 16) {
             width = 395;
@@ -1399,11 +1439,11 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                   >
                     {/* Header Row: Done Check + Agent + Themed Project Badge + Tokens */}
                     <div className="flex items-center justify-between gap-1.5 w-full min-w-0 leading-none h-[18px]">
-                      <div className="flex items-center gap-1.5 min-w-0">
+                      <div className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden">
                         <div className="w-3.5 h-3.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0">
                           <Check size={9} className="text-emerald-400 stroke-[3]" />
                         </div>
-                        <span className="text-[10px] font-semibold text-emerald-400 tracking-wide uppercase shrink-0">
+                        <span className="text-[10px] font-semibold text-emerald-400 tracking-wide uppercase shrink-0 max-w-[100px] truncate">
                           {completedTaskNotice.name || completedTaskNotice.agent || 'Agent'}
                         </span>
                         {(() => {
@@ -1414,7 +1454,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                           const wsPath = completedTaskNotice.workspace || agentStatus?.workspace || wsName;
                           return wsName && completedTaskTheme ? (
                             <span
-                              className={`text-[9px] font-mono font-medium px-1.5 py-[1px] rounded border shrink-0 truncate max-w-[120px] transition-colors ${completedTaskTheme.bg} ${completedTaskTheme.text} ${completedTaskTheme.border}`}
+                              className={`text-[9px] font-mono font-medium px-1.5 py-[1px] rounded border min-w-0 max-w-[120px] truncate transition-colors ${completedTaskTheme.bg} ${completedTaskTheme.text} ${completedTaskTheme.border}`}
                               title={`Project: ${wsName}\nPath: ${wsPath}`}
                             >
                               📁 {wsName}
@@ -1467,7 +1507,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                         : 'Click to connect a device'
                     }
                   >
-                    <AnimatePresence mode="popLayout" initial={false}>
+                    <AnimatePresence mode="wait" initial={false}>
                       {isAgentRunning && currentSession && currentSession.agent ? (
                         <motion.div
                           key={`agent-${currentSession.sessionId || currentSession.agent}-${currentSession.workspaceName || agentStatus?.workspaceName || ''}`}
@@ -1479,7 +1519,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                         >
                           {/* Header Row: Agent Title + Project Badge + Multi-Agent Pill */}
                           <div className="flex items-center justify-between gap-1.5 w-full min-w-0 leading-none h-[18px]">
-                            <div className="flex items-center gap-1.5 min-w-0">
+                            <div className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden">
                               <span className={`text-[10px] font-semibold tracking-wide uppercase shrink-0 flex items-center gap-1 ${currentSessionTheme?.agentText || 'text-indigo-400'}`}>
                                 <span>{currentSession.agent === 'antigravity' ? '⚡ Antigravity' : currentSession.agent === 'codex' ? '⚡ Codex' : '⚡ Claude'}</span>
                               </span>
@@ -1492,7 +1532,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                                 const wsPath = currentSession.workspace || agentStatus?.workspace || wsName;
                                 return wsName && currentSessionTheme ? (
                                   <span
-                                    className={`text-[9px] font-mono font-medium px-1.5 py-[1px] rounded border shrink-0 truncate max-w-[120px] transition-colors ${currentSessionTheme.bg} ${currentSessionTheme.text} ${currentSessionTheme.border}`}
+                                    className={`text-[9px] font-mono font-medium px-1.5 py-[1px] rounded border min-w-0 max-w-[120px] truncate transition-colors ${currentSessionTheme.bg} ${currentSessionTheme.text} ${currentSessionTheme.border}`}
                                     title={`Project: ${wsName}\nPath: ${wsPath}`}
                                   >
                                     📁 {wsName}
@@ -1729,7 +1769,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, y: -2 }}
                           transition={{ duration: 0.18, ease: 'easeOut' }}
-                          className="w-full flex items-center justify-center"
+                          className="w-full min-w-0 flex items-center justify-center"
                         >
                           <span className="text-[12px] text-linear-text-primary font-medium tracking-tight whitespace-nowrap truncate max-w-[280px] transition-colors duration-150">
                             {dynamicStatusText}
@@ -1745,13 +1785,10 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({ onOpenSettings }) 
             {mode === 'notification' && activeNotification && (
               <IslandErrorBoundary name="NotificationBanner">
                 <NotificationBanner
-                  key="notification"
+                  key={activeNotification.id}
                   notification={activeNotification}
                   onDismiss={() => {
-                    setActiveNotification(null);
-                    setMode('compact');
-                    setMood('idle');
-                    setIsBotClicked(false);
+                    showNextNotification();
                   }}
                 />
               </IslandErrorBoundary>

@@ -4,6 +4,7 @@
  */
 
 const assert = require('assert');
+const jsQR = require('../../../apps/mobile/companion/qr/jsQR.min.js');
 const {
   generateQrMatrix,
   generateQrSvg,
@@ -69,6 +70,25 @@ async function runAllTests() {
     assert.strictEqual(matrix[0][0], true, 'Top-left finder outer corner');
     assert.strictEqual(matrix[3][3], true, 'Top-left finder center');
     assert.strictEqual(matrix[1][1], false, 'Top-left separator/gap');
+  });
+
+  it('Produces a code readable by the mobile companion decoder', () => {
+    const payload = `soko://pair?host=192.168.31.210&port=8766&pin=482195&exp=${Math.floor(Date.now() / 1000) + 300}`;
+    const matrix = generateQrMatrix(payload);
+    const scale = 4;
+    const width = (matrix.length + 8) * scale;
+    const rgba = new Uint8ClampedArray(width * width * 4);
+    for (let y = 0; y < width; y++) {
+      for (let x = 0; x < width; x++) {
+        const row = Math.floor(y / scale) - 4;
+        const col = Math.floor(x / scale) - 4;
+        const dark = row >= 0 && row < matrix.length && col >= 0 && col < matrix.length && matrix[row][col];
+        const index = (y * width + x) * 4;
+        rgba[index] = rgba[index + 1] = rgba[index + 2] = dark ? 0 : 255;
+        rgba[index + 3] = 255;
+      }
+    }
+    assert.strictEqual(jsQR(rgba, width, width)?.data, payload);
   });
 
   it('Renders valid SVG element with custom size and styling', () => {

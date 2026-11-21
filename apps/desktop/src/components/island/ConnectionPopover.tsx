@@ -78,11 +78,19 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
   const isMountedRef = useRef(true);
   const hasAutoScannedRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const qrSectionRef = useRef<HTMLDivElement>(null);
   const isConnected = status === 'connected' && Boolean(device?.isAuthorized);
   const isScanning = isScanningDevices || (!isConnected && status === 'scanning') || status === 'connecting';
   const localIps = connectionService.getLocalIps();
-  const primaryIp = localIps[0] || '192.168.31.210';
-  const mobileUrl = `http://${primaryIp}:8766`;
+  const primaryIp = localIps[0] || '';
+  const bridgePort = Number(new URL(connectionService.getBridgeUrl()).port) || 8766;
+  const mobileUrl = primaryIp ? `http://${primaryIp}:${bridgePort}` : '';
+
+  React.useEffect(() => {
+    if (showQrModal) {
+      requestAnimationFrame(() => qrSectionRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
+    }
+  }, [showQrModal]);
 
   React.useEffect(() => {
     isMountedRef.current = true;
@@ -236,6 +244,7 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
 
   const copyMobileLink = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!mobileUrl) return;
     navigator.clipboard?.writeText(mobileUrl);
     setCopiedIp(true);
     setTimeout(() => setCopiedIp(false), 2000);
@@ -243,6 +252,7 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
 
   const openMobileApp = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!mobileUrl) return;
     window.open(mobileUrl, '_blank');
   };
 
@@ -608,15 +618,21 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
                     <Smartphone size={16} />
                   </div>
                   <div className="max-w-[260px]">
-                    <h5 className="text-[11.5px] font-semibold text-white">No Soko Mobile devices open nearby</h5>
+                    <h5 className="text-[11.5px] font-semibold text-white">No phone found yet</h5>
                     <p className="text-[10px] text-linear-text-secondary mt-0.5">
-                      No Soko Mobile devices open nearby. Open Soko Mobile on your phone to connect.
+                      Open Soko Mobile on your phone and scan this desktop's QR code, or scan the network again.
                     </p>
                   </div>
                   <button
+                    onClick={() => setShowQrModal(true)}
+                    className="mt-1 px-3 py-1.5 rounded-lg bg-[#5E6AD2] hover:bg-[#6875E3] text-white text-[11px] font-semibold flex items-center gap-1.5"
+                  >
+                    <QrCode size={13} /> Show QR code
+                  </button>
+                  <button
                     onClick={fetchDiscoveredDevices}
                     disabled={isScanningDevices}
-                    className="mt-1 px-3 py-1 rounded-lg bg-[#5E6AD2] hover:bg-[#6875E3] text-white text-[10.5px] font-medium shadow-[0_0_12px_rgba(94,106,210,0.3)] active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-50"
+                    className="px-3 py-1 rounded-lg bg-white/[0.07] hover:bg-white/[0.12] text-white text-[10.5px] font-medium active:scale-95 transition-colors flex items-center gap-1.5 disabled:opacity-50"
                   >
                     <RefreshCw size={11} className={isScanningDevices ? 'animate-spin' : ''} />
                     <span>{isScanningDevices ? 'Scanning...' : 'Scan Devices'}</span>
@@ -639,18 +655,19 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setShowQrModal(!showQrModal)}
-                  className={`flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded transition-all ${
+                  className={`flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1.5 rounded-lg transition-colors ${
                     showQrModal
                       ? 'bg-[#5E6AD2] text-white shadow-[0_0_10px_rgba(94,106,210,0.4)]'
                       : 'text-[#818cf8] hover:text-white bg-[#5E6AD2]/15 hover:bg-[#5E6AD2]/30 border border-[#5E6AD2]/30'
                   }`}
-                  title="Toggle QR Code for instant camera pairing"
+                  title="Show pairing QR code"
                 >
                   <QrCode size={10} />
-                  <span>{showQrModal ? 'Hide QR' : 'Pair via QR'}</span>
+                  <span>{showQrModal ? 'Hide code' : 'Show QR code'}</span>
                 </button>
                 <button
                   onClick={openMobileApp}
+                  disabled={!mobileUrl}
                   className="flex items-center gap-1 text-[10px] text-[#5E6AD2] hover:text-[#7C88E8] hover:underline font-mono transition-colors"
                   title="Open companion in browser"
                 >
@@ -660,9 +677,10 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
             </div>
 
             <div className="flex items-center justify-between bg-black/40 px-2 py-1 rounded-lg border border-white/[0.06] font-mono text-[11px]">
-              <span className="text-white/90 select-all truncate mr-1.5">{mobileUrl}</span>
+              <span className="text-white/90 select-all truncate mr-1.5">{mobileUrl || 'Waiting for local network address'}</span>
               <button
                 onClick={copyMobileLink}
+                disabled={!mobileUrl}
                 className="p-1 rounded-md hover:bg-white/10 active:scale-90 text-linear-text-tertiary hover:text-white transition-all"
                 title="Copy URL"
               >
@@ -673,13 +691,14 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
 
           {/* Instant Universal QR Pairing Card (Option 3 Hybrid Engine) */}
           {showQrModal && (
-            <UniversalQrCard
+            <div ref={qrSectionRef}>
+              <UniversalQrCard
               sasPin={sasPin}
               localIps={localIps}
-              certFingerprint={connectionService.getCertFingerprint()}
-              tlsEnabled={Boolean(connectionService.getCertFingerprint())}
+              port={bridgePort}
               onRegeneratePin={onRegeneratePin}
-            />
+              />
+            </div>
           )}
 
           {/* SAS PIN Row */}

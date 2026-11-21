@@ -957,8 +957,20 @@
         </svg>
         <div id="connectionGuideText">
           <strong>Desktop Not Connected</strong><br>
-          Ensure Soko is running on your PC and both devices are on the same Wi-Fi network (or your mobile hotspot).
+          Ensure Soko is running on your PC and both devices are on the same Wi-Fi network, then scan its QR code.
         </div>
+      </div>
+
+      <div class="card" id="quickPairCard">
+        <div class="card-title"><div class="card-title-left">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect></svg>
+          <span>Pair with desktop</span>
+        </div></div>
+        <button class="btn" onclick="openQrScanner()" style="width: 100%; min-height: 48px; display: inline-flex; align-items: center; justify-content: center; gap: 10px; background: #5E6AD2; border: 1px solid #8791ef; color: #fff; padding: 12px 16px; font-size: 14px; font-weight: 700; border-radius: 14px;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><path d="M3 14v7h7"></path></svg>
+          <span>Scan desktop QR code</span>
+        </button>
+        <p style="font-size: 12px; color: #c5cad6; text-align: center; margin: 8px 0 0; line-height: 1.45;">Open Connection Hub on your desktop, show its QR code, then approve the link.</p>
       </div>
 
       <!-- Device Identity & Discovery Settings Card -->
@@ -1050,22 +1062,6 @@
             <div style="font-size: 11px; color: var(--text-secondary); text-align: center; padding: 4px 0;">
               Probing Wi-Fi for active Soko desktops...
             </div>
-          </div>
-        </div>
-
-        <!-- Instant QR Code Pairing Button -->
-        <div style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px;">
-          <button class="btn" onclick="openQrScanner()" style="width: 100%; min-height: 46px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: rgba(99, 102, 241, 0.2); border: 1.5px solid rgba(99, 102, 241, 0.45); color: #e0e7ff; padding: 12px 16px; font-weight: 700; border-radius: 14px; box-shadow: 0 4px 14px rgba(99, 102, 241, 0.18);">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="3" y="3" width="7" height="7"></rect>
-              <rect x="14" y="3" width="7" height="7"></rect>
-              <rect x="14" y="14" width="7" height="7"></rect>
-              <rect x="3" y="14" width="7" height="7"></rect>
-            </svg>
-            <span>Scan QR Code to Pair Instantly</span>
-          </button>
-          <div style="font-size: 11px; color: var(--text-secondary); text-align: center;">
-            Supports live video scan, camera photo snap, or screenshot upload
           </div>
         </div>
 
@@ -1630,8 +1626,8 @@
             </svg>
           </div>
           <div>
-            <div style="font-size: 14px; font-weight: 700; color: #fff;">Pair via QR Code</div>
-            <div style="font-size: 11px; color: var(--text-secondary);" id="qrModalSubtitle">Dynamic Island Pairing</div>
+            <div style="font-size: 14px; font-weight: 700; color: #fff;">Scan desktop QR code</div>
+            <div style="font-size: 11px; color: var(--text-secondary);" id="qrModalSubtitle">Keep both devices on the same network</div>
           </div>
         </div>
         <button onclick="closeQrScanner()" aria-label="Close Scanner" style="width: 40px; height: 40px; min-width: 40px; min-height: 40px; background: rgba(255,255,255,0.08); border: 1px solid var(--border-subtle); border-radius: 10px; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center; touch-action: manipulation;">
@@ -1643,11 +1639,12 @@
       <div id="qrLiveView" style="display: flex; flex-direction: column; width: 100%; gap: 12px; align-items: center;">
         <div style="position: relative; width: 100%; aspect-ratio: 1; max-width: 280px; border-radius: 16px; overflow: hidden; background: #000; border: 1px solid rgba(255,255,255,0.12);">
           <video id="qrScannerVideo" playsinline autoplay muted style="width: 100%; height: 100%; object-fit: cover;"></video>
+          <div id="qrCameraStatus" style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #d1d5db; font-size: 13px; font-weight: 600; text-align: center; padding: 24px; pointer-events: none;">Starting camera…</div>
           <div style="position: absolute; inset: 20px; border: 2px dashed #6366F1; border-radius: 14px; pointer-events: none; box-shadow: 0 0 0 9999px rgba(0,0,0,0.5);"></div>
-          <div id="qrScanBeam" style="position: absolute; left: 20px; right: 20px; height: 2px; background: #10B981; box-shadow: 0 0 14px #10B981; top: 20px; animation: qrScanBeam 2s ease-in-out infinite alternate;"></div>
+          <div id="qrScanBeam" style="display: none; position: absolute; left: 20px; right: 20px; height: 2px; background: #10B981; box-shadow: 0 0 14px #10B981; top: 20px; animation: qrScanBeam 2s ease-in-out infinite alternate;"></div>
         </div>
-        <span style="font-size: 11.5px; color: var(--text-secondary); text-align: center; line-height: 1.4;">
-          Point your phone camera at the QR code displayed on your desktop screen.
+        <span style="font-size: 12px; color: #d1d5db; text-align: center; line-height: 1.4;">
+          On desktop, open Connection Hub → Show QR code. Hold the code inside the frame.
         </span>
         <div style="display: flex; gap: 8px; width: 100%;">
           <button class="btn" onclick="triggerQrCameraPhoto()" style="flex: 1; min-height: 40px; padding: 8px 12px; font-size: 12px; background: rgba(255,255,255,0.08); border: 1px solid var(--border-subtle); color: #fff;">
@@ -1837,6 +1834,9 @@
     let discoveredDesktops = [];
     let qrMediaStream = null;
     let qrScanTimer = null;
+    let qrHandling = false;
+    let lastRejectedQr = '';
+    let lastRejectedQrAt = 0;
 
     function parsePairingPayload(input) {
       if (!input) return null;
@@ -2069,7 +2069,13 @@
       const fallbackView = document.getElementById('qrDeniedFallback');
       const decodingView = document.getElementById('qrDecodingView');
       const deniedReason = document.getElementById('qrDeniedReason');
+      const cameraStatus = document.getElementById('qrCameraStatus');
+      const scanBeam = document.getElementById('qrScanBeam');
       if (!modal) return;
+
+      qrHandling = false;
+      if (cameraStatus) cameraStatus.style.display = 'flex';
+      if (scanBeam) scanBeam.style.display = 'none';
 
       modal.style.display = 'flex';
       if (decodingView) decodingView.style.display = 'none';
@@ -2111,13 +2117,15 @@
         if (video) {
           video.srcObject = qrMediaStream;
           await video.play();
+          if (cameraStatus) cameraStatus.style.display = 'none';
+          if (scanBeam) scanBeam.style.display = 'block';
         }
 
         const hasBarcodeDetector = 'BarcodeDetector' in window;
         const detector = hasBarcodeDetector ? new BarcodeDetector({ formats: ['qr_code'] }) : null;
 
         qrScanTimer = setInterval(async () => {
-          if (!video || !video.videoWidth || !video.videoHeight) return;
+          if (qrHandling || !video || !video.videoWidth || !video.videoHeight) return;
           try {
             if (detector) {
               const barcodes = await detector.detect(video);
@@ -2170,19 +2178,21 @@
     }
 
     function handleQrScanPayload(text) {
-      if (!text) return;
-      closeQrScanner();
-
-      if (navigator.vibrate) {
-        navigator.vibrate([40, 60, 40]);
-      }
+      if (!text || qrHandling) return;
 
       const payload = (window.SokoUniversalScanner && window.SokoUniversalScanner.parsePayload(text)) || parsePairingPayload(text);
       if (payload && payload.pin) {
         if (payload.isExpired) {
-          showToast('Scanned QR code has expired. Please refresh the code on your desktop screen.', 'amber');
+          if (text !== lastRejectedQr || Date.now() - lastRejectedQrAt > 4000) {
+            showToast('QR code expired. Refresh it on your desktop and scan again.', 'amber');
+            lastRejectedQr = text;
+            lastRejectedQrAt = Date.now();
+          }
           return;
         }
+        qrHandling = true;
+        closeQrScanner();
+        if (navigator.vibrate) navigator.vibrate(40);
         if (payload.host) {
           ipInput.value = `${payload.host}:${payload.port || DEFAULT_PORT}`;
         }
@@ -2190,13 +2200,15 @@
         if (pinInput) {
           pinInput.value = `${payload.pin.slice(0, 3)} ${payload.pin.slice(3, 6)}`;
         }
-        showToast('QR Code Scanned! Instant Pairing initiated...', 'success');
+        showToast('Code scanned. Waiting for desktop approval...', 'success');
         connectWs();
-        setTimeout(() => {
-          requestPairing();
-        }, 300);
+        requestPairing();
       } else {
-        showToast('Scanned code did not contain valid Soko pairing PIN', 'amber');
+        if (text !== lastRejectedQr || Date.now() - lastRejectedQrAt > 4000) {
+          showToast('This is not a Soko pairing code. Try the QR shown in Connection Hub.', 'amber');
+          lastRejectedQr = text;
+          lastRejectedQrAt = Date.now();
+        }
       }
     }
 
@@ -2428,6 +2440,9 @@
       const pinInput = document.getElementById('sasPinInput');
       const btnPair = document.getElementById('btnPairDevice');
       const btnUnpair = document.getElementById('btnUnpairDevice');
+      const quickPairCard = document.getElementById('quickPairCard');
+
+      if (quickPairCard) quickPairCard.style.display = (state === 'paired' || state === 'pending') ? 'none' : '';
 
       if (hint && message) hint.innerText = message;
 
@@ -2654,7 +2669,7 @@
           bannerText.innerHTML = `<strong>Connected to Soko Desktop HUD</strong><br>Wi-Fi link established. Alerts and audio are streaming in real-time.`;
         } else if (state === 'wifi_available') {
           banner.className = 'info-banner discovered';
-          bannerText.innerHTML = `<strong>Desktop Present on Wi-Fi • Unpaired</strong><br>Soko Desktop detected at ${cleanHost(ipInput.value)}. Enter the 6-digit PIN below to pair this device.`;
+          bannerText.innerHTML = `<strong>Desktop Present on Wi-Fi • Unpaired</strong><br>Soko Desktop detected at ${cleanHost(ipInput.value)}. Scan its QR code or enter the 6-digit PIN below.`;
         } else if (state === 'connecting') {
           banner.className = 'info-banner hint';
           bannerText.innerHTML = `<strong>Connecting to Desktop...</strong><br>Looking for Soko Desktop at ${cleanHost(ipInput.value)}...`;

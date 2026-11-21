@@ -76,7 +76,7 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
 
           {/* App Name */}
           <span
-            className="text-[10px] font-bold tracking-wider uppercase font-mono shrink-0"
+            className="text-[10px] font-bold tracking-wider uppercase font-mono shrink-0 max-w-[108px] truncate"
             style={{ color: brand.color }}
           >
             {notification.appName}
@@ -146,7 +146,7 @@ export const NotificationBanner: React.FC<NotificationBannerProps> = ({
         title="Click to copy message"
       >
         <div
-          className={`text-[12px] leading-relaxed break-words whitespace-pre-wrap select-text max-h-[220px] overflow-y-auto pr-1 pb-0.5 transition-colors ${
+          className={`text-[12px] leading-relaxed break-words [overflow-wrap:anywhere] whitespace-pre-wrap select-text max-h-[220px] overflow-y-auto pr-1 pb-0.5 transition-colors ${
             copied
               ? 'text-emerald-300 font-medium'
               : 'text-neutral-300 group-hover/text:text-white'

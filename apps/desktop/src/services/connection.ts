@@ -1159,6 +1159,12 @@ class ConnectionManager {
 
       case 'NOTIFICATION_POST':
         if (packet.payload) {
+          // Agent completions already have their own compact HUD state. The bridge
+          // also broadcasts them as notifications for phones; showing that packet
+          // here duplicates the update and exposes the task prompt as a banner.
+          if (packet.payload.packageName === 'com.soko.agent' && packet.payload.isAgentDone) {
+            break;
+          }
           if (this.activeDevice) {
             this.activeDevice.lastSeen = Date.now();
           }
