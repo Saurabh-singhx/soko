@@ -263,10 +263,11 @@
         const cleanIp = String(ip || '').trim();
         return /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$|^[a-zA-Z0-9\.\-]+$/.test(cleanIp) && cleanIp !== '127.0.0.1';
       });
+      this.lastProbeErrors = [];
       const probes = candidates.map(async (ip) => {
         const cleanIp = String(ip || '').trim();
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 1800);
+        const timer = setTimeout(() => controller.abort(), 5000);
         try {
           const res = await fetch(`http://${cleanIp}:${cleanPort}/api/discovery`, {
             signal: controller.signal,
@@ -274,9 +275,12 @@
           if (res.ok) {
             const metadata = await res.json();
             if (metadata.service === 'soko') return cleanIp;
+            this.lastProbeErrors.push(`${cleanIp}: not a Soko desktop`);
+          } else {
+            this.lastProbeErrors.push(`${cleanIp}: HTTP ${res.status}`);
           }
-        } catch {
-          // Try another interface.
+        } catch (error) {
+          this.lastProbeErrors.push(`${cleanIp}: ${error.name === 'AbortError' ? 'timed out' : 'network or browser access blocked'}`);
         } finally {
           clearTimeout(timer);
         }

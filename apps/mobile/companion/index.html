@@ -1871,8 +1871,10 @@
         ? await window.SokoUniversalScanner.probeReachableHost(candidates, payload.port || DEFAULT_PORT)
         : payload.host;
       if (!host) {
-        showToast('Desktop unreachable. Connect both devices to the same Wi-Fi or hotspot, then scan again.', 'error');
-        updatePairingUI('rejected', 'No desktop address in this QR code is reachable. Check the Wi-Fi or hotspot connection and scan again.');
+        closeQrScanner();
+        const details = (window.SokoUniversalScanner?.lastProbeErrors || []).join('; ');
+        showToast('Connection check failed. See the pairing message below.', 'error');
+        updatePairingUI('rejected', `Could not reach desktop. ${details}. Fully quit and restart the updated desktop bridge, then show a fresh QR. Keep both devices on the same Wi-Fi or hotspot and allow Soko through the desktop firewall.`);
         return false;
       }
       localStorage.setItem('soko_tls_enabled', payload.tls ? '1' : '0');
@@ -1880,8 +1882,7 @@
       const pinInput = document.getElementById('sasPinInput');
       if (pinInput) pinInput.value = `${payload.pin.slice(0, 3)} ${payload.pin.slice(3, 6)}`;
       connectWs();
-      await requestPairing();
-      return true;
+      return await requestPairing();
     }
 
     async function checkUrlPairingParams() {
@@ -2185,6 +2186,7 @@
           closeQrScanner();
           if (navigator.vibrate) navigator.vibrate(40);
         }
+        if (!connected) closeQrScanner();
         qrHandling = false;
       } else {
         if (text !== lastRejectedQr || Date.now() - lastRejectedQrAt > 4000) {
@@ -2510,6 +2512,7 @@
       try {
         const httpBase = getHttpBaseUrl();
         const res = await fetch(`${httpBase}/api/pair`, {
+          signal: AbortSignal.timeout(10000),
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
@@ -2519,16 +2522,20 @@
           updatePairingUI('pending', 'PIN accepted! Tap "Approve" on your Desktop Dynamic Island to link.');
           showToast('PIN Verified! Click Approve on your Desktop Island.', 'success');
           startPairStatusPolling(payload.deviceId);
+          return true;
         } else {
           const friendlyError = data.error === 'PIN_MISMATCH' || (data.error && data.error.includes('PIN'))
             ? 'Incorrect PIN. Please check the 6 digits on your desktop Dynamic Island.'
             : (data.error || 'Connection rejected by desktop.');
           updatePairingUI('rejected', friendlyError);
           showToast(friendlyError, 'error');
+          return false;
         }
       } catch (err) {
         if (wsSent) {
           updatePairingUI('pending', 'PIN submitted! Please click "Approve" on your Desktop Island.');
+          startPairStatusPolling(payload.deviceId);
+          return true;
         } else {
           const host = cleanHost(ipInput.value);
           updatePairingUI('rejected', `Cannot connect to desktop at ${host}. Verify Wi-Fi connection.`);
