@@ -16,6 +16,7 @@ import {
   Globe,
   Terminal,
   FolderDown,
+  FolderOpen,
   Sparkles,
   Headphones,
   ArrowLeft,
@@ -74,6 +75,7 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
   const [selectedDeviceToPair, setSelectedDeviceToPair] = useState<DiscoveredDevice | null>(null);
   const [isPairingInFlight, setIsPairingInFlight] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
+  const [activeView, setActiveView] = useState<'connection' | 'quick'>('connection');
 
   const isMountedRef = useRef(true);
   const hasAutoScannedRef = useRef(false);
@@ -300,8 +302,29 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
         </button>
       </div>
 
+      <div className="grid grid-cols-2 gap-1 rounded-xl bg-white/[0.04] p-1 shrink-0 mb-2" role="group" aria-label="Connection hub views">
+        <button
+          type="button"
+          aria-pressed={activeView === 'connection'}
+          onClick={() => setActiveView('connection')}
+          className={`min-h-9 rounded-lg text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9da7ff] ${activeView === 'connection' ? 'bg-[#5E6AD2] text-white shadow-sm' : 'text-white/65 hover:bg-white/[0.07] hover:text-white'}`}
+        >
+          Connection
+        </button>
+        <button
+          type="button"
+          aria-pressed={activeView === 'quick'}
+          onClick={() => setActiveView('quick')}
+          className={`min-h-9 rounded-lg text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9da7ff] ${activeView === 'quick' ? 'bg-[#5E6AD2] text-white shadow-sm' : 'text-white/65 hover:bg-white/[0.07] hover:text-white'}`}
+        >
+          Quick settings
+        </button>
+      </div>
+
       {/* Scrollable Body Container */}
       <div className="flex-1 overflow-y-auto pr-0.5 space-y-2.5 custom-scrollbar">
+        <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileSelect} />
+        {activeView === 'connection' ? <>
         {/* Main Connection State Card */}
         <div className="bg-white/[0.035] hover:bg-white/[0.05] border border-white/[0.08] rounded-xl p-3 backdrop-blur-xl transition-all duration-200">
           {isConnected ? (
@@ -723,14 +746,6 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
           </div>
         </div>
 
-        {/* Hidden file input for native file selection (All files) */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          className="hidden"
-          onChange={handleFileSelect}
-        />
-
         {/* Active CLI Agent Sessions Section */}
         {agentActivity?.activeSessions && agentActivity.activeSessions.length > 0 && (
           <div className="bg-white/[0.035] border border-white/[0.08] rounded-xl p-2.5 backdrop-blur-xl flex flex-col gap-2 shadow-sm">
@@ -892,15 +907,16 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
           </div>
         </div>
 
-        {/* Quick Workstation Actions (Glassmorphic Buttons with Glows) */}
-        <div>
-          <div className="flex items-center justify-between mb-1.5 px-0.5">
-            <span className="text-[9.5px] uppercase font-mono tracking-wider text-linear-text-tertiary flex items-center gap-1">
-              <Sparkles size={9} className="text-[#5E6AD2]" /> Quick Actions
-            </span>
+        </> : <>
+        {/* Quick workstation actions */}
+        <section aria-labelledby="quick-actions-title">
+          <div className="mb-2 px-0.5">
+            <h3 id="quick-actions-title" className="text-xs font-semibold text-white">Quick actions</h3>
+            <p className="mt-0.5 text-[11px] text-white/60">Files and tools for this desktop</p>
           </div>
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="grid grid-cols-2 gap-2">
             <button
+              type="button"
               onClick={() => {
                 if (onSendFile) {
                   onSendFile();
@@ -908,27 +924,29 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
                   fileInputRef.current?.click();
                 }
               }}
-              title="Select files from desktop to send to phone"
-              className="flex items-center justify-center gap-1.5 py-2 px-1 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/25 hover:border-emerald-500/40 hover:shadow-[0_0_16px_rgba(52,211,153,0.3)] active:scale-[0.96] transition-all duration-150 text-[10.5px] font-semibold"
+              title="Choose a file to send to your phone"
+              className="col-span-2 flex min-h-11 items-center gap-2.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 px-3 text-emerald-200 border border-emerald-500/30 active:scale-[0.98] transition-[background-color,transform] duration-150 text-[11px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300"
             >
-              <FolderDown size={12} /> Send File
+              <FolderDown size={16} aria-hidden="true" /> Send file to phone
             </button>
             <button
+              type="button"
               onClick={() => {
                 connectionService.executeCliCommand('sysinfo');
                 onClose();
               }}
-              title="Run system specs diagnostics"
-              className="flex items-center justify-center gap-1.5 py-2 px-1 rounded-xl bg-[#5E6AD2]/10 hover:bg-[#5E6AD2]/20 text-[#7C88E8] border border-[#5E6AD2]/25 hover:border-[#5E6AD2]/40 hover:shadow-[0_0_16px_rgba(94,106,210,0.3)] active:scale-[0.96] transition-all duration-150 text-[10.5px] font-semibold"
+              title="Show desktop system information"
+              className="flex min-h-11 items-center gap-2 rounded-xl bg-white/[0.05] hover:bg-white/[0.09] px-3 text-white/90 border border-white/[0.12] active:scale-[0.98] transition-[background-color,transform] duration-150 text-[11px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9da7ff]"
             >
-              <Terminal size={12} /> Specs
+              <Terminal size={15} aria-hidden="true" /> System info
             </button>
             <button
+              type="button"
               onClick={() => connectionService.openTransfersFolder()}
-              title="Open downloads & transfers directory"
-              className="flex items-center justify-center gap-1.5 py-2 px-1 rounded-xl bg-white/[0.05] hover:bg-white/[0.12] text-white/90 hover:text-white border border-white/[0.08] hover:border-white/20 hover:shadow-[0_0_14px_rgba(255,255,255,0.15)] active:scale-[0.96] transition-all duration-150 text-[10.5px] font-semibold"
+              title="Open the transfers folder"
+              className="flex min-h-11 items-center gap-2 rounded-xl bg-white/[0.05] hover:bg-white/[0.09] px-3 text-white/90 border border-white/[0.12] active:scale-[0.98] transition-[background-color,transform] duration-150 text-[11px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9da7ff]"
             >
-              <FolderDown size={12} /> Storage
+              <FolderOpen size={15} aria-hidden="true" /> Transfers
             </button>
           </div>
 
@@ -995,29 +1013,32 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
               </div>
             </div>
           )}
-        </div>
+        </section>
 
         {/* Ambient Mascot Orb Settings & Instant Preview */}
-        <div className="bg-white/[0.03] border border-white/[0.08] rounded-xl p-2.5 flex flex-col gap-2 backdrop-blur-md">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5">
-              <Sparkles size={11} className="text-[#5E6AD2]" />
-              <span className="text-[11px] font-semibold text-white tracking-tight">Idle Mascot Orb</span>
+        <section aria-labelledby="mascot-setting-title" className="border-t border-white/[0.1] pt-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h3 id="mascot-setting-title" className="flex items-center gap-1.5 text-xs font-semibold text-white">
+                <Sparkles size={13} className="text-[#9da7ff]" aria-hidden="true" /> Idle mascot
+              </h3>
+              <p className="mt-1 text-[11px] leading-4 text-white/60">Choose when the expanded mascot returns to the island.</p>
             </div>
             <button
+              type="button"
               onClick={() => {
                 onClose();
                 window.dispatchEvent(new CustomEvent('soko:preview-mascot-mode'));
               }}
-              className="text-[10px] text-[#7C88E8] hover:text-white bg-[#5E6AD2]/15 hover:bg-[#5E6AD2]/30 px-2 py-0.5 rounded-lg border border-[#5E6AD2]/30 active:scale-95 transition-all font-medium flex items-center gap-1"
+              className="shrink-0 min-h-8 text-[11px] text-[#b8bfff] hover:text-white bg-[#5E6AD2]/15 hover:bg-[#5E6AD2]/25 px-2.5 rounded-lg border border-[#5E6AD2]/30 active:scale-[0.98] transition-[background-color,transform] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9da7ff]"
               title="Preview enlarged mascot orb now"
             >
-              <span>Preview Orb</span>
+              Preview
             </button>
           </div>
-          <div className="flex items-center justify-between text-[10px] text-linear-text-secondary">
-            <span>Auto-contract after:</span>
-            <div className="flex items-center gap-1">
+          <div className="mt-3">
+            <span id="mascot-timeout-label" className="text-[11px] font-medium text-white/80">Return to island after</span>
+            <div className="grid grid-cols-5 gap-1.5 mt-1.5" role="group" aria-labelledby="mascot-timeout-label">
               {[
                 { label: '30s', val: 30000 },
                 { label: '1m', val: 60000 },
@@ -1026,16 +1047,19 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
                 { label: 'Off', val: 0 },
               ].map((opt) => (
                 <button
+                  type="button"
                   key={opt.label}
+                  aria-pressed={idleTimeoutVal === opt.val}
+                  aria-label={opt.label === 'Off' ? 'Never return automatically' : `Return after ${opt.label}`}
                   onClick={() => {
                     setIdleTimeoutVal(opt.val);
                     localStorage.setItem('soko_idle_timeout', String(opt.val));
                     window.dispatchEvent(new Event('soko:idle-settings-changed'));
                   }}
-                  className={`px-1.5 py-0.5 rounded font-mono text-[9.5px] transition-all ${
+                  className={`min-h-9 rounded-lg text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9da7ff] ${
                     idleTimeoutVal === opt.val
-                      ? 'bg-[#5E6AD2] text-white font-semibold shadow-sm'
-                      : 'bg-white/5 hover:bg-white/10 text-white/70 hover:text-white'
+                      ? 'bg-[#5E6AD2] text-white shadow-sm'
+                      : 'bg-white/[0.05] hover:bg-white/[0.1] text-white/70 hover:text-white border border-white/[0.1]'
                   }`}
                 >
                   {opt.label}
@@ -1043,7 +1067,7 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
               ))}
             </div>
           </div>
-        </div>
+        </section>
 
         {/* Recent Transfer Pill */}
         {connectionService.getTransferHistory().length > 0 && (
@@ -1075,6 +1099,7 @@ export const ConnectionPopover: React.FC<ConnectionPopoverProps> = ({
             </div>
           </div>
         )}
+        </>}
       </div>
 
       {/* Action Footer (Permanently Pinned at Bottom, Never Cut Off) */}
