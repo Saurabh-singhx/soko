@@ -104,6 +104,7 @@ jobs:
             dist-desktop/*.deb
             dist-desktop/*.rpm
             dist-desktop/*.tar.gz
+            dist-desktop/*.yml
             apks/soko-mobile.apk
             apks/soko-mobile-lite.apk
             apks/soko-desktop.apk
@@ -146,53 +147,11 @@ jobs:
           path: |
             dist-desktop/*.exe
             dist-desktop/*.zip
-
-  build-macos:
-    name: Build macOS Binaries
-    needs: [prepare-version]
-    runs-on: macos-latest
-    continue-on-error: true
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Apply Resolved Build Version
-        run: |
-          node scripts/update_version.js "${{ needs.prepare-version.outputs.version }}"
-
-      - name: Install Node Dependencies
-        run: |
-          npm install
-          npm --prefix apps/desktop install
-
-      - name: Build Web Frontend
-        run: npm run build:desktop
-
-      - name: Package macOS Desktop Targets (.dmg, .zip)
-        env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run build:macos
-
-      - name: Upload macOS Assets
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-assets
-          path: |
-            dist-desktop/*.dmg
-            dist-desktop/*-mac.zip
+            dist-desktop/*.yml
 
   publish-release:
     name: Publish Unified GitHub Release & Update Gist Feed
-    needs: [prepare-version, build-linux-and-apk, build-windows, build-macos]
+    needs: [prepare-version, build-linux-and-apk, build-windows]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -214,14 +173,6 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: windows-assets
-          path: release-assets
-          merge-multiple: true
-
-      - name: Download macOS Assets (Optional)
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: macos-assets
           path: release-assets
           merge-multiple: true
 

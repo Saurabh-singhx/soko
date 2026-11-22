@@ -53,6 +53,7 @@
       }
     ],
     "category": "Utility",
+    "syncDesktopName": true,
     "executableArgs": [
       "--ozone-platform=x11"
     ],
@@ -84,23 +85,10 @@
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
-    "shortcutName": "Soko"
+    "shortcutName": "Soko",
+    "artifactName": "soko-${os}-${arch}-setup.${ext}"
   },
-  "mac": {
-    "category": "public.app-category.utilities",
-    "target": [
-      {
-        "target": "dmg",
-        "arch": ["x64", "arm64"]
-      },
-      {
-        "target": "zip",
-        "arch": ["x64", "arm64"]
-      }
-    ],
-    "hardenedRuntime": true,
-    "gatekeeperAssess": false,
-    "entitlements": "build/entitlements.mac.plist",
-    "entitlementsInherit": "build/entitlements.mac.inherit.plist"
+  "portable": {
+    "artifactName": "soko-${os}-${arch}.${ext}"
   }
 }
