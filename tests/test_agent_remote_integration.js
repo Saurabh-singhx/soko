@@ -388,7 +388,17 @@ async function runTests() {
         { type: 'USER_INPUT', content: 'Finish quickly', step_index: 1 },
         { type: 'PLANNER_RESPONSE', content: 'Done quickly', step_index: 2 },
       ].map(item => JSON.stringify(item)).join('\n') + '\n');
-      await new Promise((r) => setTimeout(r, 2200));
+      
+      const waitForNotice = async () => {
+        const start = Date.now();
+        while (Date.now() - start < 4500) {
+          if (nonStreamingPackets.some((p) => p.packetType === 'NOTIFICATION_POST' && p.payload?.sessionId === fastSessionId)) {
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 150));
+        }
+      };
+      await waitForNotice();
       const fastNotices = nonStreamingPackets.filter(
         (p) => p.packetType === 'NOTIFICATION_POST' && p.payload?.sessionId === fastSessionId
       );
@@ -441,8 +451,17 @@ async function runTests() {
       }) + '\n';
       fs.appendFileSync(transcriptPath, liveTurn);
 
-      // Wait for the bridge delta poller (400ms interval)
-      await new Promise((r) => setTimeout(r, 1000));
+      // Wait for the bridge delta poller (400ms interval) with resilient polling
+      const waitForChunk = async () => {
+        const start = Date.now();
+        while (Date.now() - start < 3500) {
+          if (streamChunks.some((p) => p.payload?.sessionId === testSessionId && Array.isArray(p.payload?.events) && p.payload.events.length > 0)) {
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      };
+      await waitForChunk();
 
       const hasChunk = streamChunks.some(
         (p) => p.payload?.sessionId === testSessionId && Array.isArray(p.payload?.events) && p.payload.events.length > 0
