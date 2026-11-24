@@ -1441,8 +1441,8 @@
         </div>
 
         <div class="transfer-stats">
-          <span id="transferStatus">Ready</span>
-          <span id="transferSpeed">0 MB/s</span>
+          <span id="transferStatus" role="status" aria-live="polite">Ready</span>
+          <span id="transferSpeed">Choose a file to begin</span>
         </div>
 
         <!-- Download Finished Action -->
@@ -2879,7 +2879,7 @@
         fill.style.background = 'linear-gradient(90deg, var(--brand), var(--color-green))';
         fill.style.width = pct + '%';
         document.getElementById('transferStatus').innerText = pct === 100 ? `${fname}Transfer Completed!` : `${fname}${pct}%`;
-        document.getElementById('transferSpeed').innerText = pct === 100 ? 'Complete' : '42 MB/s';
+        document.getElementById('transferSpeed').innerText = pct === 100 ? 'Complete' : 'Receiving';
         document.getElementById('btnCancelTransfer').style.display = pct === 100 ? 'none' : 'flex';
         document.getElementById('btnRetryTransfer').style.display = 'none';
         if (pct === 100) {
@@ -3543,16 +3543,7 @@
         if (saved) {
           mobileTransferHistory = JSON.parse(saved);
         } else {
-          mobileTransferHistory = [
-            {
-              id: 'mob-hist-1',
-              filename: 'soko-v1.0.0-release.apk',
-              totalBytes: 52000000,
-              direction: 'received',
-              status: 'completed',
-              completedAt: Date.now() - 1000 * 60 * 20
-            }
-          ];
+          mobileTransferHistory = [];
           saveMobileTransferHistory();
         }
       } catch (e) {
@@ -3676,7 +3667,8 @@
         const mb = (item.totalBytes / 1048576).toFixed(1);
         const timeStr = new Date(item.completedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         const isSent = item.direction === 'sent';
-        const safeFilename = (item.filename || 'file').replace(/"/g, '&quot;');
+        const safeFilename = String(item.filename || 'file').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+        const safeId = String(item.id || '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
         return `
           <div style="display: flex; align-items: center; justify-content: space-between; background: #080A0F; border: 1px solid var(--border-subtle); border-radius: 10px; padding: 8px 12px; font-size: 12px;">
             <div style="display: flex; align-items: center; gap: 10px; min-width: 0;">
@@ -3696,10 +3688,10 @@
             </div>
 
             <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
-              <button onclick="openOrDownloadTransferredFile('${safeFilename}')" class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px; border-radius: 8px; font-weight: 500;">
+              <button onclick="openOrDownloadTransferredFile(${JSON.stringify(item.filename || 'file').replace(/</g, '\\u003c')})" class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px; border-radius: 8px; font-weight: 500; min-height:36px;">
                 <span>Save</span>
               </button>
-              <button onclick="deleteMobileHistoryItem('${item.id}', '${safeFilename}')" style="background: none; border: none; color: var(--text-tertiary); cursor: pointer; padding: 6px; border-radius: 4px;">
+              <button aria-label="Remove ${safeFilename} from history" onclick="deleteMobileHistoryItem(${JSON.stringify(item.id || '').replace(/</g, '\\u003c')}, ${JSON.stringify(item.filename || 'file').replace(/</g, '\\u003c')})" style="background: none; border: none; color: var(--text-tertiary); cursor: pointer; padding: 6px; border-radius: 4px; min-width:40px; min-height:40px;">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
                   <polyline points="3 6 5 6 21 6"></polyline>
                   <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>

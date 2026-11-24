@@ -31,6 +31,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const { spawn, exec, execSync } = require('child_process');
+const { parseCodexActivity, readCodexActivityTail } = require('./codex_activity');
 
 const WebSocketState = {
   CONNECTING: 0,
@@ -1667,6 +1668,7 @@ const AGENT_COMPLETION_RETENTION_MS = 20000; // 20s retention for completed agen
 const agentSessionRegistry = new Map();
 // Cache for parsed transcripts: path -> { mtimeMs, size, data }
 const transcriptParseCache = new Map();
+const codexActivityCache = new Map();
 
 /**
  * Extracts clean user request from content.
@@ -2460,48 +2462,33 @@ function checkActiveAgentActivity() {
                   continue;
                 }
 
-                // Parse tail buffer
-                const tailBuf = Buffer.alloc(Math.min(s.size, 32768));
-                const fd = fs.openSync(full, 'r');
-                const readBytes = Math.min(s.size, 32768);
-                fs.readSync(fd, tailBuf, 0, readBytes, Math.max(0, s.size - readBytes));
-                fs.closeSync(fd);
-                const raw = tailBuf.toString('utf8');
-                const lines = raw.trim().split('\n');
-
-                let isDone = false;
-                let codexTokens = 1200;
-                let taskSummary = 'Codex task';
-                let detail = 'Generating code solution';
-                let cwd = '';
-
-                for (let i = lines.length - 1; i >= 0; i--) {
-                  if (!lines[i].trim()) continue;
-                  try {
-                    const item = JSON.parse(lines[i]);
-                    if (item.type === 'event_msg' && (item.payload?.type === 'task_complete' || item.payload?.type === 'turn_complete')) {
-                      isDone = true;
-                    }
-                    if (item.type === 'token_count' && item.payload?.info?.total_token_usage?.total_tokens) {
-                      codexTokens = item.payload.info.total_token_usage.total_tokens;
-                    } else if (item.type === 'token_usage_record' && item.payload?.usage?.total_tokens) {
-                      codexTokens = item.payload.usage.total_tokens;
-                    }
-                    if (item.type === 'response_item' && item.payload?.type === 'message' && item.payload?.content) {
-                      const txt = item.payload.content[0]?.text;
-                      if (txt && typeof txt === 'string') {
-                        taskSummary = txt.split('\n')[0].slice(0, 75);
-                      }
-                    }
-                    if (!cwd && item.payload?.cwd) {
-                      cwd = item.payload.cwd;
-                    }
-                  } catch {}
+                const cached = codexActivityCache.get(full);
+                let raw = '';
+                let parsed = cached?.mtimeMs === s.mtimeMs && cached?.size === s.size ? cached.data : null;
+                if (!parsed) {
+                  raw = readCodexActivityTail(full, s.size);
+                  parsed = parseCodexActivity(raw);
+                  codexActivityCache.set(full, { mtimeMs: s.mtimeMs, size: s.size, data: parsed });
                 }
+                const { isDone, taskSummary, detail } = parsed;
+                const codexTokens = parsed.tokensUsed;
+                let cwd = parsed.cwd;
+                const existing = agentSessionRegistry.get(regKey);
 
                 if (!cwd) {
                   const m = raw.match(/"cwd":"([^"]+)"/);
                   if (m) cwd = m[1];
+                }
+                if (!cwd && s.size > 0) {
+                  const head = Buffer.alloc(Math.min(s.size, 4096));
+                  const headFd = fs.openSync(full, 'r');
+                  try {
+                    fs.readSync(headFd, head, 0, head.length, 0);
+                    const first = head.toString('utf8').split('\n')[0];
+                    cwd = JSON.parse(first).payload?.cwd || '';
+                  } catch {} finally {
+                    fs.closeSync(headFd);
+                  }
                 }
                 if (!cwd) {
                   cwd = process.env.SOKO_WORKSPACE || path.resolve(__dirname, '..') || process.cwd();
@@ -2537,8 +2524,8 @@ function checkActiveAgentActivity() {
                     agent: 'codex',
                     name: 'OpenAI Codex',
                     status: 'working',
-                    detail: detail || (taskSummary ? `Working: ${taskSummary}` : 'Generating code solution'),
-                    message: taskSummary || 'Generating code solution',
+                    detail,
+                    message: taskSummary,
                     taskSummary,
                     tokensUsed: codexTokens,
                     workspace: cwd,

@@ -158,7 +158,15 @@ export const TransferProgress: React.FC<TransferProgressProps> = ({
       </div>
 
       {/* Progress Track */}
-      <div className="w-full bg-white/10 rounded-full h-1 overflow-hidden">
+      <div
+        className="w-full bg-white/10 rounded-full h-1.5 overflow-hidden"
+        role="progressbar"
+        aria-label={`File transfer: ${transfer.filename}`}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={isCancelled || isFailed ? undefined : Math.round(transfer.percentage)}
+        aria-valuetext={isCompleted ? 'Completed' : isCancelled ? 'Cancelled' : isFailed ? 'Failed' : `${Math.round(transfer.percentage)} percent`}
+      >
         <motion.div
           className={`h-full rounded-full ${
             isCompleted
@@ -179,7 +187,7 @@ export const TransferProgress: React.FC<TransferProgressProps> = ({
 
       {/* Stats Bottom Bar */}
       <div className="flex justify-between text-[9px] text-linear-text-tertiary font-mono">
-        <span>
+        <span className="min-w-0 truncate" title={transfer.error || undefined}>
           {isCancelled
             ? 'Partial buffer deleted • Cleaned up'
             : isFailed
