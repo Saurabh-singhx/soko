@@ -3040,8 +3040,8 @@ function validateInboundPacket(packet) {
     }
   }
 
-  // 3. Monotonic sequence counter (Replay attack defense)
-  if (typeof packet.packetId === 'number') {
+  // 3. Monotonic sequence counter (Replay attack defense for unencrypted packets)
+  if (typeof packet.packetId === 'number' && !packet.encrypted) {
     if (packet.packetId <= highestSeenPacketId && packet.packetType !== 'HEARTBEAT_PING' && packet.packetType !== 'COMPANION_ANNOUNCE') {
       return { valid: false, reason: `Replay detected: packetId ${packet.packetId} <= highest seen ${highestSeenPacketId}` };
     }
