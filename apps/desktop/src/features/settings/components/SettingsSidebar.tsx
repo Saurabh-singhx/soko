@@ -1,12 +1,11 @@
 import React, { useState } from 'react';
-import { Sliders, Smartphone, Zap, Terminal, FolderDown, ShieldCheck, Sparkles, RefreshCw, Bot, Search, X, Power, Radio } from 'lucide-react';
+import { Sliders, Smartphone, Zap, FolderDown, ShieldCheck, Sparkles, RefreshCw, Bot, Search, X, Power, Radio } from 'lucide-react';
 import { SettingsTabId } from '../types.ts';
 
 export const SETTINGS_NAVIGATION = [
   { id: 'pairing', label: 'Devices & pairing', icon: Smartphone, group: 'Workspace', shortcut: '2', keywords: 'phone bluetooth wifi connect' },
   { id: 'files', label: 'File transfers', icon: FolderDown, group: 'Workspace', shortcut: '5', keywords: 'storage downloads send apk' },
-  { id: 'cli', label: 'CLI & agents', icon: Terminal, group: 'Workspace', shortcut: '3', keywords: 'commands whitelist terminal' },
-  { id: 'swarm', label: 'Agent activity', icon: Bot, group: 'Workspace', shortcut: '4', keywords: 'swarm sub agents visualizer' },
+  { id: 'swarm', label: 'Agent activity', icon: Bot, group: 'Workspace', shortcut: '3', keywords: 'swarm sub agents visualizer' },
   { id: 'tokens', label: 'Token usage', icon: Zap, group: 'Workspace', shortcut: '9', keywords: 'ai telemetry tracker cost' },
   { id: 'general', label: 'General', icon: Sliders, group: 'Preferences', shortcut: '1', keywords: 'startup system display' },
   { id: 'mascot', label: 'Mascot & island', icon: Sparkles, group: 'Preferences', shortcut: '7', keywords: 'characters appearance idle' },

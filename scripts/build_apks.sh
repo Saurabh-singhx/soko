@@ -924,7 +924,7 @@ public class MainActivity extends Activity {
                         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
                             builder.setVisibility(Notification.VISIBILITY_PUBLIC);
                         }
-                        nm.notify(9001, builder.build());
+                        nm.notify((int)(System.currentTimeMillis() & 0x7fffffff), builder.build());
                     } catch (Exception e) {
                         Log.e("SokoApp", "Error posting system notification: " + e.getMessage());
                     }
@@ -965,11 +965,11 @@ public class MainActivity extends Activity {
                 Log.w("SokoApp", "Could not start Soko background service: " + e.getMessage());
             }
 
-            if (android.os.Build.VERSION.SDK_INT >= 33) {
-                if (checkSelfPermission("android.permission.POST_NOTIFICATIONS") != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                    requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 102);
-                }
-            }
+        }
+
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission("android.permission.POST_NOTIFICATIONS") != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 103);
         }
 
         createMediaNotificationChannel();
@@ -1056,10 +1056,10 @@ public class MainActivity extends Activity {
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
-        settings.setAllowFileAccess(true);
+        settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(true);
-        settings.setAllowFileAccessFromFileURLs(true);
-        settings.setAllowUniversalAccessFromFileURLs(true);
+        settings.setAllowFileAccessFromFileURLs(false);
+        settings.setAllowUniversalAccessFromFileURLs(false);
         // The bundled page uses a trustworthy HTTPS origin so getUserMedia can open the camera.
         // The desktop bridge still uses local HTTP/WS during pairing.
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
@@ -1073,6 +1073,18 @@ public class MainActivity extends Activity {
         webView.addJavascriptInterface(new SokoNativeBridge(), "SokoNative");
 
         webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                Uri uri = request.getUrl();
+                if ("https".equalsIgnoreCase(uri.getScheme()) &&
+                    "appassets.androidplatform.net".equalsIgnoreCase(uri.getHost()) &&
+                    uri.getPath() != null && uri.getPath().startsWith("/assets/")) return false;
+                if ("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme())) {
+                    try { startActivity(new Intent(Intent.ACTION_VIEW, uri)); } catch (Exception ignored) {}
+                }
+                return true;
+            }
+
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();

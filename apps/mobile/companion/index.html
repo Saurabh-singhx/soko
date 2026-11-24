@@ -924,7 +924,7 @@
 
     <!-- Terminal Tab Mode: Integrated Header Controls (Mascot eyes reflect agent state; no text clutter) -->
     <div class="header-terminal-controls" id="headerTerminalControls" style="display: none;">
-      <button class="header-stream-btn" id="agentStreamToggleBtn" title="Request Live Terminal Stream" aria-label="Request Live Terminal Stream">
+      <button class="header-stream-btn" id="agentStreamToggleBtn" title="Request Live Terminal Stream" aria-label="Request Live Terminal Stream" aria-pressed="false">
         <span class="stream-dot" id="agentStreamDot"></span>
         <span class="stream-btn-label" id="agentStreamLabel">Stream: OFF</span>
       </button>
@@ -1584,10 +1584,12 @@
           id="agentPromptInput"
           class="agent-dock-input"
           placeholder="Message PC agent or give instruction..."
+          aria-label="Agent instruction"
           autocomplete="off"
         />
+        <div class="agent-dock-hint" id="agentPromptModeNote" role="status" hidden></div>
       </div>
-      <button class="agent-dock-send-btn" id="agentSendBtn" title="Send message to PC">
+      <button class="agent-dock-send-btn" id="agentSendBtn" title="Send instruction" aria-label="Send instruction">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
       </button>
     </div>
@@ -2659,10 +2661,12 @@
           bannerText.innerHTML = `<strong>Connected to Soko Desktop HUD</strong><br>Wi-Fi link established. Alerts and audio are streaming in real-time.`;
         } else if (state === 'wifi_available') {
           banner.className = 'info-banner discovered';
-          bannerText.innerHTML = `<strong>Desktop Present on Wi-Fi • Unpaired</strong><br>Soko Desktop detected at ${cleanHost(ipInput.value)}. Scan its QR code or enter the 6-digit PIN below.`;
+          bannerText.innerHTML = '<strong>Desktop Present on Wi-Fi • Unpaired</strong><br>Soko Desktop detected at <span class="bridge-host"></span>. Scan its QR code or enter the 6-digit PIN below.';
+          bannerText.querySelector('.bridge-host').textContent = cleanHost(ipInput.value);
         } else if (state === 'connecting') {
           banner.className = 'info-banner hint';
-          bannerText.innerHTML = `<strong>Connecting to Desktop...</strong><br>Looking for Soko Desktop at ${cleanHost(ipInput.value)}...`;
+          bannerText.innerHTML = '<strong>Connecting to Desktop...</strong><br>Looking for Soko Desktop at <span class="bridge-host"></span>...';
+          bannerText.querySelector('.bridge-host').textContent = cleanHost(ipInput.value);
         } else {
           banner.className = 'info-banner offline';
           bannerText.innerHTML = `<strong>Desktop Not Connected</strong><br>Ensure Soko is running on your PC and both devices are on the same Wi-Fi network (or your mobile hotspot).`;
@@ -3022,6 +3026,10 @@
         if (window.AgentTerminal && typeof window.AgentTerminal.handleTranscriptChunk === 'function') {
           window.AgentTerminal.handleTranscriptChunk(packet.payload);
         }
+      } else if (packet.packetType === 'AGENT_PROMPT_RESULT') {
+        if (window.AgentTerminal && typeof window.AgentTerminal.handlePromptResult === 'function') {
+          window.AgentTerminal.handlePromptResult(packet.payload);
+        }
       } else if (packet.packetType === 'FETCH_AGENT_SESSIONS_RESULT') {
         if (window.AgentTerminal && typeof window.AgentTerminal.updateSessionList === 'function') {
           window.AgentTerminal.updateSessionList(packet.payload?.sessions);
@@ -3200,14 +3208,23 @@
 
       // If active session key is established, automatically encrypt sensitive payloads
       const sensitiveTypes = ['NOTIFICATION_POST', 'CLI_EXECUTE', 'AGENT_SEND_PROMPT', 'FILE_OFFER'];
+      if (type === 'AGENT_SEND_PROMPT' && !(window.SokoCrypto && window.SokoCrypto.hasActiveSession())) {
+        return false;
+      }
       if (window.SokoCrypto && window.SokoCrypto.hasActiveSession() && sensitiveTypes.includes(type)) {
         window.SokoCrypto.encryptPayload(finalPayload, type).then(encryptedEnvelope => {
           if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify(encryptedEnvelope));
+          } else if (type === 'AGENT_SEND_PROMPT' && window.AgentTerminal?.handlePromptResult) {
+            window.AgentTerminal.handlePromptResult({ success: false, error: 'Desktop connection closed before the instruction was sent.' });
           }
         }).catch(err => {
-          console.warn('[Crypto] Envelope encryption error, falling back:', err);
-          sendPlainPacket(type, finalPayload, token, deviceId);
+          console.warn('[Crypto] Envelope encryption error:', err);
+          if (type === 'AGENT_SEND_PROMPT' && window.AgentTerminal?.handlePromptResult) {
+            window.AgentTerminal.handlePromptResult({ success: false, error: 'Secure send failed. Reconnect and try again.' });
+          } else {
+            showToast('Secure send failed. Reconnect and try again.', 'error');
+          }
         });
         return true;
       }
