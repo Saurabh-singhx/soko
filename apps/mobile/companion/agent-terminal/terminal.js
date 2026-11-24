@@ -23,6 +23,9 @@
     isPreviewMode: false,
     isStreamingActive: false,
     previousAgentStatus: null,
+    pendingPrompt: null,
+    pendingPromptTimer: null,
+    notifiedRevisions: new Set(),
     streamToggleBtn: null,
     streamDot: null,
     streamLabel: null,
@@ -167,6 +170,7 @@
       this.headerSubtitle = document.getElementById('headerSubtitle');
       this.promptInput = document.getElementById('agentPromptInput');
       this.sendBtn = document.getElementById('agentSendBtn');
+      this.promptModeNote = document.getElementById('agentPromptModeNote');
       this.exitBtn = document.getElementById('agentExitBtn');
     },
 
@@ -291,6 +295,28 @@
     lastNotifiedSessionId: null,
     lastNotifiedTimestamp: 0,
 
+    selectedProvider() {
+      const session = this.allSessions.find((item) => item.sessionId === this.currentSessionId);
+      return session?.agent || (/^(codex|claude)-/.exec(this.currentSessionId || '')?.[1]) || 'antigravity';
+    },
+
+    updatePromptControls() {
+      if (!this.promptInput || !this.sendBtn) return;
+      const provider = this.selectedProvider();
+      const readOnly = provider === 'codex' || provider === 'claude';
+      this.promptInput.disabled = readOnly || !this.currentSessionId;
+      this.sendBtn.disabled = readOnly || !this.currentSessionId || Boolean(this.pendingPrompt);
+      this.promptInput.placeholder = readOnly
+        ? `${provider === 'codex' ? 'Codex' : 'Claude'} is view only here; continue in its PC terminal`
+        : this.currentSessionId ? 'Send an instruction to Antigravity' : 'Select an agent session first';
+      this.sendBtn.title = readOnly ? 'Prompting is available in the original PC terminal' : 'Send instruction';
+      this.sendBtn.setAttribute('aria-label', this.sendBtn.title);
+      if (this.promptModeNote) {
+        this.promptModeNote.hidden = !readOnly;
+        this.promptModeNote.textContent = readOnly ? `${provider === 'codex' ? 'Codex' : 'Claude'} stream is view only. Send prompts from the PC terminal.` : '';
+      }
+    },
+
     /**
      * Called whenever user switches to the Terminal tab.
      */
@@ -317,6 +343,7 @@
         return;
       }
       this.fetchSessions();
+      this.updatePromptControls();
       // Auto-start or resume streaming if user hasn't explicitly clicked to pause
       if (!this.userManuallyPaused && !this.isStreamingActive) {
         this.startTerminalStream();
@@ -421,10 +448,14 @@
       if (this.isStreamingActive) {
         this.streamToggleBtn.classList.add('streaming-active');
         this.streamToggleBtn.title = 'Terminal Streaming Active (Tap to pause)';
+        this.streamToggleBtn.setAttribute('aria-pressed', 'true');
+        this.streamToggleBtn.setAttribute('aria-label', 'Pause terminal stream');
         if (this.streamLabel) this.streamLabel.textContent = 'Streaming';
       } else {
         this.streamToggleBtn.classList.remove('streaming-active');
         this.streamToggleBtn.title = 'Request Live Terminal Stream';
+        this.streamToggleBtn.setAttribute('aria-pressed', 'false');
+        this.streamToggleBtn.setAttribute('aria-label', 'Start terminal stream');
         if (this.streamLabel) this.streamLabel.textContent = 'Stream: OFF';
       }
     },
@@ -435,9 +466,15 @@
     notifyAgentDone(info) {
       const sessionId = (info && info.sessionId) || this.currentSessionId || 'default';
       const now = Date.now();
+      const revision = info?.completionRevision;
+      if (revision && this.notifiedRevisions.has(`${sessionId}:${revision}`)) return;
       // Deduplicate rapid completion alerts for the same session within 4 seconds
-      if (this.lastNotifiedSessionId === sessionId && (now - this.lastNotifiedTimestamp) < 4000) {
+      if (!revision && this.lastNotifiedSessionId === sessionId && (now - this.lastNotifiedTimestamp) < 4000) {
         return;
+      }
+      if (revision) {
+        this.notifiedRevisions.add(`${sessionId}:${revision}`);
+        if (this.notifiedRevisions.size > 100) this.notifiedRevisions.clear();
       }
       this.lastNotifiedSessionId = sessionId;
       this.lastNotifiedTimestamp = now;
@@ -460,7 +497,7 @@
       }
 
       // 3. Web Notification API
-      if (typeof window.Notification !== 'undefined') {
+      if (!window.SokoNative && typeof window.Notification !== 'undefined') {
         if (Notification.permission === 'granted') {
           try {
             new Notification(title, {
@@ -541,6 +578,7 @@
       this.allSessions = sessions.sort((a, b) => (Number(b.mtimeMs) || 0) - (Number(a.mtimeMs) || 0));
       this.activeSessions = this.allSessions;
       this.slicePageSessions();
+      this.updatePromptControls();
 
       if (this.recentSessions.length === 0) {
         if (this.sessionSelect) {
@@ -590,7 +628,7 @@
         const timeLabel = s.status === 'working'
           ? '⚡ Active'
           : (s.status === 'waiting' ? '⏳ Waiting' : this.formatRelativeTime(s.mtimeMs));
-        opt.textContent = `Conv ${convNum} • ${timeLabel}`;
+        opt.textContent = `${(s.agent || 'Agent').replace(/^./, (letter) => letter.toUpperCase())} ${convNum} • ${timeLabel}`;
         this.sessionSelect.appendChild(opt);
       });
 
@@ -695,7 +733,12 @@
      */
     switchSession(sessionId) {
       if (!sessionId) return;
+      const oldSessionId = this.currentSessionId;
+      if (oldSessionId && oldSessionId !== sessionId && this.isStreamingActive && typeof window.sendPacket === 'function') {
+        window.sendPacket('AGENT_STOP_TERMINAL_STREAM', { sessionId: oldSessionId });
+      }
       this.currentSessionId = sessionId;
+      this.updatePromptControls();
 
       // Ensure current session is on the active page
       const currentIdx = this.recentSessions.findIndex((s) => s.sessionId === sessionId);
@@ -778,14 +821,6 @@
     handleActivityStatus(payload) {
       if (!payload) return;
 
-      if (payload.sessionId && !this.currentSessionId) {
-        this.currentSessionId = payload.sessionId;
-      }
-
-      if (payload.activeSessions && payload.activeSessions.length > 0) {
-        this.updateSessionList(payload.activeSessions);
-      }
-
       const prevStatus = this.previousAgentStatus;
       const isWorking = payload.status === 'working' || payload.status === 'thinking';
       const isWaiting = payload.status === 'waiting';
@@ -800,6 +835,7 @@
       if (wasRunning && isCompleted) {
         this.notifyAgentDone({
           sessionId: payload.sessionId || this.currentSessionId,
+          completionRevision: payload.mtimeMs ? `${payload.mtimeMs}:${payload.taskSummary || payload.message || ''}` : undefined,
           appName: payload.name || 'Google Antigravity',
           title: `${payload.name || 'Agent'}: Done ✓`,
           message: payload.message || payload.taskSummary || 'Agent finished task successfully',
@@ -809,26 +845,21 @@
       this.setMascotState(isWorking ? 'working' : isWaiting ? 'waiting' : 'idle');
       this.updatePaginationUI();
 
-      const isTerminalActive = document.getElementById('tab-cli')?.classList.contains('active');
-      if (isTerminalActive) {
-        if (this.headerAppTitle) {
-          this.headerAppTitle.textContent = payload.workspaceName || 'Soko Cockpit';
-        }
-        if (this.headerSubtitle) {
-          const tokens = payload.tokensUsed ? `${payload.tokensUsed.toLocaleString()} tokens` : '';
-          const rawTask = payload.taskSummary || payload.detail || (isWorking ? 'Executing...' : 'Ready');
-          const task = rawTask.length > 36 ? `${rawTask.slice(0, 35)}…` : rawTask;
-          this.headerSubtitle.textContent = [tokens, task].filter(Boolean).join(' • ');
-          this.headerSubtitle.title = [tokens, rawTask].filter(Boolean).join(' • ');
-        }
-      }
     },
 
     /**
      * Handles initial full transcript history payload.
      */
     handleTranscriptHistory(data) {
-      if (!data || !Array.isArray(data.turns)) return;
+      if (!data) return;
+      if (data.sessionId && this.currentSessionId && data.sessionId !== this.currentSessionId) return;
+      if (!data.success) {
+        this.isStreamingActive = false;
+        this.updateStreamButtonUI();
+        this.renderEmptyState(data.error || 'Could not load this agent session. Choose another conversation.');
+        return;
+      }
+      if (!Array.isArray(data.turns)) return;
       this.cursor = data.cursor || 0;
       this.isWorking = Boolean(data.isWorking);
       this.isWaiting = Boolean(data.isWaiting);
@@ -991,6 +1022,7 @@
             }
 
             if (ev.status === 'DONE') {
+              if (currentTurn.status !== 'completed') feedNeedsUpdate = true;
               currentTurn.status = 'completed';
             }
           }
@@ -1034,6 +1066,8 @@
         return;
       }
 
+      const nearBottom = this.feedScroll.scrollHeight - this.feedScroll.scrollTop - this.feedScroll.clientHeight < 80;
+      const previousScrollTop = this.feedScroll.scrollTop;
       this.feedScroll.innerHTML = '';
 
       this.turns.forEach((turn, idx) => {
@@ -1113,7 +1147,7 @@
             agentBubble.innerHTML = `
               <div class="feed-agent-header">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2 2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"></path><rect x="4" y="8" width="16" height="12" rx="2"></rect></svg>
-                <span>Antigravity Agent</span>
+                <span>${this.escapeHtml(this.selectedProvider() === 'codex' ? 'Codex' : this.selectedProvider() === 'claude' ? 'Claude' : 'Antigravity')}</span>
               </div>
               <div class="feed-agent-text">${this.formatAgentResponse(resp)}</div>
             `;
@@ -1124,7 +1158,8 @@
         this.feedScroll.appendChild(itemEl);
       });
 
-      this.scrollToBottom();
+      if (nearBottom) this.scrollToBottom();
+      else this.feedScroll.scrollTop = previousScrollTop;
     },
 
     formatAgentResponse(raw) {
@@ -1148,16 +1183,15 @@
     renderEmptyState(message) {
       if (!this.feedScroll) return;
       if (!this.isStreamingActive) {
+        const hasSession = Boolean(this.currentSessionId);
         this.feedScroll.innerHTML = `
           <div class="feed-empty-state">
             <div class="empty-icon-wrap" style="color: var(--term-amber); background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.3);">
               <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
             </div>
-            <div class="empty-title">Terminal Stream Paused</div>
-            <div class="empty-desc">${this.escapeHtml(message || 'Tap below to request real-time terminal streaming. Soko will notify you when the agent finishes.')}</div>
-            <button class="btn-request-stream" onclick="window.AgentTerminal && window.AgentTerminal.toggleTerminalStream()">
-              ▶ Request Terminal Stream
-            </button>
+            <div class="empty-title">${hasSession ? 'Terminal Stream Paused' : 'Waiting for a PC agent'}</div>
+            <div class="empty-desc">${this.escapeHtml(message || (hasSession ? 'Tap below to request real-time terminal streaming.' : 'Connect to your desktop and start an agent task to see it here.'))}</div>
+            ${hasSession ? '<button class="btn-request-stream" onclick="window.AgentTerminal && window.AgentTerminal.toggleTerminalStream()">▶ Request Terminal Stream</button>' : ''}
           </div>
         `;
       } else {
@@ -1203,6 +1237,14 @@
 
       const text = this.promptInput.value.trim();
       if (!text) return;
+      if (this.selectedProvider() !== 'antigravity') {
+        if (typeof window.showToast === 'function') window.showToast('This session is view only. Use its PC terminal to send prompts.', 'info');
+        return;
+      }
+      if (text.length > 16000) {
+        if (typeof window.showToast === 'function') window.showToast('Instruction is too long (16,000 character limit).', 'error');
+        return;
+      }
 
       if (!this.currentSessionId) {
         if (typeof window.showToast === 'function') {
@@ -1212,27 +1254,15 @@
       }
 
       this.sendPrompt(text);
-      this.promptInput.value = '';
     },
 
     sendPrompt(text) {
-      console.log(`[Agent Terminal] Dispatching prompt: "${text}" to ${this.currentSessionId}`);
-
-      // Optimistic user turn addition for instantaneous UI response
-      this.turns.push({
-        id: `turn-local-${Date.now()}`,
-        timestamp: Date.now(),
-        userInput: text,
-        thinking: ['Dispatching prompt to host CLI agent...'],
-        toolCalls: [],
-        responses: [],
-        status: 'working',
-      });
-      this.renderFeed();
-
-      if (this.sendBtn) {
-        this.sendBtn.disabled = true;
-      }
+      if (this.pendingPrompt) return;
+      this.pendingPrompt = { text, sessionId: this.currentSessionId };
+      this.pendingPromptTimer = setTimeout(() => {
+        this.handlePromptResult({ success: false, error: 'The desktop did not confirm the instruction. Check the PC terminal before retrying.' });
+      }, 15000);
+      this.updatePromptControls();
 
       const payload = {
         sessionId: this.currentSessionId,
@@ -1240,38 +1270,44 @@
         timestamp: Date.now(),
       };
 
-      const unlockUI = () => {
-        if (this.sendBtn) this.sendBtn.disabled = false;
-      };
-
       if (typeof window.sendPacket === 'function') {
-        window.sendPacket('AGENT_SEND_PROMPT', payload);
-        if (typeof window.showToast === 'function') {
-          window.showToast('Instruction sent to agent ✓', 'info');
+        if (!window.sendPacket('AGENT_SEND_PROMPT', payload)) {
+          this.handlePromptResult({ success: false, error: 'Secure desktop link unavailable. Reconnect and try again.' });
         }
-        setTimeout(() => {
-          unlockUI();
-          this.syncCurrentSession();
-        }, 1200);
       } else if (typeof window.postHttp === 'function') {
         window.postHttp('/api/agent/prompt', payload)
-          .then((res) => {
-            unlockUI();
-            if (typeof window.showToast === 'function') {
-              if (res && res.success) {
-                window.showToast(res.status === 'queued' ? 'Prompt queued for next turn' : 'Prompt dispatched to agent', 'info');
-              } else {
-                window.showToast(res?.error || 'Failed to dispatch prompt', 'red');
-              }
-            }
-            setTimeout(() => this.syncCurrentSession(), 1000);
-          })
-          .catch((err) => {
-            unlockUI();
-            if (typeof window.showToast === 'function') {
-              window.showToast(err.message, 'red');
-            }
-          });
+          .then((res) => this.handlePromptResult(res))
+          .catch((err) => this.handlePromptResult({ success: false, error: err.message }));
+      } else {
+        this.handlePromptResult({ success: false, error: 'Desktop connection unavailable.' });
+      }
+    },
+
+    handlePromptResult(result) {
+      const pending = this.pendingPrompt;
+      if (!pending) return;
+      this.pendingPrompt = null;
+      clearTimeout(this.pendingPromptTimer);
+      this.pendingPromptTimer = null;
+      this.updatePromptControls();
+      if (!result?.success) {
+        if (typeof window.showToast === 'function') window.showToast(result?.error || 'Could not send instruction.', 'error');
+        return;
+      }
+      if (this.promptInput?.value.trim() === pending.text) this.promptInput.value = '';
+      if (pending.sessionId === this.currentSessionId) {
+        this.turns.push({
+          id: `turn-local-${Date.now()}`,
+          timestamp: Date.now(),
+          userInput: pending.text,
+          thinking: [result.status === 'queued' ? 'Queued for the next turn' : 'Sent to PC agent'],
+          toolCalls: [], responses: [], status: 'working',
+        });
+        this.renderFeed();
+        setTimeout(() => this.syncCurrentSession(), 1000);
+      }
+      if (typeof window.showToast === 'function') {
+        window.showToast(result.status === 'queued' ? 'Instruction queued for next turn' : 'Instruction sent', 'success');
       }
     },
 

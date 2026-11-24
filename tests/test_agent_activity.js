@@ -183,6 +183,27 @@ async function main() {
     await assert.rejects(manager.dispatchPrompt('codex-sameprefix-a', 'hello'), /observation-only/);
     await assert.rejects(manager.dispatchPrompt('claude-claude-a', 'hello'), /observation-only/);
   });
+  await test('Codex live deltas show turns and actions without private rollout records', () => {
+    const file = path.join(temp, 'codex/rollout-sameprefix-a.jsonl');
+    const cursor = fs.statSync(file).size;
+    fs.appendFileSync(file, [
+      { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Fix mobile stream' }] } },
+      { type: 'response_item', payload: { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'PRIVATE_INSTRUCTION' }] } },
+      { type: 'response_item', payload: { type: 'custom_tool_call', name: 'exec', input: 'PRIVATE_COMMAND' } },
+      { type: 'response_item', payload: { type: 'custom_tool_call_output', output: 'PRIVATE_TOOL_OUTPUT' } },
+      { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Stream fixed' }] } },
+      { type: 'event_msg', payload: { type: 'task_complete' } },
+    ].map(record => JSON.stringify(record)).join('\n') + '\n');
+    const delta = manager.readDelta('codex-sameprefix-a', cursor);
+    assert.deepEqual(delta.events.map(event => event.type), ['USER_INPUT', 'TOOL_CALL', 'ASSISTANT', 'TURN_COMPLETE']);
+    assert.equal(delta.events[0].content, 'Fix mobile stream');
+    assert.equal(delta.events[1].tool_calls[0].name, 'exec');
+    assert.equal(delta.events[2].content, 'Stream fixed');
+    assert(!JSON.stringify(delta).includes('PRIVATE_'));
+    const history = manager.getTranscriptHistory('codex-sameprefix-a');
+    assert.equal(history.cursor, fs.statSync(file).size);
+    assert(history.turns.some(turn => turn.responses.includes('Stream fixed')));
+  });
   console.log(`\n${passed} agent activity regressions passed.`);
 }
 main().catch(e => { console.error(e); process.exitCode = 1; }).finally(() => fs.rmSync(temp, { recursive: true, force: true }));

@@ -98,25 +98,28 @@ function encodeWsFrame(data) {
   const isBuffer = Buffer.isBuffer(data);
   const payload = isBuffer ? data : Buffer.from(data, 'utf8');
   const len = payload.length;
+  const mask = crypto.randomBytes(4);
+  const masked = Buffer.from(payload);
+  for (let i = 0; i < masked.length; i++) masked[i] ^= mask[i % 4];
   let header;
 
   if (len < 126) {
-    header = Buffer.from([0x81, len]);
+    header = Buffer.from([0x81, 0x80 | len]);
   } else if (len <= 65535) {
     header = Buffer.alloc(4);
     header[0] = 0x81;
-    header[1] = 126;
+    header[1] = 0x80 | 126;
     header.writeUInt16BE(len, 2);
   } else {
     header = Buffer.alloc(10);
     header[0] = 0x81;
-    header[1] = 127;
+    header[1] = 0x80 | 127;
     header.writeBigUInt64BE(BigInt(len), 2);
   }
-  return Buffer.concat([header, payload]);
+  return Buffer.concat([header, mask, masked]);
 }
 
-function createTestWsClient(onMessage) {
+function createTestWsClient(onMessage, simulateRemote = false) {
   return new Promise((resolve, reject) => {
     const client = net.createConnection({ port: TEST_PORT, host: '127.0.0.1' }, () => {
       const key = crypto.randomBytes(16).toString('base64');
@@ -127,6 +130,7 @@ function createTestWsClient(onMessage) {
         'Connection: Upgrade',
         `Sec-WebSocket-Key: ${key}`,
         'Sec-WebSocket-Version: 13',
+        ...(simulateRemote ? ['x-simulate-remote-ip: 192.168.1.100'] : []),
         '',
         '',
       ].join('\r\n');
@@ -144,7 +148,15 @@ function createTestWsClient(onMessage) {
         if (headerEnd !== -1) {
           upgraded = true;
           rxBuffer = rxBuffer.slice(headerEnd + 4);
-          resolve({ client, sendWs: (pkt) => client.write(encodeWsFrame(JSON.stringify(pkt))) });
+          resolve({
+            client,
+            sendWs: (pkt) => client.write(encodeWsFrame(JSON.stringify(pkt))),
+            sendWsFragments: (pkt) => {
+              const frame = encodeWsFrame(JSON.stringify(pkt));
+              client.write(frame.subarray(0, 3));
+              setTimeout(() => client.write(frame.subarray(3)), 20);
+            },
+          });
         }
       }
 
@@ -235,13 +247,23 @@ async function runTests() {
     // Suite 2: WebSocket Agent Streaming
     console.log('\n[Suite 2/3] WebSocket Agent Telemetry & Stream Ingestion');
     {
+      const unpairedPackets = [];
+      const unpaired = await createTestWsClient((pkt) => unpairedPackets.push(pkt), true);
+      await new Promise((r) => setTimeout(r, 300));
+      assert.ok(!unpairedPackets.some((p) => p.packetType === 'AGENT_ACTIVITY_STATUS'), 'Unpaired socket does not receive initial agent activity');
+      unpaired.sendWs({ magic: 'SK', version: 1, packetId: Date.now(), timestamp: Date.now(), packetType: 'FETCH_AGENT_SESSIONS', payload: {} });
+      await new Promise((r) => setTimeout(r, 250));
+      assert.ok(!unpairedPackets.some((p) => p.packetType === 'FETCH_AGENT_SESSIONS_RESULT'), 'Unpaired socket cannot fetch agent sessions');
+      unpaired.client.destroy();
+      console.log('  ✓ [PASS] Unpaired WebSocket cannot read agent telemetry');
+
       const receivedPackets = [];
-      const { client, sendWs } = await createTestWsClient((pkt) => {
+      const { client, sendWs, sendWsFragments } = await createTestWsClient((pkt) => {
         receivedPackets.push(pkt);
       });
 
       // Request sessions
-      sendWs({
+      sendWsFragments({
         magic: 'SK',
         version: 1,
         packetId: Date.now(),
@@ -251,6 +273,9 @@ async function runTests() {
       });
 
       await new Promise((r) => setTimeout(r, 600));
+
+      assert.ok(receivedPackets.some((p) => p.packetType === 'FETCH_AGENT_SESSIONS_RESULT'), 'Split WebSocket frame is reassembled');
+      console.log('  ✓ [PASS] Split WebSocket request is reassembled');
 
       const hasActivity = receivedPackets.some((p) => p.packetType === 'AGENT_ACTIVITY_STATUS');
       assert.ok(hasActivity, 'WebSocket client receives AGENT_ACTIVITY_STATUS packet');
@@ -353,6 +378,33 @@ async function runTests() {
       assert.ok(hasBroadcastNotification, 'Non-streaming client also receives NOTIFICATION_POST when agent completes task');
       console.log('  ✓ [PASS] Notifications broadcast to all connected clients on task completion');
 
+      // A short task may finish between watcher polls, so no working state was observed.
+      sendWs({ magic: 'SK', version: 1, packetId: Date.now(), timestamp: Date.now(),
+        packetType: 'SIMULATE_AGENT_ACTIVITY', payload: { agent: 'reset' } });
+      const fastSessionId = 'fast-complete-session';
+      const fastDir = path.join(mockBrain, fastSessionId, '.system_generated/logs');
+      fs.mkdirSync(fastDir, { recursive: true });
+      fs.writeFileSync(path.join(fastDir, 'transcript.jsonl'), [
+        { type: 'USER_INPUT', content: 'Finish quickly', step_index: 1 },
+        { type: 'PLANNER_RESPONSE', content: 'Done quickly', step_index: 2 },
+      ].map(item => JSON.stringify(item)).join('\n') + '\n');
+      
+      const waitForNotice = async () => {
+        const start = Date.now();
+        while (Date.now() - start < 4500) {
+          if (nonStreamingPackets.some((p) => p.packetType === 'NOTIFICATION_POST' && p.payload?.sessionId === fastSessionId)) {
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 150));
+        }
+      };
+      await waitForNotice();
+      const fastNotices = nonStreamingPackets.filter(
+        (p) => p.packetType === 'NOTIFICATION_POST' && p.payload?.sessionId === fastSessionId
+      );
+      assert.strictEqual(fastNotices.length, 1, 'A fast completion sends exactly one notification');
+      console.log('  ✓ [PASS] Fast completed turns notify once even without an observed working state');
+
       // Test stream activation via AGENT_TRANSCRIPT_HISTORY packet (Flutter mode)
       sendWs({
         magic: 'SK',
@@ -399,8 +451,17 @@ async function runTests() {
       }) + '\n';
       fs.appendFileSync(transcriptPath, liveTurn);
 
-      // Wait for the bridge delta poller (400ms interval)
-      await new Promise((r) => setTimeout(r, 1000));
+      // Wait for the bridge delta poller (400ms interval) with resilient polling
+      const waitForChunk = async () => {
+        const start = Date.now();
+        while (Date.now() - start < 3500) {
+          if (streamChunks.some((p) => p.payload?.sessionId === testSessionId && Array.isArray(p.payload?.events) && p.payload.events.length > 0)) {
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      };
+      await waitForChunk();
 
       const hasChunk = streamChunks.some(
         (p) => p.payload?.sessionId === testSessionId && Array.isArray(p.payload?.events) && p.payload.events.length > 0

@@ -96,7 +96,8 @@ const activeSessionCursors = new Map(); // sessionId -> byteOffset
 const activeSubscribedSessions = new Set(); // Set of sessionIds subscribed by clients
 // Agent Terminal Streaming Subscribers: sessionId -> Set<WebSocket>
 const activeStreamSubscribers = new Map();
-const previousSessionStatuses = new Map(); // sessionId -> status
+const notifiedAgentCompletions = new Map(); // sessionId -> completed transcript revision
+let completionBaselineInitialized = false;
 
 function addStreamSubscriber(sessionId, socket) {
   if (!sessionId || !socket) return;
@@ -2296,6 +2297,7 @@ function checkActiveAgentActivity() {
   // 1. Google Antigravity Sessions Scan
   try {
     const brainDirs = [
+      ...(process.env.SOKO_AGENT_BRAIN_DIR || '').split(path.delimiter).filter(Boolean),
       path.join(home, '.gemini/antigravity-cli/brain'),
       path.join(home, '.gemini/antigravity/brain'),
       path.join(home, '.gemini/antigravity-ide/brain'),
@@ -2778,6 +2780,7 @@ function checkActiveAgentActivity() {
     taskSummary: primary.taskSummary,
     tokensUsed: primary.tokensUsed || 0,
     timestamp: primary.timestamp,
+    mtimeMs: primary.mtimeMs,
     sessionId: primary.sessionId,
     workspace: primary.workspace,
     workspaceName: primary.workspaceName,
@@ -2796,6 +2799,7 @@ function checkActiveAgentActivity() {
       workspace: s.workspace,
       workspaceName: s.workspaceName,
       timestamp: s.timestamp,
+      mtimeMs: s.mtimeMs,
       isSubagent: Boolean(s.isSubagent),
       parentSessionId: s.parentSessionId || null,
     })),
@@ -2803,14 +2807,26 @@ function checkActiveAgentActivity() {
 }
 
 function checkAndNotifyAgentCompletion(active) {
-  if (!active || !active.activeSessions || active.activeSessions.length === 0) return;
+  if (!active || !Array.isArray(active.activeSessions)) return;
+  if (!completionBaselineInitialized) {
+    // Existing completed transcripts are history, not new task completions.
+    for (const session of active.activeSessions) {
+      if (session.status === 'completed') {
+        notifiedAgentCompletions.set(session.sessionId,
+          `${session.mtimeMs || session.timestamp || 0}:${session.taskSummary || session.message || ''}`);
+      }
+    }
+    completionBaselineInitialized = true;
+    return;
+  }
   for (const s of active.activeSessions) {
     const sId = s.sessionId;
-    const prevStatus = previousSessionStatuses.get(sId);
-    const isNowCompleted = s.status === 'completed';
-    const wasRunning = prevStatus === 'working' || prevStatus === 'thinking' || prevStatus === 'waiting';
-
-    if (isNowCompleted && wasRunning) {
+    const revision = `${s.mtimeMs || s.timestamp || 0}:${s.taskSummary || s.message || ''}`;
+    if (s.status === 'completed' && notifiedAgentCompletions.get(sId) !== revision) {
+      notifiedAgentCompletions.set(sId, revision);
+      if (notifiedAgentCompletions.size > 500) {
+        notifiedAgentCompletions.delete(notifiedAgentCompletions.keys().next().value);
+      }
       if (s.isSubagent) {
         // NEVER emit completion notification for subagents!
         // Only main agent sessions may trigger task completion notifications.
@@ -2835,6 +2851,7 @@ function checkAndNotifyAgentCompletion(active) {
             isAgentDone: true,
             isTaskDone: true,
             sessionId: sId,
+            completionRevision: revision,
             isSubagent: false,
           },
         };
@@ -2842,27 +2859,9 @@ function checkAndNotifyAgentCompletion(active) {
         // Broadcast to ALL connected authorized clients (phone companion, desktop HUD)
         broadcastPacket(notifPacket);
 
-        // In addition, ensure all stream subscribers receive it directly
-        if (activeStreamSubscribers.has(sId)) {
-          for (const sock of activeStreamSubscribers.get(sId)) {
-            if (sock.readyState !== 'closed' && sock.isAuthorized) {
-              sendWsPacket(sock, notifPacket);
-            }
-          }
-        } else if (activeStreamSubscribers.size > 0) {
-          for (const subs of activeStreamSubscribers.values()) {
-            for (const sock of subs) {
-              if (sock.readyState !== 'closed' && sock.isAuthorized) {
-                sendWsPacket(sock, notifPacket);
-              }
-            }
-          }
-        }
-
         console.log(`[Bridge Agent] Notification broadcast: Task finished for main agent session ${sId}`);
       }
     }
-    previousSessionStatuses.set(sId, s.status);
   }
 }
 
@@ -3041,8 +3040,8 @@ function validateInboundPacket(packet) {
     }
   }
 
-  // 3. Monotonic sequence counter (Replay attack defense)
-  if (typeof packet.packetId === 'number') {
+  // 3. Monotonic sequence counter (Replay attack defense for unencrypted packets)
+  if (typeof packet.packetId === 'number' && !packet.encrypted) {
     if (packet.packetId <= highestSeenPacketId && packet.packetType !== 'HEARTBEAT_PING' && packet.packetType !== 'COMPANION_ANNOUNCE') {
       return { valid: false, reason: `Replay detected: packetId ${packet.packetId} <= highest seen ${highestSeenPacketId}` };
     }
@@ -3590,9 +3589,10 @@ function sendWsPacket(socket, packet) {
 function broadcastPacket(packet, senderSocket = null) {
   const payloadBuffer = Buffer.from(JSON.stringify(packet), 'utf8');
   const frame = encodeWsFrame(payloadBuffer);
+  const privateType = /^(AGENT_|TOKEN_STATS_|CLI_|FILE_|NOTIFICATION_POST$)/.test(packet.packetType || '');
 
   for (const client of activeClients) {
-    if (client !== senderSocket && isSocketOpen(client)) {
+    if (client !== senderSocket && isSocketOpen(client) && (!privateType || client.isAuthorized)) {
       try {
         client.write(frame);
       } catch (err) {
@@ -3718,16 +3718,18 @@ function createWebSocketServer(server) {
       },
     });
 
-    // Send immediate initial AGENT_ACTIVITY_STATUS so client receives active session state without delay
-    const initialActivity = currentAgentActivity || checkActiveAgentActivity();
-    sendWsPacket(socket, {
-      magic: 'SK',
-      version: 1,
-      packetId: Date.now(),
-      timestamp: Date.now(),
-      packetType: 'AGENT_ACTIVITY_STATUS',
-      payload: initialActivity,
-    });
+    // Agent telemetry contains task text; only paired clients may receive it.
+    if (socket.isAuthorized) {
+      const initialActivity = currentAgentActivity || checkActiveAgentActivity();
+      sendWsPacket(socket, {
+        magic: 'SK',
+        version: 1,
+        packetId: Date.now(),
+        timestamp: Date.now(),
+        packetType: 'AGENT_ACTIVITY_STATUS',
+        payload: initialActivity,
+      });
+    }
 
     // Notify other clients (e.g. desktop) about active client count & discovered devices
     broadcastPacket({
@@ -3751,9 +3753,9 @@ function createWebSocketServer(server) {
       },
     }, socket);
 
-    socket.on('data', (buffer) => {
-      handleWsFrame(socket, buffer);
-    });
+    socket.wsPending = Buffer.alloc(0);
+    socket.on('data', (buffer) => handleWsData(socket, buffer));
+    if (head && head.length) handleWsData(socket, head);
 
     socket.on('close', () => {
       removeStreamSubscriber(null, socket);
@@ -3779,6 +3781,38 @@ function createWebSocketServer(server) {
       broadcastDiscoveredDevices();
     });
   });
+}
+
+function handleWsData(socket, chunk) {
+  socket.wsPending = Buffer.concat([socket.wsPending || Buffer.alloc(0), chunk]);
+  while (socket.wsPending.length >= 2) {
+    const pending = socket.wsPending;
+    const opcode = pending[0] & 0x0f;
+    const isFinal = (pending[0] & 0x80) !== 0;
+    const isMasked = (pending[1] & 0x80) !== 0;
+    let payloadLength = pending[1] & 0x7f;
+    let headerLength = 2;
+    if (payloadLength === 127 || !isMasked || !isFinal || ![1, 8, 9, 10].includes(opcode)) {
+      socket.destroy();
+      return;
+    }
+    if (payloadLength === 126) {
+      if (pending.length < 4) return;
+      payloadLength = pending.readUInt16BE(2);
+      headerLength = 4;
+    }
+    const frameLength = headerLength + 4 + payloadLength;
+    if (pending.length < frameLength) {
+      if (pending.length > 65550) socket.destroy();
+      return;
+    }
+    const frame = Buffer.from(pending.subarray(0, frameLength));
+    socket.wsPending = pending.subarray(frameLength);
+    if (opcode === 8) { socket.end(); return; }
+    if (opcode === 9 || opcode === 10) continue;
+    handleWsFrame(socket, frame);
+    if (socket.destroyed) return;
+  }
 }
 
 function handleWsFrame(socket, buffer) {
@@ -4697,12 +4731,10 @@ function handleWsFrame(socket, buffer) {
                            (packet.packetType === 'AGENT_TRANSCRIPT_HISTORY' && packet.payload?.stream !== false) ||
                            Boolean(packet.payload?.stream);
 
-      if (sId && shouldStream) {
-        addStreamSubscriber(sId, socket);
-      }
       if (agentSessionManager && sId) {
         const hist = agentSessionManager.getTranscriptHistory(sId, { maxTurns: packet.payload?.maxTurns || 30 });
-        if (hist.cursor) {
+        if (hist.success && shouldStream) addStreamSubscriber(sId, socket);
+        if (hist.success && hist.cursor) {
           activeSessionCursors.set(sId, hist.cursor);
         }
         sendWsPacket(socket, {
@@ -4714,8 +4746,14 @@ function handleWsFrame(socket, buffer) {
           payload: {
             ...hist,
             sessionId: sId,
-            streaming: shouldStream,
+            streaming: Boolean(hist.success && shouldStream),
           },
+        });
+      } else {
+        sendWsPacket(socket, {
+          magic: 'SK', version: 1, packetId: Date.now(), timestamp: Date.now(),
+          packetType: 'AGENT_TRANSCRIPT_HISTORY',
+          payload: { success: false, sessionId: sId || null, streaming: false, error: 'No agent session is available.' },
         });
       }
       return;
@@ -4731,6 +4769,14 @@ function handleWsFrame(socket, buffer) {
           timestamp: Date.now(),
           packetType: 'SECURITY_ALERT',
           payload: { status: 'unauthorized', error: 'Pairing required to dispatch prompts.' },
+        });
+        return;
+      }
+      if (!socket.isLocalDesktop && !socket.encrypted && packet.encrypted !== true) {
+        sendWsPacket(socket, {
+          magic: 'SK', version: 1, packetId: Date.now(), timestamp: Date.now(),
+          packetType: 'AGENT_PROMPT_RESULT',
+          payload: { success: false, error: 'A secure paired session is required to send an instruction.' },
         });
         return;
       }

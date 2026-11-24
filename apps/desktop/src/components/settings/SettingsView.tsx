@@ -4,10 +4,8 @@ import {
   FolderDown,
   ShieldCheck,
   Smartphone,
-  Plus,
   Trash2,
   Lock,
-  Unlock,
   CheckCircle2,
   X,
   Sliders,
@@ -52,8 +50,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
   const [activeTab, setActiveTab] = useState<SettingsTabId>(() => {
     try {
       const stored = localStorage.getItem('soko_settings_initial_tab');
-      if (stored && ['general', 'pairing', 'tokens', 'cli', 'swarm', 'files', 'security', 'mascot', 'updates'].includes(stored)) {
-        localStorage.removeItem('soko_settings_initial_tab');
+      if (stored) localStorage.removeItem('soko_settings_initial_tab');
+      if (stored && ['general', 'pairing', 'tokens', 'swarm', 'files', 'security', 'mascot', 'updates'].includes(stored)) {
         return stored as SettingsTabId;
       }
     } catch {}
@@ -78,7 +76,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
 
   useEffect(() => {
     const cleanup = (window as any).electronAPI?.onSwitchSettingsTab?.((tab: any) => {
-      if (['general', 'pairing', 'tokens', 'cli', 'swarm', 'files', 'security', 'mascot', 'updates'].includes(tab)) {
+      if (['general', 'pairing', 'tokens', 'swarm', 'files', 'security', 'mascot', 'updates'].includes(tab)) {
         setActiveTab(tab);
       }
     });
@@ -388,30 +386,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
     }
   };
 
-  // Whitelist state
-  const [commands, setCommands] = useState([
-    {
-      id: 'agy-status',
-      title: 'Antigravity Status Check',
-      program: 'agy',
-      args: 'status',
-      requiresBiometrics: false,
-    },
-    {
-      id: 'agy-run',
-      title: 'Antigravity Autonomous Run',
-      program: 'agy',
-      args: 'run',
-      requiresBiometrics: true,
-    },
-    {
-      id: 'git-pull',
-      title: 'Git Pull Latest',
-      program: 'git',
-      args: 'pull origin main',
-      requiresBiometrics: false,
-    },
-  ]);
 
   const [downloadDir, setDownloadDir] = useState('~/Downloads/SokoFiles');
 
@@ -1385,79 +1359,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose }) => {
                 </div>
               </div>
             )}
-          </div>
-        )}
-
-        {/* CLI Whitelist Tab */}
-        {activeTab === 'cli' && (
-          <div className="settings-page flex flex-col gap-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-base font-semibold text-linear-text-primary tracking-tight">CLI Agent Whitelist</h2>
-                <p className="text-xs text-linear-text-secondary mt-1">
-                  Control developer tools (like Antigravity CLI) from mobile. Only explicitly authorized commands can be triggered.
-                </p>
-              </div>
-
-              <button className="linear-button-primary px-3 py-1.5 flex items-center gap-1.5">
-                <Plus size={13} /> Add Command
-              </button>
-            </div>
-
-            {/* Command List */}
-            <div className="flex flex-col gap-2">
-              {commands.map((cmd) => (
-                <div
-                  key={cmd.id}
-                  className="linear-card linear-card-hover rounded-lg p-3 flex items-center justify-between"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-7 h-7 rounded-md bg-linear-brand/10 border border-linear-brand/20 flex items-center justify-center text-linear-brand shrink-0">
-                      <Terminal size={14} />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-xs font-medium text-linear-text-primary tracking-tight truncate">{cmd.title}</h3>
-                        <span className="text-xs font-mono text-linear-text-tertiary bg-white/[0.04] px-1.5 py-0.5 rounded border border-white/5">
-                          {cmd.id}
-                        </span>
-                      </div>
-                      <div className="text-[13px] font-mono text-linear-text-secondary truncate mt-0.5">
-                        $ {cmd.program} {cmd.args}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      onClick={() =>
-                        setCommands((prev) =>
-                          prev.map((c) =>
-                            c.id === cmd.id ? { ...c, requiresBiometrics: !c.requiresBiometrics } : c
-                          )
-                        )
-                      }
-                      title="Toggle Biometric Requirement"
-                      className={`flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium border transition-colors ${
-                        cmd.requiresBiometrics
-                          ? 'bg-[#5E6AD2]/10 border-[#5E6AD2]/30 text-[#8B95EC]'
-                          : 'bg-white/[0.04] border-white/10 text-linear-text-tertiary hover:text-white'
-                      }`}
-                    >
-                      {cmd.requiresBiometrics ? <Lock size={10} /> : <Unlock size={10} />}
-                      {cmd.requiresBiometrics ? 'Biometric Protected' : 'Direct Run'}
-                    </button>
-
-                    <button
-                      onClick={() => setCommands((prev) => prev.filter((c) => c.id !== cmd.id))}
-                      className="p-1 rounded hover:bg-linear-red/10 text-linear-text-tertiary hover:text-linear-red transition-colors"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
           </div>
         )}
 

@@ -111,6 +111,56 @@ function sanitizeToolOutput(rawOutput, maxLines = 40, maxChars = 4096) {
   };
 }
 
+// Only send displayable transcript data to mobile. Rollout files also contain
+// developer instructions, tool output, and runtime metadata.
+function normalizeJsonlDelta(item, provider) {
+  const payload = item.payload || {};
+  if (provider === 'codex') {
+    if (item.type === 'response_item' && payload.type === 'message') {
+      if (payload.role !== 'user' && payload.role !== 'assistant') return null;
+      const content = (Array.isArray(payload.content) ? payload.content : [])
+        .filter((part) => payload.role === 'user' ? part.type === 'input_text' : part.type === 'output_text')
+        .map((part) => typeof part.text === 'string' ? part.text : '')
+        .filter(Boolean).join('\n').slice(0, 16000);
+      if (!content) return null;
+      return payload.role === 'user'
+        ? { type: 'USER_INPUT', content: extractCleanUserInput(content), created_at: item.timestamp }
+        : { type: 'ASSISTANT', content: cleanAnsi(content), created_at: item.timestamp };
+    }
+    if (item.type === 'response_item' && (payload.type === 'function_call' || payload.type === 'custom_tool_call')) {
+      return { type: 'TOOL_CALL', tool_calls: [{ name: String(payload.name || 'tool').slice(0, 80), args: {} }], created_at: item.timestamp };
+    }
+    if (item.type === 'event_msg' && (payload.type === 'task_complete' || payload.type === 'turn_complete')) {
+      return { type: 'TURN_COMPLETE', status: 'DONE', created_at: item.timestamp };
+    }
+    return null;
+  }
+  if (provider === 'claude') {
+    const message = item.message || {};
+    if (item.type === 'user' && !item.isMeta) {
+      const content = Array.isArray(message.content) ? message.content.filter((part) => part.type === 'text').map((part) => part.text).join('\n') : message.content;
+      const text = extractCleanUserInput(String(content || '')).slice(0, 16000);
+      return text ? { type: 'USER_INPUT', content: text, created_at: item.timestamp } : null;
+    }
+    if (item.type === 'assistant') {
+      const parts = Array.isArray(message.content) ? message.content : [];
+      const text = parts.filter((part) => part.type === 'text').map((part) => part.text || '').join('\n').slice(0, 16000);
+      const tools = parts.filter((part) => part.type === 'tool_use').map((part) => ({ name: String(part.name || 'tool').slice(0, 80), args: {} }));
+      return text || tools.length ? { type: 'ASSISTANT', content: cleanAnsi(text), tool_calls: tools, created_at: item.timestamp } : null;
+    }
+    return null;
+  }
+  if (!['USER_INPUT', 'PLANNER_RESPONSE', 'MODEL', 'ASSISTANT'].includes(item.type)) return null;
+  return {
+    type: item.type,
+    content: typeof item.content === 'string' ? cleanAnsi(item.content).slice(0, 16000) : '',
+    tool_calls: Array.isArray(item.tool_calls) ? item.tool_calls.slice(0, 20).map((tool) => ({ name: tool.name, args: tool.args || {} })) : [],
+    status: item.status,
+    step_index: item.step_index,
+    created_at: item.created_at,
+  };
+}
+
 /**
  * Detects if a transcript item is a subagent dispatch envelope.
  */
@@ -424,7 +474,7 @@ class AgentSessionManager {
   _peekJsonlMetadata(filePath, stat, provider) {
     const cached = this.jsonlMetadataCache.get(filePath);
     if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.data;
-    const maxBytes = 256 * 1024;
+    const maxBytes = provider === 'codex' ? 1024 * 1024 : 256 * 1024;
     if (!stat.size) return {};
     let fd;
     try {
@@ -478,7 +528,8 @@ class AgentSessionManager {
             const body = Array.isArray(content) ? content.map((part) => part.text || '').join('\n') : String(content || '');
             if (payload.role === 'user' || message.role === 'user') {
               isComplete = false;
-              if (!taskSummary) taskSummary = body.trim().slice(0, 160);
+              const prompt = extractCleanUserInput(body).slice(0, 160);
+              if (prompt) taskSummary = prompt;
             }
             const calls = payload.name || payload.tool_name || message.name;
             if (calls) detail = String(calls);
@@ -894,8 +945,8 @@ class AgentSessionManager {
 
     try {
       const stat = fs.statSync(paths.transcriptPath);
-      // Read up to last 1MB of file for performance
-      const readSize = Math.min(stat.size, 1024 * 1024);
+      // Selected JSONL sessions can have large tool output between a prompt and response.
+      const readSize = Math.min(stat.size, paths.provider === 'codex' ? 8 * 1024 * 1024 : 1024 * 1024);
       const buffer = Buffer.alloc(readSize);
       const fd = fs.openSync(paths.transcriptPath, 'r');
       fs.readSync(fd, buffer, 0, readSize, Math.max(0, stat.size - readSize));
@@ -954,7 +1005,7 @@ class AgentSessionManager {
                   if (response) current.responses.push(response);
                 }
               }
-            } else if (type === 'response_item' && payload.type === 'function_call') {
+            } else if (type === 'response_item' && (payload.type === 'function_call' || payload.type === 'custom_tool_call')) {
               if (!current) addUserTurn('', item.timestamp || payload.timestamp);
               let args = payload.arguments || {};
               if (typeof args === 'string') {
@@ -988,6 +1039,8 @@ class AgentSessionManager {
         return {
           success: true,
           sessionId,
+          cursor: stat.size,
+          mtimeMs: stat.mtimeMs,
           totalTurns: turns.length,
           isWorking,
           isWaiting: false,
@@ -1158,7 +1211,7 @@ class AgentSessionManager {
         };
       }
 
-      const bytesToRead = stat.size - safeOffset;
+      const bytesToRead = Math.min(stat.size - safeOffset, 1024 * 1024);
       const buffer = Buffer.alloc(bytesToRead);
       const fd = fs.openSync(paths.transcriptPath, 'r');
       fs.readSync(fd, buffer, 0, bytesToRead, safeOffset);
@@ -1169,6 +1222,24 @@ class AgentSessionManager {
       // JSON line currently being flushed by the writer. We must NOT consume it yet.
       const lastNewlineIdx = buffer.lastIndexOf(0x0A);
       if (lastNewlineIdx === -1) {
+        // An oversized JSONL record is usually tool output. Skip it so later
+        // assistant messages remain streamable without unbounded allocation.
+        if (stat.size - safeOffset > bytesToRead) {
+          let position = safeOffset + bytesToRead;
+          const skipBuffer = Buffer.alloc(65536);
+          const skipFd = fs.openSync(paths.transcriptPath, 'r');
+          try {
+            while (position < stat.size) {
+              const count = fs.readSync(skipFd, skipBuffer, 0, Math.min(skipBuffer.length, stat.size - position), position);
+              if (!count) break;
+              const newline = skipBuffer.subarray(0, count).indexOf(0x0A);
+              if (newline >= 0) return { sessionId, newCursor: position + newline + 1, mtimeMs: stat.mtimeMs, events: [] };
+              position += count;
+            }
+          } finally {
+            fs.closeSync(skipFd);
+          }
+        }
         // No complete newline in this read window. Do not advance cursor; wait for completion.
         return {
           sessionId,
@@ -1188,11 +1259,8 @@ class AgentSessionManager {
         if (!trimmed) continue;
         try {
           const parsed = JSON.parse(trimmed);
-          // Omit noisy raw tool execution dumps (e.g. 50KB-1MB file reads, raw shell stdout, search redirects)
-          if (parsed.type === 'GENERIC') {
-            continue;
-          }
-          events.push(parsed);
+          const event = normalizeJsonlDelta(parsed, paths.provider);
+          if (event) events.push(event);
         } catch {
           // Skip unparseable lines safely
         }
@@ -1219,6 +1287,9 @@ class AgentSessionManager {
     const cleanPrompt = String(prompt || '').trim();
     if (!cleanPrompt) {
       throw new Error('Prompt cannot be empty.');
+    }
+    if (cleanPrompt.length > 16000) {
+      throw new Error('Prompt is too long (maximum 16,000 characters).');
     }
 
     const paths = this.resolveSessionPaths(sessionId);

@@ -15,6 +15,7 @@
 
 const http = require('http');
 const net = require('net');
+const crypto = require('crypto');
 const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
@@ -80,7 +81,7 @@ function request(method, pathName, body = null, headers = {}) {
 function connectRawWs() {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection({ port: TEST_PORT, host: '127.0.0.1' }, () => {
-      const key = Buffer.from('crypto-test-key-1234').toString('base64');
+      const key = crypto.randomBytes(16).toString('base64');
       const req = [
         `GET / HTTP/1.1`,
         `Host: 127.0.0.1:${TEST_PORT}`,
@@ -94,12 +95,59 @@ function connectRawWs() {
       socket.write(req);
     });
 
-    socket.once('data', (chunk) => {
-      const resp = chunk.toString();
-      if (resp.includes('101 Switching Protocols')) {
-        resolve(socket);
+    let upgraded = false;
+    let rxBuffer = Buffer.alloc(0);
+    const packetQueue = [];
+    const waiters = [];
+
+    function parseFrames() {
+      while (rxBuffer.length >= 2) {
+        let len = rxBuffer[1] & 0x7f;
+        let offset = 2;
+        if (len === 126) {
+          if (rxBuffer.length < 4) break;
+          len = rxBuffer.readUInt16BE(2);
+          offset = 4;
+        } else if (len === 127) {
+          if (rxBuffer.length < 10) break;
+          len = Number(rxBuffer.readBigUInt64BE(2));
+          offset = 10;
+        }
+        if (rxBuffer.length < offset + len) break;
+        const payload = rxBuffer.slice(offset, offset + len);
+        rxBuffer = rxBuffer.slice(offset + len);
+        try {
+          const pkt = JSON.parse(payload.toString('utf8'));
+          const waiterIdx = waiters.findIndex((w) => !w.expectedType || w.expectedType === pkt.packetType);
+          if (waiterIdx !== -1) {
+            const [waiter] = waiters.splice(waiterIdx, 1);
+            waiter.resolve(pkt);
+          } else {
+            packetQueue.push(pkt);
+          }
+        } catch (_) {}
+      }
+    }
+
+    socket.on('data', (chunk) => {
+      rxBuffer = Buffer.concat([rxBuffer, chunk]);
+      if (!upgraded) {
+        const headerEnd = rxBuffer.indexOf('\r\n\r\n');
+        if (headerEnd !== -1) {
+          const resp = rxBuffer.slice(0, headerEnd).toString('utf8');
+          if (resp.includes('101 Switching Protocols')) {
+            upgraded = true;
+            rxBuffer = rxBuffer.slice(headerEnd + 4);
+            socket._packetQueue = packetQueue;
+            socket._waiters = waiters;
+            parseFrames();
+            resolve(socket);
+          } else {
+            reject(new Error(`WebSocket handshake failed: ${resp}`));
+          }
+        }
       } else {
-        reject(new Error(`WebSocket handshake failed: ${resp}`));
+        parseFrames();
       }
     });
 
@@ -136,31 +184,37 @@ function sendWsFrame(socket, packet) {
   socket.write(Buffer.concat([header, mask, maskedPayload]));
 }
 
-function readWsPacket(socket, timeoutMs = 2000) {
+function readWsPacket(socket, expectedType = null, timeoutMs = 4000) {
+  if (socket._packetQueue && socket._packetQueue.length > 0) {
+    const idx = socket._packetQueue.findIndex((p) => !expectedType || p.packetType === expectedType);
+    if (idx !== -1) {
+      return Promise.resolve(socket._packetQueue.splice(idx, 1)[0]);
+    }
+  }
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`readWsPacket timed out after ${timeoutMs}ms`));
+    let timer = null;
+    const waiter = {
+      expectedType,
+      resolve: (pkt) => {
+        if (timer) clearTimeout(timer);
+        resolve(pkt);
+      },
+    };
+
+    timer = setTimeout(() => {
+      if (socket._waiters) {
+        const idx = socket._waiters.indexOf(waiter);
+        if (idx !== -1) socket._waiters.splice(idx, 1);
+      }
+      reject(new Error(`readWsPacket timed out waiting for ${expectedType || 'any'} after ${timeoutMs}ms`));
     }, timeoutMs);
 
-    socket.once('data', (chunk) => {
+    if (socket._waiters) {
+      socket._waiters.push(waiter);
+    } else {
       clearTimeout(timer);
-      try {
-        if (chunk.length < 2) return resolve(null);
-        let len = chunk[1] & 0x7f;
-        let offset = 2;
-        if (len === 126) {
-          len = chunk.readUInt16BE(2);
-          offset = 4;
-        } else if (len === 127) {
-          len = Number(chunk.readBigUInt64BE(2));
-          offset = 10;
-        }
-        const body = chunk.slice(offset, offset + len).toString('utf8');
-        resolve(JSON.parse(body));
-      } catch (err) {
-        reject(err);
-      }
-    });
+      reject(new Error('Socket not initialized with packet reader'));
+    }
   });
 }
 
@@ -199,7 +253,7 @@ async function runTests() {
   assert(Boolean(ws), 'Connected live WebSocket client to bridge');
 
   // Initial status packet
-  const initialStatus = await readWsPacket(ws);
+  const initialStatus = await readWsPacket(ws, 'BRIDGE_STATUS');
   assert(initialStatus.packetType === 'BRIDGE_STATUS', 'Received initial BRIDGE_STATUS handshake');
 
   // Send PAIR_REQUEST
@@ -229,7 +283,7 @@ async function runTests() {
   assert(approveRes.status === 200 && approveRes.data.success, 'Desktop user approves pairing request');
 
   // Read PAIR_CONFIRM from WebSocket
-  const pairConfirm = await readWsPacket(ws);
+  const pairConfirm = await readWsPacket(ws, 'PAIR_CONFIRM');
   assert(pairConfirm.packetType === 'PAIR_CONFIRM', 'WebSocket receives PAIR_CONFIRM');
   assert(Boolean(pairConfirm.payload.token), 'PAIR_CONFIRM contains bearer token');
   assert(Boolean(pairConfirm.payload.sessionKey), 'PAIR_CONFIRM contains 256-bit sessionKey');
@@ -270,12 +324,12 @@ async function runTests() {
   });
   sendWsFrame(ws, encryptedPing);
 
-  const pongPacket = await readWsPacket(ws);
+  const pongPacket = await readWsPacket(ws, 'HEARTBEAT_PONG');
   assert(pongPacket.packetType === 'HEARTBEAT_PONG', 'Bridge decrypted ENCRYPTED_PACKET and responded with HEARTBEAT_PONG');
 
   // 5. Test Replay Attack Protection: resend packetId 2
   sendWsFrame(ws, encryptedPing);
-  const replayAlert = await readWsPacket(ws);
+  const replayAlert = await readWsPacket(ws, 'SECURITY_ALERT');
   assert(replayAlert.packetType === 'SECURITY_ALERT', 'Replayed packetId rejected with SECURITY_ALERT');
   assert(replayAlert.payload.error === 'DECRYPTION_FAILED', 'Replay rejection reports DECRYPTION_FAILED');
 
@@ -288,7 +342,7 @@ async function runTests() {
   tamperedEnvelope.packet_id = 4; // Use fresh ID so replay check passes
 
   sendWsFrame(ws, tamperedEnvelope);
-  const tamperAlert = await readWsPacket(ws);
+  const tamperAlert = await readWsPacket(ws, 'SECURITY_ALERT');
   assert(tamperAlert.packetType === 'SECURITY_ALERT', 'Tampered ciphertext rejected with SECURITY_ALERT');
 
   ws.destroy();

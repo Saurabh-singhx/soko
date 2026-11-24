@@ -2,7 +2,6 @@ export type SettingsTabId =
   | 'general'
   | 'pairing'
   | 'tokens'
-  | 'cli'
   | 'swarm'
   | 'files'
   | 'security'
